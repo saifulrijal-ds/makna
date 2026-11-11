@@ -212,3 +212,31 @@ def test_collection_rate_differs_from_the_naive_joined_query(
     correct = float(rows[0][-1])
     naive = float(run_sql(lending_db, NAIVE_COLLECTION_RATE)[0][0])
     assert abs(correct - naive) > 0.01, (correct, naive)
+
+
+# --------------------------------------------------------------------------------------
+# A filter that belongs to the metric definition (here a rule on a joined entity)
+
+RESTRUCTURED_BY_REGION = """
+SELECT b.region_name, SUM(s.outstanding_principal)
+FROM contract_monthly_snapshots s
+JOIN contracts c ON c.contract_id = s.contract_id
+LEFT JOIN branches b ON b.branch_id = c.servicing_branch_id
+WHERE s.snapshot_date = DATE '2026-06-30' AND c.is_restructured
+GROUP BY 1 ORDER BY 1
+"""
+
+
+def test_a_metric_level_rule_on_a_joined_entity_filters_the_rows(
+    lending_db: duckdb.DuckDBPyConnection,
+) -> None:
+    fields: dict[str, Any] = {
+        "dimensions": ["branch.region_name"],
+        "time_start": "2026-01-01",
+        "time_end": "2026-07-01",
+    }
+    got = run_tree(lending_db, tree_of(lending(), "restructured_outstanding_principal", **fields))
+    want = run_sql(lending_db, RESTRUCTURED_BY_REGION)
+    assert want and same_rows(got, want)
+    everything = run_tree(lending_db, tree_of(lending(), "outstanding_principal", **fields))
+    assert not same_rows(got, everything), "the filter removed nothing on this data"
