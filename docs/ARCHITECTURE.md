@@ -11,7 +11,8 @@ Makna is **one Python application and one PostgreSQL database**, placed between 
 - **Meaning lives in YAML files in a git repository** (the "definitions repository"). One file holds one object: a domain, an entity, a metric, or a glossary term. PostgreSQL holds an index built from those files. The index can always be rebuilt from the files.
 - **Physical metadata comes from the catalog** through a connector and is copied into PostgreSQL at each sync. Makna never edits it.
 - **Search** is one SQL statement that fuses full-text search and vector search over the index.
-- **The compiler** turns a structured request (metric, dimensions, filters, time range, grain) into Trino SQL by building a syntax tree with sqlglot. It joins only along relationships declared in approved entity files, aggregates each input of a metric separately, and enforces masking.
+- **The compiler** turns a structured request (metric, dimensions, filters, time range, grain) into SQL for the target engine (PostgreSQL in the MVP, DuckDB in tests; D-22) by building a syntax tree with sqlglot. It joins only along relationships declared in approved entity files, aggregates each input of a metric separately, and enforces masking.
+- **Makna compiles; it never runs a caller's query** (D-21). Agents and people run the compiled SQL with their own tools and their own access to the engine.
 - **No language model runs inside Makna in the MVP.** The calling agent is the language model. Makna gives it search results, definitions, and a compiler, and tells it honestly when nothing matches.
 - **Three ways in, one service layer.** The web app (server-rendered HTML), the MCP server, and the command line all call the same Python functions in `makna.services`. Rules such as "agents see approved definitions only" live in that layer, not in the interfaces.
 
@@ -53,7 +54,7 @@ flowchart LR
 
   subgraph Outside["Outside systems (not owned by Makna)"]
     CAT[Data catalog<br/>file export or OpenMetadata]
-    TRINO[Trino<br/>query engine]
+    ENG[(Target database<br/>PostgreSQL in the MVP)]
   end
 
   BU --> WEB
@@ -70,7 +71,8 @@ flowchart LR
   IDX --> EMB
   SYNC --> CAT
   SYNC --> PG
-  SVC -- "compiled SQL, caller's credentials" --> TRINO
+  SVC -- "freshness and introspection,<br/>read-only service account" --> ENG
+  AG -. "runs the compiled SQL<br/>with its own access" .-> ENG
 ```
 
 | Component | Python package | What it does | Does not do |
@@ -78,13 +80,13 @@ flowchart LR
 | Models | `makna.model` | Pydantic models for definitions, catalog metadata, requests, and responses. The shared vocabulary of all other packages. | No I/O. |
 | Definition store | `makna.definitions` | Loads YAML, validates it (JSON Schema, then cross-file rules), writes files, commits to git, runs lifecycle transitions. | Does not query PostgreSQL except through the indexer hook. |
 | Catalog connectors | `makna.catalog` | The connector interface, the file connector, the OpenMetadata connector, the sync job, and the reference check. | Never writes to a catalog. |
-| Engine connectors | `makna.engine` | The engine interface and the Trino connector: list tables and columns, run a query with the caller's credentials. | Never stores credentials. |
+| Engine connectors | `makna.engine` | The engine interface and the PostgreSQL connector: list tables and columns, and the freshness query, with a read-only service account. | Never runs a caller's query or SQL (D-21). |
 | Index | `makna.index` | Database tables (SQLAlchemy Core), migrations (Alembic), and the indexer that turns definitions and catalog metadata into index rows and search documents. | |
 | Search | `makna.search` | Embedding providers, query processing, the hybrid search statement, and the confidence band. | |
 | Compiler | `makna.compiler` | Join graph, request planning, SQL generation with sqlglot, governance checks, explanation. Pure functions over models: no database, no network. | Does not execute SQL. |
 | Resolver | `makna.resolve` | Turns a question in words into a request, using search results and rules. Used by the test bench and by one eval. | No language model in the MVP. |
-| Services | `makna.services` | The use cases: `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, proposal and approval actions, user and token management, audit and tool-call logging. Applies access rules. | |
-| MCP server | `makna.mcp` | Five read-only tools over `makna.services`. | No logic of its own. |
+| Services | `makna.services` | The use cases: `search`, `get_definition`, `list_related`, `compile_query`, proposal and approval actions, user and token management, audit and tool-call logging. Applies access rules. | |
+| MCP server | `makna.mcp` | Four read-only tools over `makna.services`. | No logic of its own. |
 | Web app | `makna.web` | Routes, templates, static files. | No logic of its own beyond form handling. |
 | CLI | `makna.cli` | `makna` command: validate, sync, index, serve, user and token management, freshness. | |
 
@@ -101,8 +103,8 @@ data/generator/             the seeded synthetic data generator
 data/catalog/               lending.catalog.yaml, the file-based catalog export
 data/generated/             generator output (not committed)
 evals/                      golden set, reference SQL, runners
-deploy/                     docker-compose.yml, Trino configuration, container files
-tests/                      unit/, integration/ (needs PostgreSQL), engine/ (needs Trino)
+deploy/                     docker-compose.yml, container files
+tests/                      unit/ (DuckDB in-process), integration/ (needs PostgreSQL), engine/ (needs the sample data in PostgreSQL)
 spikes/                     design-session experiments, not product code
 docs/                       this pack, plus docs/notes/
 ```
@@ -126,8 +128,9 @@ docs/                       this pack, plus docs/notes/
 4. **Generate** (`makna.compiler.sqlgen`): build one aggregate subquery per input, combine the inputs, compute the metric, order, and limit (section 7.5).
 5. **Verify** (`makna.compiler.governance`): walk the finished syntax tree and fail if a personal column appears outside a mask or an aggregate.
 6. Return the SQL text, the result columns, the explanation steps, and warnings.
-7. If the caller asked to run it and running is enabled: the service passes the SQL and the caller's engine credentials to the Trino connector, which returns columns and rows up to the limit. For a token these are the credentials stored, encrypted, with the token; for a web session they are the ones entered on `/account` for that session (section 12). Credentials are never returned or logged, and agents never hold them.
-8. The call is written to `tool_call_log` without row values.
+7. The call is written to `tool_call_log`.
+
+Makna stops there (D-21). The caller runs the SQL with its own tool and its own access to the engine, for example an agent's database tool. Makna never sees the rows.
 
 ## 5. The semantic model
 
@@ -138,25 +141,28 @@ The schema is `semantic/schema/makna.schema.json` (JSON Schema 2020-12). Validat
 | Kind | What it is | Key fields |
 |---|---|---|
 | `domain` | A business area used for browsing. | name, label, description |
-| `entity` | A business object backed by one physical table. | `source.table`, `primary_key`, `dimensions`, `measures`, `relationships` |
-| `metric` | A number people ask for. | `type` (`simple`, `ratio`, `derived`), `measure` or `numerator`/`denominator` or `expr`/`inputs`, `filters`, `join_paths`, `format`, `time_grains`, `example_questions`, `caveats` |
+| `entity` | A business object backed by one physical table. | `source.table`, `primary_key`, `dimensions`, `measures`, `relationships`, `rules` |
+| `metric` | A number people ask for. | `type` (`simple`, `ratio`, `derived`), `measure` or `numerator`/`denominator` or `expr`/`inputs`, `filters`, `join_paths`, `format`, `time_grains`, `example_questions`, `example_requests`, `caveats` |
 | `glossary_term` | A business word and its meaning. | `related` (objects it explains), `catalog_term` |
 
-Every object carries `name`, `label`, `description`, `owner`, `status`, `sensitivity`, and optional `synonyms` by language (SEM-2). **Dimensions, measures, and relationships are parts of an entity**, not separate files: each has its own description and (for dimensions) synonyms, sensitivity, and masking, and inherits owner and status from its entity.
+Every object carries `name`, `label`, `description`, `owner`, `status`, `sensitivity`, and `synonyms` by language (SEM-2). Metrics, entities, and glossary terms must have at least one English (`en`) and one Indonesian (`id`) synonym (D-19); for domains, dimensions, and rules synonyms are optional. **Dimensions, measures, and relationships are parts of an entity**, not separate files: each has its own description and (for dimensions) synonyms, sensitivity, and masking, and inherits owner and status from its entity.
 
 Inside an entity:
 
 - A **dimension** is a scalar SQL expression over the entity's own columns, with a type (`categorical`, `time`, `boolean`, `numeric`). Categorical dimensions may list their `values` so that people and agents can write filters without querying.
 - A **measure** is an aggregation (`sum`, `count`, `count_distinct`, `avg`, `min`, `max`) of an expression over the entity's own columns, with an optional row filter and exactly one `time_dimension`: the official date for that measure. `semi_additive: last` marks a balance measure.
+- A **rule** is a named boolean condition over the entity's own columns, written once and reused (D-17), for example `non_performing: days_past_due > 90`. A measure uses one with `rule:`; a metric uses one in `filters` as `{rule: entity.rule}`, on its measure's entity or an entity reachable from it. When a rule changes, review lists every measure and metric that uses it.
 - A **relationship** is an approved join from this entity (the "many" side) to another entity (the "one" side), by key columns. These are the only joins the compiler will ever write.
 
 A **metric** is one of:
 
-- `simple`: one measure (`entity.measure`), optional structured `filters` that are part of the definition (they may use dimensions of joined entities), and optional `join_paths` pins.
+- `simple`: one measure (`entity.measure`), optional `filters` that are part of the definition (structured filters or rule references; they may use dimensions and rules of joined entities), and optional `join_paths` pins.
 - `ratio`: `numerator` and `denominator`, each the name of another metric. A zero denominator gives NULL.
 - `derived`: an arithmetic `expr` over the metrics listed in `inputs`.
 
-Expressions (`expr`, `filter` on dimensions and measures) are written in Trino SQL and may not contain subqueries, aggregates, or window functions. Metric `filters` and request filters are structured (`dimension`, `op`, `value`), never SQL text.
+Every approved metric also has at least one **example request** (D-18): a business question and the structured request (section 7.1, without `metric`) that answers it. It is a verified example an agent can copy, and it must compile (V19), so it cannot drift from the definition.
+
+Expressions (`expr` and `filter` on dimensions, measures, and rules) are plain SQL that sqlglot parses and prints for the target dialect (D-22). They may not contain subqueries, aggregates, or window functions. Metric `filters` and request filters are structured (`dimension`, `op`, `value`), never SQL text.
 
 ### 5.2 File layout and lifecycle states
 
@@ -189,7 +195,7 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V02 | The path matches the content: domain folder, kind folder, file name equals `name`. A proposal file has status `draft` or `in_review`; an official file has `approved` or `deprecated`. |
 | V03 | Names are unique per kind across the repository. Inside an entity, dimension, measure, and relationship names are unique. |
 | V04 | `domain` names an existing domain. |
-| V05 | Every `expr` and `filter` parses with sqlglot (Trino dialect) and contains no subquery, aggregate, or window function. |
+| V05 | Every `expr` and `filter` parses with sqlglot and prints for both the `postgres` and `duckdb` dialects, and contains no subquery, aggregate, or window function. |
 | V06 | A measure's `time_dimension` names a dimension of type `time` on the same entity. |
 | V07 | A relationship's `to` names an existing entity. |
 | V08 | A simple metric's `measure` resolves. Ratio and derived metrics resolve to existing metrics, with no cycle. A derived `expr` uses only names in `inputs` and only `+ - * /`, parentheses, numbers, `NULLIF`, and `COALESCE`. |
@@ -202,6 +208,8 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V15 | `default_grain` is one of `time_grains`. A metric with a balance measure among its inputs does not offer `day` or `week`. |
 | V16 | A measure's `time_dimension` is not a personal dimension (a time range would filter on raw personal dates, and freshness would show one). |
 | V17 | A personal dimension has no `values` (they would be returned by `get_definition` and indexed for search). |
+| V18 | A measure's `rule` names a rule on the same entity; a metric's `{rule: entity.rule}` names a rule on an entity reachable from its measure; a rule's `expr` reads no column of a personal dimension. |
+| V19 | Every example request plans and compiles with no error (checked with the compiler: `makna validate` once WP-08 exists, and at submit and approve). |
 
 Reference issues (`makna.catalog.references`):
 
@@ -214,7 +222,7 @@ Reference issues (`makna.catalog.references`):
 
 ### 5.4 Derived facts computed at index time
 
-The indexer computes and stores, for each metric: its inputs; the set of **available dimensions** (section 7.4), each with its entity, description, type, effective sensitivity, and the join path that reaches it; the allowed grains; and a plain-language formula line (for example "NPF Outstanding Principal divided by Outstanding Principal"). Search results, metric pages, `get_definition`, and the compiler's error messages all read these stored facts, so they always agree.
+The indexer computes and stores, for each metric: its inputs; the set of **available dimensions** (section 7.4), each with its entity, description, type, effective sensitivity, and the join path that reaches it; the rules it uses (through its measures and filters); the allowed grains; and a plain-language formula line (for example "NPF Outstanding Principal divided by Outstanding Principal"). Search results, metric pages, `get_definition`, and the compiler's error messages all read these stored facts, so they always agree.
 
 ## 6. Internal metadata model
 
@@ -239,7 +247,7 @@ class CatalogConnector(Protocol):
     def check(self) -> None: ...        # raises ConnectorError with a clear message if misconfigured
 ```
 
-Each connector maps its catalog's table identifiers to `engine_fqn` through its own configuration (for OpenMetadata: a mapping from service name to Trino catalog name). Lineage (CON-6) will add an optional method in phase 3; do not add it now.
+Each connector maps its catalog's table identifiers to `engine_fqn` through its own configuration (for OpenMetadata: a mapping from service name to the engine's database name). Lineage (CON-6) will add an optional method in phase 3; do not add it now.
 
 ### 6.2 The file-based catalog format (CON-3)
 
@@ -264,19 +272,16 @@ glossary_terms:
 
 ### 6.3 The engine interface (CON-4)
 
-```python
-@dataclass(frozen=True)
-class EngineCredentials:
-    user: str
-    password: str | None            # None only where the engine allows it (the dev stack)
+Makna never runs a caller's query (D-21). It talks to the target engine only for its own needs: listing tables and columns (`makna catalog compare`) and the freshness check (section 13), both with one read-only service account from `MAKNA_ENGINE_URL`.
 
+```python
 class EngineConnector(Protocol):
-    dialect: str                    # sqlglot dialect name, "trino"
-    def list_tables(self, creds, catalog: str, schema: str) -> list[EngineTable]: ...   # name, columns(name, native_type)
-    def execute(self, creds, sql: str, *, max_rows: int, timeout_s: int) -> QueryResult: ...   # columns, rows, truncated
+    dialect: str                    # sqlglot dialect name: "postgres" (MVP) or "duckdb" (tests)
+    def list_tables(self, schema: str) -> list[EngineTable]: ...                    # name, columns(name, native_type)
+    def latest_value(self, table: str, expr: exp.Expression) -> date | None: ...    # SELECT MAX(expr): the freshness check
 ```
 
-The Trino connector uses the `trino` Python client with basic authentication over HTTPS when a password is given. Engine introspection is used by `makna catalog compare`, which reports tables and columns that the catalog and the engine disagree on; it is not a second source of metadata.
+The PostgreSQL connector uses `psycopg`. The freshness query is built as a sqlglot tree like every other query. Engine introspection is used by `makna catalog compare`, which reports tables and columns that the catalog and the engine disagree on; it is not a second source of metadata. A Trino connector can be added behind the same interface later (CON-7, D-22).
 
 ### 6.4 Database tables
 
@@ -297,9 +302,9 @@ All tables are in the `makna` database. Everything in the first two groups can b
 | Table | Columns |
 |---|---|
 | `semantic_object` | `id` (`kind:name`), `kind`, `name`, `domain`, `label`, `status` (state of the version being served: `approved`, `deprecated`, or, for an object with no official file, `draft`/`in_review`), `has_proposal`, `proposal_status`, `official` jsonb (the official file's content), `proposal` jsonb, `official_path`, `official_commit`, `proposal_commit`, `version`, `owner_team`, `sensitivity`, `derived` jsonb (section 5.4), `updated_at` |
-| `object_edge` | `src_id`, `dst_id`, `type` (`input_of`, `measured_on`, `joins_to`, `explains`, `replaced_by`, `same_entity`) |
+| `object_edge` | `src_id`, `dst_id`, `type` (`input_of`, `measured_on`, `joins_to`, `uses_rule`, `explains`, `replaced_by`, `same_entity`) |
 | `reference_issue` | `id`, `object_id`, `part` (for example `dimension:phone_number`), `code` (R01 to R04), `message`, `opened_at`, `closed_at` |
-| `search_document` | `id`, `object_id`, `kind` (`metric`, `entity`, `dimension`, `glossary_term`, `domain`, `column`), `status`, `domain`, `names` text, `description` text, `extra` text, `tsv` tsvector (generated), `embedding` vector, `text_hash` |
+| `search_document` | `id`, `object_id`, `kind` (`metric`, `entity`, `dimension`, `rule`, `glossary_term`, `domain`, `column`), `status`, `domain`, `names` text, `description` text, `extra` text, `tsv` tsvector (generated), `embedding` vector, `text_hash` |
 | `index_state` | `key`, `value` (`last_indexed_commit`, `definitions_version`, `embedding_model`) |
 | `data_freshness` | `object_id`, `latest_value` (the newest value of the measure's time dimension), `checked_at` |
 
@@ -308,11 +313,11 @@ All tables are in the `makna` database. Everything in the first two groups can b
 | Table | Columns |
 |---|---|
 | `app_user` | `id`, `email` unique, `display_name`, `password_hash`, `role`, `teams` text[], `is_active`, `created_at` |
-| `api_token` | `id`, `user_id`, `name`, `token_hash`, `can_run` boolean, `engine_credentials` bytea (the owner's engine user and password, encrypted with `MAKNA_CREDENTIALS_KEY`; set only when `can_run`), `created_at`, `last_used_at`, `revoked_at` |
+| `api_token` | `id`, `user_id`, `name`, `token_hash`, `created_at`, `last_used_at`, `revoked_at` |
 | `audit_event` | `id`, `at`, `actor_user_id`, `actor_label`, `action`, `object_id`, `from_status`, `to_status`, `reason`, `commit_sha`; unique on (`commit_sha`, `object_id`, `action`) |
 | `tool_call_log` | `id`, `at`, `channel` (`mcp`, `web`, `cli`), `user_id`, `token_id`, `tool`, `request` jsonb (redacted), `result` jsonb (object ids returned, confidence, row count; never row values), `status` (`ok`, `error`, `refused`), `error_code`, `duration_ms` |
 
-**What becomes a search document.** One per approved or deprecated object; one per object that exists only as a proposal (with its proposal status); one per dimension of each indexed entity (`dimension:<entity>.<name>`); one per catalog column (`column:<engine_fqn>.<name>`, status `approved`; a column whose derived sensitivity is `personal` is returned only to curators and above, never to agents or viewers, so search is not a map of where raw personal data lives); one per catalog glossary term that no Makna glossary term claims through `catalog_term`. `names` holds the name with underscores as spaces, the label, and all synonyms. `extra` holds example questions, the formula line, value descriptions, and caveats.
+**What becomes a search document.** One per approved or deprecated object; one per object that exists only as a proposal (with its proposal status); one per dimension and one per rule of each indexed entity (`dimension:<entity>.<name>`, `rule:<entity>.<name>`); one per catalog column (`column:<engine_fqn>.<name>`, status `approved`; a column whose derived sensitivity is `personal` is returned only to curators and above, never to agents or viewers, so search is not a map of where raw personal data lives); one per catalog glossary term that no Makna glossary term claims through `catalog_term`. `names` holds the name with underscores as spaces, the label, and all synonyms. `extra` holds example questions (including those of example requests), the formula line, value descriptions, and caveats.
 
 ## 7. The query compiler
 
@@ -386,7 +391,7 @@ Then:
 
 This "aggregate separately, then combine" shape is the core correctness rule. Inputs are never joined row to row. The spike shows the naive join giving a collection rate of 1.0006 where the correct value is 0.9411. `UNION ALL` plus `GROUP BY` is used instead of `FULL OUTER JOIN` because grouping treats NULL keys as equal, needs no null-safe join syntax, and extends to any number of inputs.
 
-All SQL is built as a sqlglot syntax tree and printed with `dialect="trino"`. Expressions from YAML are parsed and their columns bound to a table alias. Filter values become literal nodes. **No SQL text is ever built by string concatenation or formatting.** Because the tree is dialect-neutral, tests print the same tree for DuckDB and run it in-process (section 15).
+All SQL is built as a sqlglot syntax tree and printed for the configured dialect (`postgres` in the MVP; D-22). Expressions from YAML are parsed and their columns bound to a table alias. Filter values become literal nodes. **No SQL text is ever built by string concatenation or formatting.** Because the tree is dialect-neutral, unit tests print the same tree for DuckDB and run it in-process, and the engine tier runs it on PostgreSQL (section 15). `spikes/compiler/run_on_postgres.py` showed both on the spike cases.
 
 ### 7.6 Sensitivity and masking (QRY-2, Q-5, DR-5)
 
@@ -400,11 +405,11 @@ Levels, from least to most strict: `public`, `internal`, `confidential`, `person
   - It can never be used in a filter, masked or not (filtering on an identity number singles out a person): error `PERSONAL_DATA_REFUSED`.
   - A measure may count rows or distinct values of a personal column (V12), because the result is an aggregate. A personal dimension cannot be a measure's official date (V16) and cannot list `values` (V17).
 - **No one can unmask through Makna in the MVP.** There is no role that sees raw personal data. Row-level policies (QRY-5) and privileged unmasking are phase 2.
-- **Agents cannot send SQL.** `run_query` takes a request, compiles it, and runs the compiled SQL. There is no tool or route that accepts SQL text.
+- **Makna accepts no SQL text and runs no caller queries** (D-21). Its join rules and masking hold for the SQL it produces. A caller that also has direct access to the engine can run other SQL; engine access control is the protection there (below).
 - **Final check.** After generation, the governance pass walks the tree: every reference to a column read by any personal dimension (whether or not the request selected it) must sit inside a masking expression or inside `COUNT` or `COUNT(DISTINCT ...)`, or compilation fails. `MIN`, `MAX`, and other aggregates do not count, because they return one person's value. This catches mistakes in the generator itself.
 - `confidential` and below are not masked in the MVP; the level is shown to people and agents and recorded in logs.
 
-Makna's masking is a property of the SQL it generates. It does not replace access control in the engine: the engine still decides what each user's credentials may read.
+Makna's masking is a property of the SQL it generates. It does not replace access control in the engine: the engine still decides what each user's credentials may read. Because agents run SQL with their own engine access (D-21), an adopter that exposes personal data must also restrict or mask it in the engine.
 
 ### 7.7 Errors
 
@@ -425,7 +430,6 @@ Compilation fails with one structured error. Each error has a code, a message th
 | `PERSONAL_DATA_REFUSED` | Section 7.6. | the dimension, and whether a masked form exists |
 | `LIMIT_EXCEEDED` | Limit above 10000. | |
 
-Run errors: `RUN_DISABLED`, `ENGINE_CREDENTIALS_REQUIRED`, `ENGINE_ERROR` (with the engine's message), `ENGINE_TIMEOUT`.
 
 ### 7.8 Explanation (QRY-3)
 
@@ -468,7 +472,7 @@ One statement with two ranked lists and a fusion step:
 - **Vector list**: ordered by cosine distance to the query embedding. Top 30.
 - **Fusion**: `score = (w_keyword / (60 + keyword_rank) + w_vector / (60 + vector_rank)) * status_weight * kind_weight`.
 
-Starting weights, all in `config/makna.toml` under `[search]` and tuned on the golden set in WP-15: `w_keyword = 1.0`, `w_vector = 1.0`; status: approved 1.0, draft and in review 0.5; kind: metric 1.0, glossary term 0.9, entity 0.8, dimension 0.8, domain 0.7, column 0.6.
+Starting weights, all in `config/makna.toml` under `[search]` and tuned on the golden set in WP-15: `w_keyword = 1.0`, `w_vector = 1.0`; status: approved 1.0, draft and in review 0.5; kind: metric 1.0, glossary term 0.9, entity 0.8, dimension 0.8, rule 0.8, domain 0.7, column 0.6.
 
 Status rules (SRC-3): deprecated documents are excluded unless `include_deprecated` is set. Agents (MCP) and viewers search approved documents only. Curators, approvers, and admins also see drafts, at half weight. Synonyms in both languages are in `names`, the highest-weight field (SRC-2).
 
@@ -510,18 +514,17 @@ When a question is ambiguous, Makna **returns the options** and never picks sile
 
 | Service | Image | Role |
 |---|---|---|
-| `postgres` | `pgvector/pgvector` for PostgreSQL 17 | Two databases with separate roles: `makna` (the application, role `makna`) and `lending` (the sample data, owned by a loader role and read by Trino through a read-only role). The `makna` role cannot connect to `lending`, so the application's database settings never reach raw sample data. |
-| `trino` | `trinodb/trino`, version pinned in WP-05 | One Trino catalog named `lending`, using the PostgreSQL connector to read the `lending` database. No authentication in the dev stack, so its port is published on `127.0.0.1` only (for engine tests and evals). A real deployment must enable Trino authentication: Makna's masking does not replace engine access control (section 7.6). |
+| `postgres` | `pgvector/pgvector` for PostgreSQL 17 | Two databases with separate roles: `makna` (the application, role `makna`) and `lending` (the sample data and the target engine, owned by a loader role). The `makna` role cannot connect to `lending`. A read-only role reads `lending`: Makna's freshness check and catalog comparison use it through `MAKNA_ENGINE_URL`, and so do the engine tests and evals. Its port is published on `127.0.0.1` only. |
 | `init` | the Makna image | Runs once: generate data if missing, load it into `lending`, run migrations, copy `semantic/definitions/` into a new git repository in a volume, sync the catalog from `data/catalog/lending.catalog.yaml`, build the index, create four demo users (one per role). Each step is added by the work package that builds the feature (see `docs/PLAN.md`). |
 | `app` | the Makna image | `makna serve`: web app on `/`, MCP on `/mcp`, health on `/healthz`, one port (8000). |
 
 The requirement lists "API, MCP server, web app" separately; in the MVP they are three interfaces of one process. They can be split into separate processes later without code changes because they share only the service layer.
 
-Why PostgreSQL behind Trino: it is already in the stack, holds the sample data durably, and loads quickly. The semantic layer only ever sees Trino names (`lending.core.contracts`).
+Why the sample data sits in PostgreSQL and is queried there directly (D-22): it is already in the stack, holds the data durably, loads quickly, and needs no second engine. The semantic layer addresses tables as `lending.core.<table>`. PostgreSQL resolves these three-part names in the current database (`lending`), and DuckDB through an attached database named `lending`; `spikes/compiler/run_on_postgres.py` showed both.
 
 An OpenMetadata server is **not** in the default stack (it needs its own database and a search engine). `deploy/docker-compose.openmetadata.yml` adds it for the connector's integration test (WP-21).
 
-Configuration: secrets and connection settings from environment variables (NFR-4): `MAKNA_DATABASE_URL`, `MAKNA_SECRET_KEY`, `MAKNA_CREDENTIALS_KEY` (encrypts stored engine credentials), `MAKNA_DEFINITIONS_REPO`, `MAKNA_TRINO_URL`, `MAKNA_RUN_ENABLED` (default `false`; the dev stack sets `true`), `MAKNA_EMBEDDING_PROVIDER`, `MAKNA_ENGINE_SERVICE_USER`/`MAKNA_ENGINE_SERVICE_PASSWORD` (optional, used only by the freshness check), connector secrets such as `MAKNA_OPENMETADATA_TOKEN`. Non-secret settings (search weights, tag map, catalog sources) are in `config/makna.toml`. `deploy/.env.example` lists every variable with no values.
+Configuration: secrets and connection settings from environment variables (NFR-4): `MAKNA_DATABASE_URL`, `MAKNA_SECRET_KEY`, `MAKNA_DEFINITIONS_REPO`, `MAKNA_ENGINE_URL` (optional; the target database with a read-only service account, used only by the freshness check and `makna catalog compare`), `MAKNA_EMBEDDING_PROVIDER`, connector secrets such as `MAKNA_OPENMETADATA_TOKEN`. Non-secret settings (search weights, tag map, catalog sources, the SQL dialect, the governance team, the minimum group size) are in `config/makna.toml`. `deploy/.env.example` lists every variable with no values.
 
 Self-hosting (NFR-3): nothing in the running system calls an outside service. The embedding model is downloaded once when the image is built and stored in the image; a build argument points to an internal mirror for sites without internet access.
 
@@ -568,14 +571,13 @@ The audit log (GOV-1) is therefore stored twice on purpose: in git history (cann
 
 ## 11. Access control (Q-6, DR-6)
 
-Sign-in is by email and password (Argon2 hash) with a server-side signed session cookie. Agents and scripts use API tokens (random 32 bytes, shown once, stored as a SHA-256 hash), sent as `Authorization: Bearer`. A token belongs to a user and acts with at most the `viewer` permissions of that user, plus `run` if the token has `can_run` and stored engine credentials. Single sign-on is phase 2 (WEB-5).
+Sign-in is by email and password (Argon2 hash) with a server-side signed session cookie. Agents and scripts use API tokens (random 32 bytes, shown once, stored as a SHA-256 hash), sent as `Authorization: Bearer`. A token belongs to a user and acts with at most the `viewer` permissions of that user. Single sign-on is phase 2 (WEB-5).
 
 | Permission | viewer | curator | approver | admin | agent token |
 |---|---|---|---|---|---|
 | Search and read approved definitions | yes | yes | yes | yes | yes |
 | See drafts and proposals | no | yes | yes | yes | no |
 | Compile a query | yes | yes | yes | yes | yes |
-| Run a query (when `MAKNA_RUN_ENABLED`) with own engine credentials | yes | yes | yes | yes | if `can_run` |
 | Use the test bench | yes | yes | yes | yes | n/a |
 | Create, edit, submit, withdraw proposals | no | yes | yes | yes | no |
 | Approve, reject, deprecate | no | owner team only | yes | yes | no |
@@ -588,18 +590,19 @@ Sign-in is by email and password (Argon2 hash) with a server-side signed session
 - **Two-person rule.** No user who authored any commit on the proposal may approve it. That covers every commit since the object was last approved, or since it was created for a new object, and includes the authors of external changes, matched by email. `MAKNA_ALLOW_SELF_APPROVAL=true` turns this rule off for single-user installs. The default is `false`, and the dev stack keeps the default (D-11).
 - **Which owner team counts.** Approval rights come from the `owner.team` of the official file. For a new object they come from the proposal's `owner.team`, which must be one of the proposer's teams unless the proposer is an approver or admin (checked at `create_proposal`).
 - **Changing the owner.** A proposal that changes `owner.team` of an existing object can be approved only by an approver or admin.
+- **Loosening sensitivity (D-20).** The approver must also be a member of the governance team (`[governance] team` in `config/makna.toml`, default `data-governance`) when the proposal: declares an object, dimension, or rule at a less strict level than its official version; removes a masking rule or replaces it with a finer one (for example year to month); or creates an object with a `personal` dimension. Being an approver or admin is not enough. Business meaning stays with the owner team; sensitivity is the governance team's call.
 
 API tokens cannot perform any write action, whatever the user's role (D-4).
 
 ## 12. The MCP server (MCP-1, MCP-2, MCP-3, Q-7, DR-7)
 
-Built with the official Python SDK (`mcp` 2.x, class `MCPServer`; see `docs/notes/mcp-sdk-2-renamed-fastmcp.md`). Transports: Streamable HTTP mounted in the application at `/mcp` (the main one, with bearer token), and stdio through `makna mcp`. The stdio command is a thin bridge for MCP clients that can only start a local process. It holds only `MAKNA_URL` and `MAKNA_TOKEN`, forwards every message to `/mcp` over HTTP, and has no database settings and no service code. It refuses to start without a token. Every channel therefore has a token-based caller, and no agent process ever holds the database URL. Every tool is read-only and marked with `readOnlyHint`.
+Built with the official Python SDK (`mcp` 2.x, class `MCPServer`; see `docs/notes/mcp-sdk-2-renamed-fastmcp.md`). Transports: Streamable HTTP mounted in the application at `/mcp` (the main one, with bearer token), and stdio through `makna mcp`. The stdio command is a thin bridge for MCP clients that can only start a local process. It holds only `MAKNA_URL` and `MAKNA_TOKEN`, forwards every message to `/mcp` over HTTP, and has no database settings and no service code. It refuses to start without a token. Every channel therefore has a token-based caller, and no agent process ever holds Makna's database URL. Every tool is read-only and marked with `readOnlyHint`.
 
-**Agents never hold engine credentials.** If they did, they could run any SQL on the engine directly, outside Makna's joins and masking. When a user creates a token with `can_run` on `/account`, they enter their own engine user and password once. Makna stores them encrypted with the token (`api_token.engine_credentials`, key `MAKNA_CREDENTIALS_KEY`) and never returns or logs them. `makna_run_query` runs the compiled SQL with those credentials, so the query runs as the token's owner on the engine (QRY-4) and engine access control still applies. The agent holds only the Makna token, which cannot be used to connect to the engine. No tool input or header accepts engine credentials.
+**Makna does not run queries** (D-21). `makna_compile_query` returns SQL; the agent runs it with its own database tool and its own engine access, so Makna holds no engine credentials for callers and no tool input or header accepts any. Makna's guarantees (approved joins, masking, refusals) cover the SQL it returns. The server instructions tell the agent to run that SQL unchanged; whether the agent can also run other SQL is decided by the engine's access control, not by Makna.
 
 Server instructions (sent at initialization):
 
-> Makna holds the approved business definitions for this organization's data. To answer a question about a business number: 1) call makna_search with the user's words; 2) call makna_get_definition for the best candidate and check that its description really matches what the user asked; 3) call makna_compile_query (or makna_run_query) with a structured request. Never write SQL yourself for a number that Makna defines. If search confidence is low or no description matches, tell the user that no approved definition exists; do not substitute a different metric. If search reports several candidates, ask the user which one they mean.
+> Makna holds the approved business definitions for this organization's data. To answer a question about a business number: 1) call makna_search with the user's words; 2) call makna_get_definition for the best candidate and check that its description really matches what the user asked; 3) call makna_compile_query with a structured request (the definition's example requests show the format), then run the SQL it returns, unchanged, with your own database tool. Never write SQL yourself for a number that Makna defines. If search confidence is low or no description matches, tell the user that no approved definition exists; do not substitute a different metric. If search reports several candidates, ask the user which one they mean.
 
 Design rules for responses: JSON with short keys that are full words; no nulls or empty lists; descriptions cut to 200 characters in lists; identifiers the agent can pass straight back. Size budgets are tested (WP-13).
 
@@ -649,15 +652,18 @@ Output for a metric (budget: 6,000 characters in `full`; `brief` omits dimension
      "note": "groups of fewer than 10 customers are left out"}
   ],
   "unavailable_dimensions": [{"ref": "customer.full_name", "reason": "personal data"}, {"ref": "customer.phone_number", "reason": "personal data"}],
+  "rules": [{"ref": "contract_snapshot.non_performing", "description": "A position more than 90 days past due."}],
+  "example_requests": [{"question": "NPF ratio by region each quarter from Q4 2025 to Q2 2026",
+                        "request": {"dimensions": ["branch.region_name"], "grain": "quarter", "time_start": "2025-10-01", "time_end": "2026-07-01"}}],
   "caveats": "...", "example_questions": ["What is our NPF?"]
 }
 ```
 
-Entities return their description, dimensions, and relationships. Glossary terms return the definition and related objects. Unknown id: error `NOT_FOUND` with up to 3 close ids.
+Entities return their description, dimensions, rules, and relationships. Glossary terms return the definition and related objects. Unknown id: error `NOT_FOUND` with up to 3 close ids.
 
 ### `makna_list_related`
 
-> List objects related to one object: the inputs of a metric, metrics built from it, metrics on the same entity, the business terms that explain it, and its replacement if deprecated. Use it to find a nearby metric when the first one is not quite what the user asked for. Returns up to 20 related objects with one-line descriptions. An empty list means nothing is related: go back to makna_search.
+> List objects related to one object: the inputs of a metric, metrics built from it, metrics on the same entity, the rules it uses (or, for a rule, the metrics that use it), the business terms that explain it, and its replacement if deprecated. Use it to find a nearby metric when the first one is not quite what the user asked for. Returns up to 20 related objects with one-line descriptions. An empty list means nothing is related: go back to makna_search.
 
 Input: `id`, `relation` (optional filter). Output: `{"related": [{"id", "label", "kind", "relation", "description"}]}`, at most 20.
 
@@ -668,19 +674,13 @@ Input: `id`, `relation` (optional filter). Output: `{"related": [{"id", "label",
 Input: the request of section 7.1. Output:
 
 ```json
-{"sql": "...", "dialect": "trino",
+{"sql": "...", "dialect": "postgres",
  "columns": [{"name": "metric_time", "role": "time"}, {"name": "branch__region_name", "role": "dimension"},
              {"name": "npf_ratio", "role": "metric", "unit": "percent"}],
  "explanation": ["..."], "warnings": ["..."], "metric": {"id": "metric:npf_ratio", "version": 3}}
 ```
 
 Errors: `{"error": {"code": "DIMENSION_NOT_AVAILABLE", "message": "...", "details": {...}}}` (section 7.7), returned as a tool error.
-
-### `makna_run_query` (registered only when `MAKNA_RUN_ENABLED` is true and the token has `can_run`)
-
-> Compile a structured request and run it on the query engine under your user's engine account. Same input as makna_compile_query. Returns the rows (at most `limit`), the SQL that ran, and the explanation. Use this when the user wants the number itself. Errors are the same as for makna_compile_query, plus engine errors; an empty result means the data has no rows for that request, not that the metric is wrong.
-
-Output adds `rows` (list of lists), `row_count`, and `truncated`.
 
 **Client compatibility (MCP-3)** is tested in WP-22C with two different clients: the official SDK's client over stdio, and LangChain's MCP adapters over Streamable HTTP. Both list the tools and complete a search, a definition read, and a compile.
 
@@ -697,19 +697,18 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/entities/<name>`, `/glossary/<name>` | The same pattern. | WEB-1 |
 | `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V17) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
 | `/review` | Queue of proposals in review: object, author, reason, difference, validation result, reference issues. Approve and Reject ask for a reason. Buttons are shown only to users who may approve that object. | WEB-3 |
-| `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; the SQL and explanation; and, if running is enabled and engine credentials are in the session, the first 100 rows. | WEB-4 |
+| `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; and the SQL and explanation (with a copy button). The bench does not run the SQL (D-21). | WEB-4 |
 | `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19B and WP-19C). | GOV-1, GOV-2 |
 | `/admin/users`, `/admin/tokens`, `/admin/catalog` | Users and roles; tokens (both built in WP-16); sync runs and the reference-issue report, with buttons to run a sync and an index sync (built in WP-19C). | WEB-5, SEM-4 |
-| `/login`, `/logout`, `/account` | Sign-in; own tokens (a token that may run queries is created together with the owner's engine credentials, stored encrypted); engine credentials for this web session. | WEB-5 |
+| `/login`, `/logout`, `/account` | Sign-in; own tokens. | WEB-5 |
 
-Engine credentials entered on `/account` for the web session are kept in server memory for the session (lost on restart), never in the cookie and never in the database. Engine credentials given for a token are stored only encrypted (section 12).
 
-**Freshness** (WEB-1): `makna freshness refresh` runs, for each measure, `SELECT MAX(<time dimension>)` on the engine with the service credentials, and stores the result in `data_freshness`. The dev stack runs it in `init`. Without service credentials the page shows "freshness not available". The page also shows the date of the last approval.
+**Freshness** (WEB-1): `makna freshness refresh` runs, for each measure, `SELECT MAX(<time dimension>)` on the target database with the read-only service account (`MAKNA_ENGINE_URL`), and stores the result in `data_freshness`. The dev stack runs it in `init`. Without `MAKNA_ENGINE_URL` the page shows "freshness not available". The page also shows the date of the last approval.
 
 ## 14. Audit and logs (GOV-1, GOV-2)
 
 - **`audit_event`**: one row per lifecycle action (section 10), with actor, object, states, reason, and commit.
-- **`tool_call_log`**: one row per call to `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, and `resolve`, from any channel. `request` holds the query text and request after **redaction**: sequences of 9 or more digits, email addresses, and phone-like numbers are replaced with `[REDACTED]`; the value of any filter on a personal dimension is replaced with `[REDACTED]` whatever the call's outcome; for a call refused with `PERSONAL_DATA_REFUSED`, no free text is stored at all (only the tool, the dimension refs, and the error code). Names and other free-text personal data cannot be detected reliably, so query text kept after redaction may still contain a name someone typed. That is why the tool-call log is visible to approvers and admins only (section 11). It is a known limit of GOV-2's "with personal data removed", recorded in `docs/reviews/design.md` (R-12). `result` holds the ids returned, the confidence band, the error code, and the row count. Row values are never logged. Failures and refusals are logged like successes, with `status` and `error_code`.
+- **`tool_call_log`**: one row per call to `search`, `get_definition`, `list_related`, `compile_query`, and `resolve`, from any channel. `request` holds the query text and request after **redaction**: sequences of 9 or more digits, email addresses, and phone-like numbers are replaced with `[REDACTED]`; the value of any filter on a personal dimension is replaced with `[REDACTED]` whatever the call's outcome; for a call refused with `PERSONAL_DATA_REFUSED`, no free text is stored at all (only the tool, the dimension refs, and the error code). Names and other free-text personal data cannot be detected reliably, so query text kept after redaction may still contain a name someone typed. That is why the tool-call log is visible to approvers and admins only (section 11). GOV-2 reads "with personal data removed where it can be detected" (D-24). `result` holds the ids returned, the confidence band, and the error code. Makna never sees result rows, so none can be logged. Failures and refusals are logged like successes, with `status` and `error_code`.
 - Application logs are JSON lines on standard output with a request id. OpenTelemetry traces (GOV-4) are phase 2; the service layer functions are the natural span boundaries.
 
 ## 15. Testing strategy (NFR-5)
@@ -718,12 +717,12 @@ Engine credentials entered on `/account` for the web session are kept in server 
 |---|---|---|
 | `tests/unit` | Nothing but Python. | Models, validation rules, compiler (SQL compared as syntax trees, and executed on DuckDB by printing the same tree for DuckDB against a small fixture dataset), resolver, redaction, permission matrix. |
 | `tests/integration` | PostgreSQL with pgvector (`MAKNA_TEST_DATABASE_URL`). | Indexer, search, definition store with a temporary git repository, lifecycle, services, MCP tools in process, web routes with the FastAPI test client. Uses the `hash` embedding provider. |
-| `tests/engine` | The dev stack's Trino. | Trino connector; every approved sample metric compiles and runs; compile-correctness evals. |
+| `tests/engine` | PostgreSQL holding the generated sample data (a service container in CI, or a local PostgreSQL). | PostgreSQL connector (introspection, freshness); every approved sample metric compiles and runs on PostgreSQL; compile-correctness evals. |
 | `evals/` | Retrieval and compile evals need the dev stack. The agent eval also needs a language model key. | Section 8 of the requirements; see `docs/EVALS.md`. |
 
 DuckDB appears only in tests, as a fast stand-in for the engine. It is not an engine connector and is not shipped.
 
-Coding sessions may have no Docker (D-15). There, the unit tier (including DuckDB) is what runs locally, and results on Trino count as proven only when the CI stack job passes. The rules are in `docs/PLAN.md`, "How to use this plan".
+Coding sessions may have no Docker (D-15). There, the unit tier (including DuckDB) is what runs locally, and results on PostgreSQL count as proven only when CI passes, unless a PostgreSQL is available in the session. The rules are in `docs/PLAN.md`, "How to use this plan".
 
 CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a PostgreSQL service container; then a job that starts the dev stack and runs `tests/engine` and the retrieval and compile evals with thresholds. The agent eval runs on manual trigger only, in quick mode, when the owner has configured the model key as a CI secret; the full run is started by hand (`docs/EVALS.md` section 5.5).
 
@@ -734,9 +733,9 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | CON-1 | 6.1 common catalog model and connector interface | WP-06 |
 | CON-2 | 6.1, DR-2 (OpenMetadata, REST) | WP-21 |
 | CON-3 | 6.2 file format | WP-06 |
-| CON-4 | 6.3 engine interface, 12 (credentials), 13 (`/account`) | WP-11 |
+| CON-4 | 6.3 engine interface, 13 freshness | WP-11 |
 | CON-5, CON-6, CON-7 | Not in MVP. 6.4 `content_hash` and `sync_run.summary` prepare CON-5. | — |
-| SEM-1 | 5.1, `semantic/schema/` | WP-03 |
+| SEM-1 | 5.1 (including rules and example requests), `semantic/schema/` | WP-03, WP-08 (V19) |
 | SEM-2 | 5.1 common fields | WP-03, WP-04 |
 | SEM-3 | 5.2, 10 | WP-03, WP-18 |
 | SEM-4 | 5.3 reference issues R01 to R04, 6.4 `reference_issue`, 13 `/admin/catalog` | WP-06, WP-19C |
@@ -749,7 +748,7 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | QRY-1 | 7.1 to 7.5 | WP-08, WP-09 |
 | QRY-2 | 7.6 | WP-10 |
 | QRY-3 | 7.8 | WP-09 |
-| QRY-4 | 4.2 step 7, 6.3, 12 | WP-11, WP-12, WP-12B |
+| QRY-4 | Dropped (D-21): Makna compiles only. | — |
 | QRY-5 | Not in MVP. | — |
 | MCP-1, MCP-2 | 12 | WP-13 |
 | MCP-3 | 12 client compatibility | WP-22C |
@@ -782,5 +781,10 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 - An index of actual data values for filters; only values declared in YAML are known to the resolver.
 - Unmasking personal data for privileged users; row-level policies (QRY-5).
 - Pushing to or pulling from a git remote from inside the application (operators can do it with git and `makna index sync`).
-- Publishing approved metrics back into the catalog (D-10: after the MVP; git stays the source of truth).
+- Publishing approved metrics back into the catalog (D-10, D-16: after the MVP; git stays the source of truth).
+- Running callers' queries (D-21): Makna compiles; callers run the SQL with their own tools.
+- Trino and other engines (D-22, CON-7): the MVP targets PostgreSQL, with DuckDB in tests.
+- A materialization registry of pre-computed metric columns (D-25).
+- A built-in chat assistant, an LLM gateway, and any agent write or feedback tool (D-26).
+- Linking rules to the pipeline columns that materialize them (lineage, CON-6).
 - A public REST API (MCP-4), reranking (SRC-5), incremental sync (CON-5), single sign-on, Indonesian interface text (WEB-6).

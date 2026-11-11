@@ -60,7 +60,7 @@ Each question is answered by a decision record below.
 | Q-4 | How do YAML in git and web edits stay consistent? | DR-4: the application commits to a git repository; proposals are sibling files. |
 | Q-5 | How are sensitivity tags and masking defined and enforced? | DR-5: four levels, masking rules on dimensions, enforced in the compiler plan and checked on the final syntax tree. |
 | Q-6 | What is the minimal role and permission model? | DR-6: four roles, owner-team approval, two-person rule, read-only agent tokens. |
-| Q-7 | What do the MCP tools return? | DR-7: five tools with compact JSON and tested size budgets. |
+| Q-7 | What do the MCP tools return? | DR-7: four tools (five before D-21 dropped the run tool) with compact JSON and tested size budgets. |
 | Q-8 | What is the shape of the golden set and how is an agent run scored? | DR-10: YAML questions with reference SQL; result-based scoring. |
 
 ## Status of the proposed defaults
@@ -72,7 +72,7 @@ Each question is answered by a decision record below.
 | P-3 | Kept. Proven in `spikes/compiler/`. |
 | P-4 | Kept, with one detail changed: the YAML editor widget is Ace, not CodeMirror (DR-8). |
 | P-5 | Kept. Note that the official SDK is now version 2 and renamed its server class (DR-7). |
-| P-6 | Kept. Detail added: Trino reads the sample data from PostgreSQL through its PostgreSQL connector (DR-11). |
+| P-6 | Kept, without Trino since D-22: the dev stack is PostgreSQL with the sample data, plus the Makna application (DR-11). |
 | P-7 | **Revised.** The default local model runs inside the Makna process through `fastembed`, not through a separate Ollama server. Ollama stays as an option (DR-9). |
 | P-8 | Kept. Layout in `docs/ARCHITECTURE.md` section 3. |
 
@@ -161,13 +161,13 @@ Sources: `https://docs.open-metadata.org/latest/releases/all-releases`; `https:/
 
 ### DR-6 (answers Q-6): Four roles, owner-team approval, a two-person rule, and read-only agent tokens
 
-**Choice.** The matrix in `docs/ARCHITECTURE.md` section 11. Roles are `viewer`, `curator`, `approver`, `admin`. A user has one role and a list of teams. An object may be approved by an approver or admin, or by a curator whose teams include the object's owner team. No author of any commit on a proposal can approve it, unless `MAKNA_ALLOW_SELF_APPROVAL=true` (owner decision D-11; default `false`). **Revised after review (R-6):** approval rights follow the official file's owner team, not the proposal's; a new object's owner team must be one of the proposer's teams; a change of owner team needs an approver or admin. API tokens act as a viewer at most and can never write. **Revised after review (R-2, R-3):** every MCP channel, stdio included, authenticates with a token (the stdio command is a bridge to the HTTP endpoint with no database settings), and agents never hold engine credentials: a token that may run queries carries its owner's engine credentials, stored encrypted on the server.
+**Choice.** The matrix in `docs/ARCHITECTURE.md` section 11. Roles are `viewer`, `curator`, `approver`, `admin`. A user has one role and a list of teams. An object may be approved by an approver or admin, or by a curator whose teams include the object's owner team. No author of any commit on a proposal can approve it, unless `MAKNA_ALLOW_SELF_APPROVAL=true` (owner decision D-11; default `false`). **Revised after review (R-6):** approval rights follow the official file's owner team, not the proposal's; a new object's owner team must be one of the proposer's teams; a change of owner team needs an approver or admin. API tokens act as a viewer at most and can never write. **Revised after review (R-2, R-3):** every MCP channel, stdio included, authenticates with a token (the stdio command is a bridge to the HTTP endpoint with no database settings), and agents never get Makna's database settings. (The R-3 fix that stored engine credentials with tokens was superseded by D-21: Makna runs no queries, so it holds no engine credentials for callers.) **D-20** adds one more approval rule: a change that loosens sensitivity needs a member of the governance team.
 
 **Reason.** This is the smallest model that satisfies "only owners or approvers can approve" (WEB-3) and D-4 and D-5. The two-person rule is the control a regulated lender expects; the switch exists so a single-developer install is not locked out. Per-domain roles and groups from single sign-on are phase 2.
 
-### DR-7 (answers Q-7): Five MCP tools with compact JSON, tested size budgets, and actionable errors
+### DR-7 (answers Q-7): Four MCP tools with compact JSON, tested size budgets, and actionable errors
 
-**Choice.** `makna_search`, `makna_get_definition`, `makna_list_related`, `makna_compile_query`, and `makna_run_query` (registered only when running is enabled). Exact inputs, outputs, and descriptions are in `docs/ARCHITECTURE.md` section 12.
+**Choice.** `makna_search`, `makna_get_definition`, `makna_list_related`, and `makna_compile_query`. **Revised by D-21:** the fifth tool, `makna_run_query`, is dropped; agents run the compiled SQL with their own tools. Exact inputs, outputs, and descriptions are in `docs/ARCHITECTURE.md` section 12.
 
 **Reason.** Search returns five brief hits, not full definitions, so the common first call is small (budget 2,500 characters); the agent pays for a full definition only for the candidate it picks (budget 6,000 characters). The definition lists the exact dimension references, values, and grains the compiler accepts, so the agent can build a valid request on the first try. Errors list what is allowed, so a wrong request is repaired in one more call. Budgets are enforced by tests so that later changes cannot bloat the responses.
 
@@ -199,13 +199,15 @@ Sources: `https://docs.open-metadata.org/latest/releases/all-releases`; `https:/
 
 **Reason.** Result-based scoring is objective and the same for both arms of the comparison, which a wording-based or judge-model score would not be. Reference SQL written independently of the compiler is what gives the compile eval its value. A fixed "today" (2026-07-01) keeps relative time deterministic.
 
-### DR-11 (refines P-6): Trino reads the sample data from PostgreSQL; DuckDB stands in for the engine in unit tests only
+### DR-11 (refines P-6): The sample data lives in PostgreSQL; DuckDB runs the SQL in unit tests
+
+**Revised by D-22.** Trino is no longer in the stack. PostgreSQL is the target engine: the compiler prints SQL for the `postgres` dialect, and the engine tier and the evals run it on the `lending` database directly. The text below is the original record, kept for its reasoning; read "Trino" in it as "the target engine".
 
 **Choice.** The dev stack loads the synthetic data into a `lending` database on the same PostgreSQL server and exposes it through Trino's PostgreSQL connector as catalog `lending`. **Revised after review (R-2):** the two databases have separate roles; the application's role cannot connect to `lending`, and Trino reads it through a read-only role. Unit tests print the compiler's syntax tree for DuckDB and run it in-process.
 
 **Reason.** No extra storage service, durable data, fast load. The compiler builds a dialect-neutral sqlglot tree, so a DuckDB run costs nothing extra and gives fast correctness tests; the Trino tier still runs every approved metric on the real engine. DuckDB is a test tool, not a supported engine (CON-7 stays in phase 3).
 
-**Not checked.** The current Trino release number could not be read in the design environment. WP-05 pins the current stable release and records it.
+**Not checked (no longer relevant after D-22).** The current Trino release number could not be read in the design environment.
 
 ### DR-12: Our own compiler on sqlglot, with "aggregate each input separately, then combine"
 
