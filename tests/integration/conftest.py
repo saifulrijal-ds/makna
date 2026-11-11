@@ -16,6 +16,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
 
 from makna.index.db import sqlalchemy_url
+from makna.model.search import EmbeddingProvider
 from tests import db_env
 
 
@@ -68,7 +69,7 @@ def migrated_engine(migrated_url: URL) -> Iterator[Engine]:
     engine.dispose()
 
 
-def _build_sample_index(url: URL) -> None:
+def _build_sample_index(url: URL, provider: EmbeddingProvider | None = None) -> None:
     """Migrate, sync the sample catalog, and index the sample definitions with `hash`."""
     from makna.catalog.file import FileConnector
     from makna.catalog.sync import sync_catalog
@@ -85,7 +86,7 @@ def _build_sample_index(url: URL) -> None:
             engine, FileConnector(EXPORT), tag_map=TAG_MAP, entities=entities, glossary_terms=terms
         )
         objects = definition_objects(load_definitions(DEFINITIONS))
-        indexer.build(engine, HashProvider(), objects)
+        indexer.build(engine, provider or HashProvider(), objects)
     finally:
         engine.dispose()
 

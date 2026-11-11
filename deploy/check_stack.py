@@ -4,7 +4,8 @@
 
 Proves WP-05 acceptance 2 (row counts), 4 (a second `init` changes nothing) and 6 (roles and
 the published port), and that `init` synced the sample catalog with no open reference issue
-(WP-06). Passwords default to the development values of docker-compose.yml.
+(WP-06) and built the search index (WP-07). Passwords default to the development values of
+docker-compose.yml.
 """
 
 from __future__ import annotations
@@ -83,6 +84,25 @@ def check_catalog_synced() -> None:
     assert issues is not None and issues[0] == 0, f"{issues} open reference issues"
 
 
+def check_index_built() -> None:
+    """WP-07: `init` built the search index with the default model (not the `hash` stand-in)."""
+    with connect("makna", "makna") as connection:
+        documents = connection.execute("SELECT count(*) FROM search_document").fetchone()
+        kinds = connection.execute("SELECT DISTINCT kind FROM search_document").fetchall()
+        model = connection.execute(
+            "SELECT value FROM index_state WHERE key = 'embedding_model'"
+        ).fetchone()
+        unembedded = connection.execute(
+            "SELECT count(*) FROM search_document WHERE embedding IS NULL"
+        ).fetchone()
+    assert documents is not None and documents[0] > 0, "search_document is empty after init"
+    assert {k[0] for k in kinds} >= {"metric", "entity", "dimension", "column", "glossary_term"}, (
+        kinds
+    )
+    assert model == ("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",), model
+    assert unembedded == (0,), unembedded
+
+
 def snapshot() -> dict[str, object]:
     """Everything a second `init` run could change: rows, load markers, tuple counters."""
     state: dict[str, object] = {}
@@ -112,7 +132,7 @@ def check_second_init_changes_nothing() -> None:
         f"init exited {result.returncode}:\n{result.stdout}{result.stderr}"
     )
     output = result.stdout + result.stderr
-    for step in ("generate-sample-data", "load-lending", "migrate", "sync-catalog"):
+    for step in ("generate-sample-data", "load-lending", "migrate", "sync-catalog", "build-index"):
         assert f"init: {step}: unchanged" in output, (
             f"step {step} did not report unchanged:\n{output}"
         )
@@ -199,6 +219,7 @@ CHECKS: list[Callable[[], None]] = [
     check_roles,
     check_published_ports,
     check_catalog_synced,
+    check_index_built,
     check_second_init_changes_nothing,
 ]
 

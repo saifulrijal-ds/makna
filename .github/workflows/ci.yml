@@ -55,7 +55,7 @@ jobs:
   stack:
     name: Development stack
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -72,9 +72,35 @@ jobs:
         run: docker compose -f deploy/docker-compose.yml up -d --wait --wait-timeout 300
       - name: Check row counts, a second init, roles and ports (acceptance 2, 4, 6)
         run: uv run python -m deploy.check_stack
+      - name: Search with the real embedding model, latency and ranking (WP-07 acceptance 8)
+        run: docker compose -f deploy/docker-compose.yml exec -T app python -m deploy.check_search
       - name: Show service logs
         if: failure()
         run: docker compose -f deploy/docker-compose.yml logs --no-color
       - name: Stop the stack
         if: always()
         run: docker compose -f deploy/docker-compose.yml down -v
+      # The same image on a network with no route out (internal: true), as a stack of its own:
+      # init builds the index, then the CLI and the checks run with the model baked into the
+      # image (NFR-3, WP-07 acceptance 9).
+      - name: Start the stack on a network with no internet (acceptance 9)
+        run: >
+          docker compose -p makna-offline
+          -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml
+          up -d --wait --wait-timeout 300
+      - name: Index build, search and checks without internet (acceptance 9)
+        run: |
+          offline="docker compose -p makna-offline -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml"
+          $offline exec -T app makna index build
+          $offline exec -T app makna search "pembiayaan bermasalah"
+          $offline exec -T app python -m deploy.check_search --require-offline
+      - name: Show offline service logs
+        if: failure()
+        run: >
+          docker compose -p makna-offline
+          -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml logs --no-color
+      - name: Stop the offline stack
+        if: always()
+        run: >
+          docker compose -p makna-offline
+          -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml down -v

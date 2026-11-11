@@ -82,8 +82,12 @@ def test_a_partly_loaded_table_is_repaired(lending_database: URL, parquet_dir: P
 
 
 def test_init_twice_changes_nothing(
-    lending_database: URL, empty_database: URL, tmp_path: Path
+    lending_database: URL,
+    empty_database: URL,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("MAKNA_EMBEDDING_PROVIDER", "hash")  # no model in the test tier
     context = Context(
         data_dir=tmp_path / "generated",
         seed=DEFAULT_SEED,
@@ -95,6 +99,7 @@ def test_init_twice_changes_nothing(
     assert run_steps(STEPS, context, first) == 0
     assert "generated" in first.getvalue()
     assert "init: sync-catalog: synced (datasets +9" in first.getvalue()
+    assert "init: build-index: indexed with hash-trigram-256 (documents +" in first.getvalue()
     second = io.StringIO()
     assert run_steps(STEPS, context, second) == 0
     assert second.getvalue().splitlines() == [
@@ -102,6 +107,7 @@ def test_init_twice_changes_nothing(
         "init: load-lending: unchanged",
         "init: migrate: unchanged",
         "init: sync-catalog: unchanged",
+        "init: build-index: unchanged",
     ]
     # The second run wrote no `sync_run` row and opened no reference issue.
     with psycopg.connect(plain(empty_database)) as connection:
@@ -110,3 +116,11 @@ def test_init_twice_changes_nothing(
             "SELECT count(*) FROM reference_issue WHERE closed_at IS NULL"
         ).fetchone()
     assert runs == (1,) and open_issues == (0,)
+    with psycopg.connect(plain(empty_database)) as connection:
+        indexed = connection.execute("SELECT count(*) FROM search_document").fetchone()
+        statistics = connection.execute(
+            "SELECT relname, n_tup_upd, n_tup_del FROM pg_stat_user_tables "
+            "WHERE relname IN ('search_document', 'semantic_object', 'index_state')"
+        ).fetchall()
+    assert indexed is not None and indexed[0] > 150
+    assert all(upd == 0 and dele == 0 for _, upd, dele in statistics), statistics
