@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
         "validate",
         help="check the definition files in a directory",
         description=(
-            "Check every definition file under a directory (definition errors V01 to V18). "
+            "Check every definition file under a directory (definition errors V01 to V18 and V20). "
             "Prints one line per problem as 'file:line: CODE message'. "
             "Exits 1 if there is any problem, 0 otherwise."
         ),

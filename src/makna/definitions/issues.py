@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, order=True)
 class Issue:
-    """One validation problem. `code` is V01 to V19 (ARCHITECTURE section 5.3).
+    """One validation problem. `code` is V01 to V20 (ARCHITECTURE section 5.3).
 
     `file` is the path relative to the definitions directory. `line` is 1-based and is None
     when the problem has no single place in the file.

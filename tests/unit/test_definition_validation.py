@@ -1,4 +1,4 @@
-"""WP-03 criterion 2: for each rule V01 to V18, a fixture that breaks only that rule."""
+"""WP-03 criterion 2: for each rule V01 to V18 and V20, a fixture that breaks only that rule."""
 
 from __future__ import annotations
 

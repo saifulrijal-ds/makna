@@ -559,7 +559,7 @@ If step 4 fails, git is ahead of the index. `makna index sync` (also run at star
 **Commits made outside the application are not trusted.** A commit is an application commit only if its sha is in `audit_event`, or it matches an open intent row as above. Commit trailers are not proof, because anyone can write them. Any other commit is an **external change**: a merged pull request, a hand edit, or a coding agent's commit. For each object such a commit touches, `index sync`:
 
 - logs `external_change` with the commit's author;
-- indexes the new content as a proposal with status `in_review` and `drafted_by: external:<author email>`, with its validation errors if any (V01 to V19);
+- indexes the new content as a proposal with status `in_review` and `drafted_by: external:<author email>`, with its validation errors if any (V01 to V20);
 - keeps serving the official content of the last application commit for that file (`git show <official_commit>:<path>`).
 
 An external change is therefore never served to agents or viewers as approved, and never skips the rules of section 11. It appears in `/review` like any proposal. Approving it is a normal `approve` by a user who may approve (section 11). That writes a new application commit with `version` + 1. Rejecting it moves the external content to `<name>.draft.yaml` with status `draft` and restores the official file to its last approved content, in one application commit. An organization that reviews definitions as pull requests in a git host can keep doing so, but the merged result still needs one approval in Makna, and that is the approval that counts.
@@ -696,7 +696,7 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/domains/<name>` | Objects of a domain, grouped by kind. | WEB-1 |
 | `/metrics/<name>` | Plain-language meaning first; then formula in words, owner, status and version, freshness ("data up to 2026-06-30, checked 2 hours ago"), caveats, example questions (each opens the test bench), dimensions and grains, related objects; for curators: the YAML, history, and reference issues. | WEB-1 |
 | `/entities/<name>`, `/glossary/<name>` | The same pattern. | WEB-1 |
-| `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V19) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
+| `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V20) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
 | `/review` | Queue of proposals in review: object, author, reason, difference, validation result, reference issues. Approve and Reject ask for a reason. Buttons are shown only to users who may approve that object. | WEB-3 |
 | `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; and the SQL and explanation (with a copy button). The bench does not run the SQL (D-21). | WEB-4 |
 | `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19B and WP-19C). | GOV-1, GOV-2 |
