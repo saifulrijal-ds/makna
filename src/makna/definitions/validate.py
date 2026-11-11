@@ -555,7 +555,8 @@ class _Checker:
             for item in m.filters or []:
                 ref = item.rule if isinstance(item, RuleRef) else item.dimension
                 entities[ref.partition(".")[0]] = None
-            for chain in (m.join_paths or {}).values():
+            for target, chain in (m.join_paths or {}).items():
+                entities[target] = None
                 for step in chain:
                     entities[step.partition(".")[0]] = None
         for name in _metric_inputs(m):
