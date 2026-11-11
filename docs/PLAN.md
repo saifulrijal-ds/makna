@@ -184,8 +184,8 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   3. A filter on any personal dimension, masked or not, raises `PERSONAL_DATA_REFUSED`.
   4. A dimension declared `internal` whose column has `derived_sensitivity = personal` is treated as personal (refused without masking).
   5. `verify` raises when given a hand-built tree that selects a personal column bare or inside `MIN` or `MAX`, and passes when the same column is inside a mask or inside `COUNT` or `COUNT(DISTINCT ...)`.
-  7. Minimum group size: on the fixture data, `npf_outstanding_principal` by `customer.birth_year`, `customer.province`, and `branch.region_name` returns no group built from fewer than `min_group_size` customers (checked against a reference count query), the warning states how many groups were left out, and the same metric by `branch.region_name` alone is not suppressed. A ratio drops a group when either input has it from fewer than the minimum.
   6. Property test: for at least 500 random valid requests over the sample model (random metric, dimensions drawn from all dimensions including personal ones, random filters), every request either raises a section 7.7 error or yields SQL that passes `verify`, whose DuckDB result contains no raw value of any personal column of the fixture `customers` table, and, when a personal dimension is selected, no group built from fewer than `min_group_size` customers.
+  7. Minimum group size: on the fixture data, `npf_outstanding_principal` by `customer.birth_year`, `customer.province`, and `branch.region_name` returns no group built from fewer than `min_group_size` customers (checked against a reference count query), the warning states how many groups were left out, and the same metric by `branch.region_name` alone is not suppressed. A ratio drops a group when either input has it from fewer than the minimum.
 
 ### WP-11 Trino connector and metrics on the real engine
 
