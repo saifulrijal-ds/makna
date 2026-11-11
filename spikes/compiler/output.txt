@@ -354,8 +354,9 @@ LIMIT 1000
 collection_rate compiled: 0.9411; naive row-to-row join of payments and schedules: 1.0006
 
 === Governance and error cases
-PASS  masked personal dimension is allowed: compiled; rows: [('***0025', datetime.date(1964, 1, 1), Decimal('260000000.00')), ('***0037', datetime.date(1986, 1, 1), Decimal('462000000.00'))]
+PASS  masked personal dimension is allowed: compiled; rows: [(datetime.date(1960, 1, 1), Decimal('672000000.00')), (datetime.date(1961, 1, 1), Decimal('954000000.00'))]
 PASS  unmasked personal dimension is refused: PERSONAL_DATA_REFUSED
+PASS  phone number is refused (partial masking removed, review R-4): PERSONAL_DATA_REFUSED
 PASS  filter on personal data is refused: PERSONAL_DATA_REFUSED
 PASS  filter on masked personal data is refused: PERSONAL_DATA_REFUSED
 PASS  grain finer than the metric allows: INVALID_GRAIN

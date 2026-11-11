@@ -195,11 +195,13 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V08 | A simple metric's `measure` resolves. Ratio and derived metrics resolve to existing metrics, with no cycle. A derived `expr` uses only names in `inputs` and only `+ - * /`, parentheses, numbers, `NULLIF`, and `COALESCE`. |
 | V09 | Each `join_paths` entry is a connected chain of relationships that starts at the measure's entity and ends at the keyed entity. |
 | V10 | Metric `filters` use dimensions reachable from the measure's entity, never a personal dimension; the value type fits the dimension type; for a categorical dimension with `values`, the value is one of them. |
-| V11 | A masking method fits the dimension type: `truncate_date` for `time`; `bucket` for `numeric`; `partial` and `redact` for `categorical`. |
+| V11 | A masking method fits the dimension type: `truncate_date` for `time`; `bucket` for `numeric`; `redact` for `categorical`. |
 | V12 | A measure whose expression reads a column of a personal dimension uses `count` or `count_distinct` only. |
 | V13 | An approved or in-review metric depends only on approved entities and approved metrics. |
 | V14 | A deprecated object has a `deprecation.reason`; `replaced_by`, if present, resolves. |
 | V15 | `default_grain` is one of `time_grains`. A metric with a balance measure among its inputs does not offer `day` or `week`. |
+| V16 | A measure's `time_dimension` is not a personal dimension (a time range would filter on raw personal dates, and freshness would show one). |
+| V17 | A personal dimension has no `values` (they would be returned by `get_definition` and indexed for search). |
 
 Reference issues (`makna.catalog.references`):
 
@@ -392,13 +394,14 @@ Levels, from least to most strict: `public`, `internal`, `confidential`, `person
 
 - **Effective sensitivity of a dimension** = the stricter of (a) the level in the YAML (or the entity's level if the dimension has none) and (b) the level derived from catalog tags on the columns its expression reads. The tag mapping is configuration (`[sensitivity.tag_map]` in `config/makna.toml`; default: `PII.Sensitive` and `PersonalData.Personal` map to `personal`; `PII.NonSensitive` maps to `confidential`). If the catalog starts tagging a column as personal, Makna tightens at the next sync without any YAML change, and opens reference issue R03.
 - **Rules for a `personal` dimension:**
-  - It can be selected as a dimension only if it has a `masking` rule, and the masked expression is what goes into the SQL: `redact` gives the constant `'***'`; `partial` gives `'***'` plus the last `keep_last` characters; `truncate_date` gives the date truncated to the grain; `bucket` gives the lower bound of a fixed-width band.
+  - It can be selected as a dimension only if it has a `masking` rule, and the masked expression is what goes into the SQL: `redact` gives the constant `'***'`; `truncate_date` gives the date truncated to the grain; `bucket` gives the lower bound of a fixed-width band. There is no partial masking such as "last four digits": used as a grouping key, a partly masked identifier still returns one row per person (review R-4).
+  - **Minimum group size.** When a request selects a personal dimension, every input's aggregate also counts the distinct primary keys of the entity that holds that dimension. A result group is dropped if any input has rows for it from fewer than `min_group_size` such records (`[governance]` in `config/makna.toml`, default 10). The counts are not returned. The explanation says that groups smaller than the minimum were left out, and how many. This stops a combination of masked and ordinary dimensions (for example birth year, city, and segment) from singling out a customer. Requests without a personal dimension are not affected.
   - Without a masking rule it cannot be selected: error `PERSONAL_DATA_REFUSED`.
   - It can never be used in a filter, masked or not (filtering on an identity number singles out a person): error `PERSONAL_DATA_REFUSED`.
-  - A measure may count rows or distinct values of a personal column (V12), because the result is an aggregate.
+  - A measure may count rows or distinct values of a personal column (V12), because the result is an aggregate. A personal dimension cannot be a measure's official date (V16) and cannot list `values` (V17).
 - **No one can unmask through Makna in the MVP.** There is no role that sees raw personal data. Row-level policies (QRY-5) and privileged unmasking are phase 2.
 - **Agents cannot send SQL.** `run_query` takes a request, compiles it, and runs the compiled SQL. There is no tool or route that accepts SQL text.
-- **Final check.** After generation, the governance pass walks the tree: every reference to a column read by a personal dimension must sit inside a masking expression or an aggregate function, or compilation fails. This catches mistakes in the generator itself.
+- **Final check.** After generation, the governance pass walks the tree: every reference to a column read by any personal dimension (whether or not the request selected it) must sit inside a masking expression or inside `COUNT` or `COUNT(DISTINCT ...)`, or compilation fails. `MIN`, `MAX`, and other aggregates do not count, because they return one person's value. This catches mistakes in the generator itself.
 - `confidential` and below are not masked in the MVP; the level is shown to people and agents and recorded in logs.
 
 Makna's masking is a property of the SQL it generates. It does not replace access control in the engine: the engine still decides what each user's credentials may read.
@@ -432,7 +435,7 @@ The compiler returns an ordered list of plain sentences, built while planning, f
 2. "Amount Collected: payments placed by posting date, from 2026-01-01 up to but not including 2026-07-01; reversed payments are excluded (part of the definition)."
 3. "Region comes from the servicing branch of the contract (payment, then contract, then servicing branch)."
 
-It also returns `warnings`, for example "Outstanding Principal is a balance: the value for each quarter is the balance at its last month end."
+It also returns `warnings`, for example "Outstanding Principal is a balance: the value for each quarter is the balance at its last month end.", or "3 groups with fewer than 10 customers were left out to protect personal data."
 
 ## 8. Search and question resolution
 
@@ -641,9 +644,10 @@ Output for a metric (budget: 6,000 characters in `full`; `brief` omits dimension
   "dimensions": [
     {"ref": "branch.region_name", "description": "Region the branch belongs to.", "type": "categorical",
      "values": ["Jawa Barat", "Jawa Tengah"], "via": "servicing branch"},
-    {"ref": "customer.phone_number", "type": "categorical", "masked": "last 4 characters only", "filterable": false}
+    {"ref": "customer.birth_year", "type": "time", "masked": "year only", "filterable": false,
+     "note": "groups of fewer than 10 customers are left out"}
   ],
-  "unavailable_dimensions": [{"ref": "customer.full_name", "reason": "personal data"}],
+  "unavailable_dimensions": [{"ref": "customer.full_name", "reason": "personal data"}, {"ref": "customer.phone_number", "reason": "personal data"}],
   "caveats": "...", "example_questions": ["What is our NPF?"]
 }
 ```
@@ -690,7 +694,7 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/domains/<name>` | Objects of a domain, grouped by kind. | WEB-1 |
 | `/metrics/<name>` | Plain-language meaning first; then formula in words, owner, status and version, freshness ("data up to 2026-06-30, checked 2 hours ago"), caveats, example questions (each opens the test bench), dimensions and grains, related objects; for curators: the YAML, history, and reference issues. | WEB-1 |
 | `/entities/<name>`, `/glossary/<name>` | The same pattern. | WEB-1 |
-| `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V15) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
+| `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V17) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
 | `/review` | Queue of proposals in review: object, author, reason, difference, validation result, reference issues. Approve and Reject ask for a reason. Buttons are shown only to users who may approve that object. | WEB-3 |
 | `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; the SQL and explanation; and, if running is enabled and engine credentials are in the session, the first 100 rows. | WEB-4 |
 | `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19). | GOV-1, GOV-2 |

@@ -85,10 +85,10 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-03 Definition models, loader, validator
 
 - **Read**: `docs/ARCHITECTURE.md` section 5; `semantic/schema/makna.schema.json` and the examples.
-- **Build**: Pydantic models in `makna.model.definitions` matching the JSON Schema; `makna.definitions.loader` (read a repository directory into a `DefinitionSet`, official and proposal files); `makna.definitions.validate` implementing V01 to V15 (reference issues R01 to R04 belong to WP-06); CLI `makna validate <dir>` printing one line per problem with file, line where known, code, and message, and exiting 1 on any error.
+- **Build**: Pydantic models in `makna.model.definitions` matching the JSON Schema; `makna.definitions.loader` (read a repository directory into a `DefinitionSet`, official and proposal files); `makna.definitions.validate` implementing V01 to V17 (reference issues R01 to R04 belong to WP-06); CLI `makna validate <dir>` printing one line per problem with file, line where known, code, and message, and exiting 1 on any error.
 - **Acceptance**
   1. Every file under `semantic/schema/examples/` loads and validates with zero errors.
-  2. For each rule V01 to V15 there is at least one fixture that breaks only that rule, and the validator reports exactly that code.
+  2. For each rule V01 to V17 there is at least one fixture that breaks only that rule, and the validator reports exactly that code.
   3. A test proves the Pydantic models and the JSON Schema agree: every example round-trips (load, dump, validate against the schema), and a property the schema forbids (an unknown key, a ratio with `measure`) is rejected by both.
   4. `makna validate semantic/schema/examples` exits 0; on a directory with one broken fixture it exits 1 and prints the rule code.
   5. Loading never executes anything from YAML (uses the safe loader; a test feeds a YAML tag payload and expects a clean error).
@@ -179,12 +179,13 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 - **Read**: `docs/ARCHITECTURE.md` section 7.6; DR-5.
 - **Build**: effective sensitivity (YAML level and catalog-derived level, the latter passed into the compiler as data so the compiler stays free of database access); masking expressions for the four methods; the refusal rules; `makna.compiler.governance.verify(tree, plan)`.
 - **Acceptance** (unit tier)
-  1. Selecting `customer.phone_number` returns values matching `^\*\*\*.{4}$`; selecting `customer.birth_year` returns only first-of-January dates; a fixture numeric dimension with `bucket` width 10 returns multiples of 10; `redact` returns `***`.
-  2. Selecting `customer.full_name`, `customer.national_id`, or `customer.email` raises `PERSONAL_DATA_REFUSED`.
+  1. Selecting `customer.birth_year` returns only first-of-January dates; a fixture numeric dimension with `bucket` width 10 returns multiples of 10; `redact` returns `***`.
+  2. Selecting `customer.full_name`, `customer.national_id`, `customer.email`, or `customer.phone_number` raises `PERSONAL_DATA_REFUSED`.
   3. A filter on any personal dimension, masked or not, raises `PERSONAL_DATA_REFUSED`.
   4. A dimension declared `internal` whose column has `derived_sensitivity = personal` is treated as personal (refused without masking).
-  5. `verify` raises when given a hand-built tree that selects a personal column bare, and passes when the same column is inside a mask or inside `COUNT(DISTINCT ...)`.
-  6. Property test: for at least 500 random valid requests over the sample model (random metric, dimensions drawn from all dimensions including personal ones, random filters), every request either raises a section 7.7 error or yields SQL that passes `verify` and whose DuckDB result contains no raw value of any personal column of the fixture `customers` table.
+  5. `verify` raises when given a hand-built tree that selects a personal column bare or inside `MIN` or `MAX`, and passes when the same column is inside a mask or inside `COUNT` or `COUNT(DISTINCT ...)`.
+  7. Minimum group size: on the fixture data, `npf_outstanding_principal` by `customer.birth_year`, `customer.province`, and `branch.region_name` returns no group built from fewer than `min_group_size` customers (checked against a reference count query), the warning states how many groups were left out, and the same metric by `branch.region_name` alone is not suppressed. A ratio drops a group when either input has it from fewer than the minimum.
+  6. Property test: for at least 500 random valid requests over the sample model (random metric, dimensions drawn from all dimensions including personal ones, random filters), every request either raises a section 7.7 error or yields SQL that passes `verify`, whose DuckDB result contains no raw value of any personal column of the fixture `customers` table, and, when a personal dimension is selected, no group built from fewer than `min_group_size` customers.
 
 ### WP-11 Trino connector and metrics on the real engine
 

@@ -280,7 +280,7 @@
       }
     },
     "masking": {
-      "description": "How a sensitive dimension is transformed before it may appear in a result. A personal dimension without a masking rule can never be selected or filtered.",
+      "description": "How a sensitive dimension is transformed before it may appear in a result. A personal dimension without a masking rule can never be selected or filtered. There is no partial masking (such as the last digits of a number): a partially masked identifier still singles out a person when used to group results (review R-4).",
       "type": "object",
       "required": [
         "method"
@@ -295,23 +295,6 @@
           },
           "required": [
             "method"
-          ]
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "method": {
-              "const": "partial"
-            },
-            "keep_last": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 8
-            }
-          },
-          "required": [
-            "method",
-            "keep_last"
           ]
         },
         {

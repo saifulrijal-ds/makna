@@ -42,9 +42,8 @@ dimensions:
     masking: {method: truncate_date, grain: year}
   - name: phone_number
     type: categorical
-    description: Customer's mobile phone number. Only the last four digits are ever shown.
+    description: Customer's mobile phone number. Never available in results.
     sensitivity: personal
-    masking: {method: partial, keep_last: 4}
   - name: full_name
     type: categorical
     description: Customer's full legal name. Never available in results.

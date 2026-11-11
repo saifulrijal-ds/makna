@@ -40,5 +40,6 @@ The spike's request uses the short field names `start` and `end`; the product re
 
 - The SQL was not executed on a Trino server (no Docker or Trino download in the design environment). It re-parses with sqlglot's Trino dialect and uses only `DATE_TRUNC`, `CAST`, `NULLIF`, `COALESCE`, `UNION ALL`, CTEs, `IN (subquery)`, and quoted identifiers. The first build package that brings up Trino (WP-11) must run these same five cases on Trino.
 - sqlglot prints the unit as `'MONTH'` in upper case. Trino is expected to accept it; confirm in WP-11.
-- `SUBSTRING`-based partial masking was executed on DuckDB only.
+- `SUBSTRING`-based partial masking was executed on DuckDB only. Partial masking was removed from the design after the review (`docs/reviews/design.md`, R-4): grouping by the last four phone digits returned one row per customer. The governance checks and `output.txt` were updated to match; the masked-dimension check now uses `customer.birth_year` only, and the phone number is refused.
+- The minimum group size rule (`docs/ARCHITECTURE.md` section 7.6) was added after the spike and is not in it.
 - Performance on large tables was not measured.

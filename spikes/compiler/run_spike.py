@@ -197,10 +197,11 @@ def main() -> int:
 
     print("\n=== Governance and error cases")
     checks = [
-        ("masked personal dimension is allowed", {"metric": "disbursement_amount", "dimensions": ["customer.phone_number", "customer.birth_year"], "limit": 3}, None),
+        ("masked personal dimension is allowed", {"metric": "disbursement_amount", "dimensions": ["customer.birth_year"], "limit": 3}, None),
         ("unmasked personal dimension is refused", {"metric": "disbursement_amount", "dimensions": ["customer.full_name"]}, "PERSONAL_DATA_REFUSED"),
+        ("phone number is refused (partial masking removed, review R-4)", {"metric": "disbursement_amount", "dimensions": ["customer.phone_number"]}, "PERSONAL_DATA_REFUSED"),
         ("filter on personal data is refused", {"metric": "disbursement_amount", "filters": [{"dimension": "customer.national_id", "op": "=", "value": "3200000000000001"}]}, "PERSONAL_DATA_REFUSED"),
-        ("filter on masked personal data is refused", {"metric": "disbursement_amount", "filters": [{"dimension": "customer.phone_number", "op": "=", "value": "081212345678"}]}, "PERSONAL_DATA_REFUSED"),
+        ("filter on masked personal data is refused", {"metric": "disbursement_amount", "filters": [{"dimension": "customer.birth_year", "op": "=", "value": "1980-01-01"}]}, "PERSONAL_DATA_REFUSED"),
         ("grain finer than the metric allows", {"metric": "npf_ratio", "grain": "day"}, "INVALID_GRAIN"),
         ("unknown dimension", {"metric": "npf_ratio", "dimensions": ["branch.manager"]}, "UNKNOWN_DIMENSION"),
         ("SQL in a filter value stays a string literal", {"metric": "disbursement_amount", "filters": [{"dimension": "branch.region_name", "op": "=", "value": "x' OR '1'='1"}]}, None),
