@@ -282,18 +282,18 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-18 Definition store write path and lifecycle
 
 - **Read**: `docs/ARCHITECTURE.md` sections 5.2, 10, 11; DR-4, DR-6.
-- **Build**: `makna.definitions.repo.GitRepo`; the seven lifecycle actions as service functions; the advisory lock; `audit_event` writes; `makna index sync`; seeding of the definitions repository in `init`.
+- **Build**: `makna.definitions.repo.GitRepo`; the seven lifecycle actions as service functions; the advisory lock; `audit_event` intent rows and writes; external-change handling (`docs/ARCHITECTURE.md` section 10); `makna index sync`; seeding of the definitions repository in `init`.
 - **Acceptance** (integration tier, with a temporary git repository)
   1. Draft to approved: `create_proposal`, `submit`, `approve` (by a different user) for a new metric ends with `<name>.yaml` at status `approved` and version 1, no proposal file, three commits whose author is the acting user and whose message carries the reason and the four trailers, and three `audit_event` rows.
   2. **No redeploy**: in one running application, a `makna_search` call that did not find the new metric before approval finds it after, and `makna_compile_query` for it succeeds, with no restart between the calls.
   3. Changing an approved metric: while the proposal is in review, `get_definition` and the compiler still serve the old version; after approval they serve the new one with `version` increased by 1.
-  4. A table-driven test covers every write cell of the permission matrix: a viewer and an agent token cannot write; a curator outside the owner team cannot approve; a curator inside it can; the author cannot approve their own last change unless `MAKNA_ALLOW_SELF_APPROVAL` is true.
+  4. A table-driven test covers every write cell of the permission matrix: a viewer and an agent token cannot write; a curator outside the owner team cannot approve; a curator inside it can; no author of any commit on the proposal can approve it (including when another user made the last edit) unless `MAKNA_ALLOW_SELF_APPROVAL` is true; a proposal that sets `owner.team` to the proposer's team does not give that team approval rights over an existing object; a change of `owner.team` can be approved only by an approver or admin; a curator cannot create a new object owned by a team they are not in.
   5. `submit` and `approve` are refused when the proposal has a definition error; `approve` is refused when the object has an open reference issue. A missing reason is refused for every action.
   6. `reject` returns the proposal to `draft` and records the reason; `withdraw` deletes the proposal file; `deprecate` sets the status with a reason, after which search hides the object and the compiler raises `DEPRECATED`.
   7. Two approvals started at the same time produce two commits in sequence and a consistent index (run with threads; no lost update).
-  8. Recovery: if the index transaction is made to fail after the commit, `makna index sync` brings the index and `audit_event` in line with `HEAD`; running it again changes nothing.
-  9. A commit made directly with git (outside the application) is picked up by `makna index sync` and logged as `external_change` with the commit's author.
-  10. `makna index build` on an empty database reproduces the same `semantic_object` rows as the incremental path (compare contents, ignoring timestamps).
+  8. Recovery: if the index transaction is made to fail after the commit, `makna index sync` completes it from the intent row, so the index and `audit_event` match `HEAD`; running it again changes nothing.
+  9. External changes: a commit made directly with git that edits an approved metric, with or without copied `Makna-*` trailers, is logged as `external_change` with the commit's author; an agent token's `get_definition` and `compile_query` still get the previous approved version; the change is listed in review as `in_review`; approving it in the application serves it, and rejecting it restores the official file and keeps the content as a draft. A new `<name>.yaml` with `status: approved` added by a raw commit is not visible to an agent token.
+  10. After the rebuildable tables (catalog copy and semantic index) are emptied, `makna index build` reproduces the same `semantic_object` rows as the incremental path (compare contents, ignoring timestamps), including a file whose latest commit is an external change.
 
 ### WP-19 Editor, review queue, and curator tools
 

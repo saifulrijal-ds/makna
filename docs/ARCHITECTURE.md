@@ -524,7 +524,7 @@ Self-hosting (NFR-3): nothing in the running system calls an outside service. Th
 
 ## 10. The definition store and lifecycle (Q-4, DR-4)
 
-The definitions repository is an ordinary git repository on a path the application can write (`MAKNA_DEFINITIONS_REPO`), with a single branch. Reading needs only the files: until WP-18 adds the write path, the indexer and services read a plain directory and leave the commit columns empty. **The application writes to it by making commits.** It calls the `git` command line through one small wrapper class (`makna.definitions.repo.GitRepo`: `add`, `rm`, `commit`, `log`, `show`, `rev_parse`, `diff_names`). Organizations that want pull-request review in their git host can point a remote at it; the index follows whatever is at `HEAD`.
+The definitions repository is an ordinary git repository on a path the application can write (`MAKNA_DEFINITIONS_REPO`), with a single branch. Reading needs only the files: until WP-18 adds the write path, the indexer and services read a plain directory and leave the commit columns empty. **The application writes to it by making commits.** It calls the `git` command line through one small wrapper class (`makna.definitions.repo.GitRepo`: `add`, `rm`, `commit`, `log`, `show`, `rev_parse`, `diff_names`). Only commits the application makes can make a definition official; commits made any other way are indexed as proposals (below).
 
 Every lifecycle action is one commit:
 
@@ -543,10 +543,21 @@ A reason is required for every action (WEB-3). The commit author is the user (`D
 Order of work inside one action, under a PostgreSQL advisory lock so that one write runs at a time:
 
 1. Check permission. Validate the new content.
-2. Write the files and commit.
-3. In one database transaction: re-index the object (and objects whose derived facts depend on it), insert the `audit_event`, bump `index_state.definitions_version`, set `last_indexed_commit`.
+2. Insert the `audit_event` row as an intent: action, object, actor, reason, and the SHA-256 of each file the action writes or deletes; `commit_sha` is still empty.
+3. Write the files and commit.
+4. In one database transaction: re-index the object (and objects whose derived facts depend on it), set `commit_sha` on the intent row, bump `index_state.definitions_version`, set `last_indexed_commit`.
 
-If step 3 fails, git is ahead of the index. `makna index sync` (also run at startup) repairs this: it lists commits after `last_indexed_commit`, re-indexes the changed files, and writes any missing `audit_event` rows from the commit trailers. The same command picks up commits made outside the application (for example a merged pull request, after `git pull`); those are logged with action `external_change` and the commit's author. `makna index build` rebuilds the whole index from `HEAD`.
+If step 4 fails, git is ahead of the index. `makna index sync` (also run at startup) repairs this: it lists commits after `last_indexed_commit`, and for each one that matches an intent row with an empty `commit_sha` (same object and action, same file hashes) it completes step 4.
+
+**Commits made outside the application are not trusted.** A commit is an application commit only if its sha is in `audit_event`, or it matches an open intent row as above. Commit trailers are not proof, because anyone can write them. Any other commit is an **external change**: a merged pull request, a hand edit, or a coding agent's commit. For each object such a commit touches, `index sync`:
+
+- logs `external_change` with the commit's author;
+- indexes the new content as a proposal with status `in_review` and `drafted_by: external:<author email>`, with its validation errors if any (V01 to V17);
+- keeps serving the official content of the last application commit for that file (`git show <official_commit>:<path>`).
+
+An external change is therefore never served to agents or viewers as approved, and never skips the rules of section 11. It appears in `/review` like any proposal. Approving it is a normal `approve` by a user who may approve (section 11). That writes a new application commit with `version` + 1. Rejecting it moves the external content to `<name>.draft.yaml` with status `draft` and restores the official file to its last approved content, in one application commit. An organization that reviews definitions as pull requests in a git host can keep doing so, but the merged result still needs one approval in Makna, and that is the approval that counts.
+
+`makna index build` rebuilds the index from `HEAD` and `audit_event`. For each official file it serves the newest version written by an application commit, found with `git log` on the file and matched against `audit_event`. Later external commits on that file become a proposal as above. `init` seeds the repository from `semantic/definitions/` as an application action (`seed`, recorded in `audit_event`), so the sample definitions are approved on a fresh install. In this source repository, those sample definitions are reviewed through the project's own pull requests.
 
 Agents see a change as soon as step 3 commits: every service call reads the index, and the in-memory model snapshot is refreshed when `definitions_version` changes. No restart or redeploy is involved.
 
@@ -568,7 +579,11 @@ Sign-in is by email and password (Argon2 hash) with a server-side signed session
 | See audit log and tool-call log | no | yes | yes | yes | no |
 | Manage users, tokens of others, catalog sync, index | no | no | no | yes | no |
 
-**Who can approve** (WEB-3 "only owners or approvers"): a user may approve or deprecate an object if they are an approver or admin, **or** they are a curator and the object's `owner.team` is in their `teams`. In addition, **the author of the last change to a proposal cannot approve it** (two-person rule). `MAKNA_ALLOW_SELF_APPROVAL=true` turns the two-person rule off for demos and single-user installs; the dev stack sets it to `false`.
+**Who can approve** (WEB-3 "only owners or approvers"): a user may approve or deprecate an object if they are an approver or admin, **or** they are a curator and the object's `owner.team` is in their `teams`. Three more rules close the gaps around this (D-11, review R-6):
+
+- **Two-person rule.** No user who authored any commit on the proposal may approve it. That covers every commit since the object was last approved, or since it was created for a new object, and includes the authors of external changes, matched by email. `MAKNA_ALLOW_SELF_APPROVAL=true` turns this rule off for single-user installs. The default is `false`, and the dev stack keeps the default (D-11).
+- **Which owner team counts.** Approval rights come from the `owner.team` of the official file. For a new object they come from the proposal's `owner.team`, which must be one of the proposer's teams unless the proposer is an approver or admin (checked at `create_proposal`).
+- **Changing the owner.** A proposal that changes `owner.team` of an existing object can be approved only by an approver or admin.
 
 API tokens cannot perform any write action, whatever the user's role (D-4).
 
