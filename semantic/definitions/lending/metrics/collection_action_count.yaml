@@ -11,7 +11,7 @@ status: approved
 sensitivity: internal
 synonyms:
   en: [collection activities, collection actions, dunning actions, collection effort]
-  id: [jumlah aktivitas penagihan, jumlah tindakan penagihan, jumlah kunjungan dan telepon penagihan]
+  id: [jumlah aktivitas penagihan, jumlah tindakan penagihan, jumlah kegiatan penagihan]
 version: 1
 type: simple
 measure: collection_action.collection_actions

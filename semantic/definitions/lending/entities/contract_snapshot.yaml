@@ -53,6 +53,11 @@ rules:
     description: A position more than 30 days past due. Written once and used by every portfolio-at-risk (PAR 30) measure and metric.
     expr: days_past_due > 30
     synonyms: {en: [PAR 30, portfolio at risk, delinquent], id: [tunggakan di atas 30 hari, lewat jatuh tempo 30 hari]}
+  - name: write_off_position
+    label: Written-off position
+    description: The month-end position at which a contract is written off, more than 210 days past due. A contract is written off at the first month end that meets this and has no later positions, so it selects exactly one row per written-off contract.
+    expr: days_past_due > 210
+    synonyms: {en: [write-off, charge-off], id: [hapus buku, penghapusbukuan]}
 measures:
   - name: outstanding_principal
     agg: sum
@@ -74,6 +79,13 @@ measures:
     time_dimension: snapshot_date
     semi_additive: last
     description: Principal still owed on contracts more than 30 days past due at the snapshot date.
+  - name: written_off_outstanding_principal
+    agg: sum
+    expr: outstanding_principal
+    rule: write_off_position
+    time_dimension: snapshot_date
+    semi_additive: last
+    description: Principal still owed at the month end when a contract is written off, because it is more than 210 days past due.
   - name: active_contracts
     agg: count
     time_dimension: snapshot_date

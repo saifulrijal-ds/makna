@@ -12,7 +12,7 @@ status: approved
 sensitivity: internal
 synonyms:
   en: [active contracts, contracts in portfolio, live accounts, open contracts]
-  id: [jumlah kontrak aktif, kontrak berjalan, jumlah debitur aktif, jumlah akun aktif]
+  id: [jumlah kontrak aktif, kontrak berjalan, jumlah kontrak berjalan yang masih ada sisa pokok, jumlah akun aktif]
 version: 1
 type: simple
 measure: contract_snapshot.active_contracts

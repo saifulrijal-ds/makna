@@ -14,9 +14,7 @@ synonyms:
   en: [write-offs, written-off principal, bad debt written off, charge-offs]
   id: [hapus buku, nominal hapus buku, penghapusbukuan, kredit dihapusbukukan]
 type: simple
-measure: contract_snapshot.outstanding_principal
-filters:
-  - {dimension: contract.contract_status, op: "=", value: written_off}
+measure: contract_snapshot.written_off_outstanding_principal
 join_paths:
   branch: [contract_snapshot.contract, contract.servicing_branch]
 format: {kind: currency, unit: IDR, decimals: 0}
@@ -27,6 +25,6 @@ example_questions:
   - How much did we write off last year?
   - Berapa nilai hapus buku tahun lalu?
 caveats: >-
-  Draft for review. The filter keeps positions of contracts that are now
-  written off, which also includes their earlier month ends. A reviewer must
-  decide how to keep only the month end of the write-off before approval.
+  Draft for review. Each written-off contract leaves the portfolio at the
+  month end of its write-off, so the amount is reported for that month end
+  only, which is why only the month grain is offered.

@@ -13,7 +13,7 @@ status: approved
 sensitivity: internal
 synonyms:
   en: [collection activity, dunning action, collection effort]
-  id: [aktivitas penagihan, tindakan penagihan, kunjungan penagihan]
+  id: [aktivitas penagihan, tindakan penagihan, kegiatan penagihan]
 version: 1
 source: {table: lending.core.collection_actions}
 primary_key: [act_id]
