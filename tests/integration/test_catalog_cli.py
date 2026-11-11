@@ -87,3 +87,25 @@ def test_a_missing_file_and_a_missing_database_url_exit_non_zero(
     assert code == 2 and "MAKNA_DATABASE_URL" in err
     code, _, err = run(capsys, "catalog", "sync", "--file", str(EXPORT))
     assert code == 2 and "MAKNA_DATABASE_URL" in err
+
+
+def test_an_invalid_definition_file_gives_a_warning_naming_the_file_and_keeps_its_issues(
+    database: Engine, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    import shutil
+
+    definitions = tmp_path / "defs"
+    shutil.copytree(DEFINITIONS, definitions)
+    reduced = export_without_column(tmp_path / "r.yaml", "customers", "city")
+    assert (
+        run(capsys, "catalog", "sync", "--file", str(reduced), "--definitions", str(definitions))[0]
+        == 0
+    )
+    _, before, _ = run(capsys, "catalog", "issues")
+    assert "dimension:city" in before
+    (definitions / "lending" / "entities" / "customer.yaml").write_text("kind: [oops\n")
+    code, _, err = run(
+        capsys, "catalog", "sync", "--file", str(reduced), "--definitions", str(definitions)
+    )
+    assert code == 0 and "lending/entities/customer.yaml" in err and "warning" in err
+    assert run(capsys, "catalog", "issues")[1] == before

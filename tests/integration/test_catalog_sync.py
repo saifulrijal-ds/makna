@@ -96,7 +96,7 @@ def test_a_second_sync_reports_zero_changes(migrated_engine: Engine) -> None:
             0,
         )
     assert second["datasets"]["unchanged"] == 9
-    assert second["reference_issues"] == {"opened": 0, "closed": 0}
+    assert second["reference_issues"] == {"opened": 0, "closed": 0, "reworded": 0}
     assert last_summary(migrated_engine) == second  # recorded in sync_run.summary
     assert count(migrated_engine, sync_run) == 2
 
@@ -194,7 +194,7 @@ def test_removing_a_column_opens_r02_for_each_part_that_reads_it_and_restoring_c
 ) -> None:
     entities, terms = sample_objects()
     first = sync(migrated_engine, entities=entities, glossary_terms=terms)
-    assert first["reference_issues"] == {"opened": 0, "closed": 0}
+    assert first["reference_issues"] == {"opened": 0, "closed": 0, "reworded": 0}
 
     # `sts_putusan` is read by the decision_status dimension and by two measure filters.
     reduced = export_without_column(tmp_path / "reduced.yaml", "loan_applications", "sts_putusan")
@@ -217,11 +217,15 @@ def test_removing_a_column_opens_r02_for_each_part_that_reads_it_and_restoring_c
     )
     assert len(reading_parts) >= 3
     assert issues(migrated_engine) == sorted(("R02", o, p) for o, p in reading_parts)
-    assert removed["reference_issues"] == {"opened": len(reading_parts), "closed": 0}
+    assert removed["reference_issues"] == {"opened": len(reading_parts), "closed": 0, "reworded": 0}
 
     restored = sync(migrated_engine, EXPORT, entities=entities, glossary_terms=terms)
     assert restored["columns"]["added"] == 1
-    assert restored["reference_issues"] == {"opened": 0, "closed": len(reading_parts)}
+    assert restored["reference_issues"] == {
+        "opened": 0,
+        "closed": len(reading_parts),
+        "reworded": 0,
+    }
     assert issues(migrated_engine) == []
     assert issues(migrated_engine, closed=True) == sorted(("R02", o, p) for o, p in reading_parts)
     with migrated_engine.connect() as connection:
@@ -239,7 +243,7 @@ def test_a_still_true_issue_is_not_reopened_or_duplicated(
     sync(migrated_engine, reduced, entities=entities, glossary_terms=terms)
     before = issues(migrated_engine)
     again = sync(migrated_engine, reduced, entities=entities, glossary_terms=terms)
-    assert again["reference_issues"] == {"opened": 0, "closed": 0}
+    assert again["reference_issues"] == {"opened": 0, "closed": 0, "reworded": 0}
     assert issues(migrated_engine) == before and before
 
 
@@ -281,7 +285,7 @@ def test_r03_opens_exactly_r03_and_a_dimension_declared_personal_is_fine(
     )
     summary = sync(migrated_engine, entities=[personal], glossary_terms=[])
     assert issues(migrated_engine) == []
-    assert summary["reference_issues"] == {"opened": 0, "closed": 1}
+    assert summary["reference_issues"] == {"opened": 0, "closed": 1, "reworded": 0}
 
 
 def test_r04_opens_exactly_r04(migrated_engine: Engine) -> None:
@@ -299,7 +303,7 @@ def test_the_sample_definitions_and_the_sample_export_have_no_open_reference_iss
     entities, terms = sample_objects()
     assert len(entities) == 9 and len(terms) == 8
     summary = sync(migrated_engine, entities=entities, glossary_terms=terms)
-    assert summary["reference_issues"] == {"opened": 0, "closed": 0}
+    assert summary["reference_issues"] == {"opened": 0, "closed": 0, "reworded": 0}
     assert issues(migrated_engine) == []
     assert count(migrated_engine, reference_issue) == 0
     with migrated_engine.connect() as connection:
@@ -319,3 +323,127 @@ def test_a_file_that_does_not_match_the_format_is_rejected_and_nothing_is_writte
     with pytest.raises(ConnectorError, match=r"datasets\[3\]\.columns\[2\]\.data_type"):
         sync(migrated_engine, bad)
     assert count(migrated_engine, sync_run) == 1
+
+
+# --- Fix round 1 ---------------------------------------------------------------------------------
+
+
+def _without_table(tmp_path: Path, table: str) -> Path:
+    data = copy.deepcopy(export_data())
+    data["datasets"] = [d for d in data["datasets"] if d["name"] != table]
+    return write_export(tmp_path / f"no_{table}.yaml", data)
+
+
+def test_removing_a_table_deletes_its_columns_counts_them_opens_r01_and_restoring_closes_it(
+    migrated_engine: Engine, tmp_path: Path
+) -> None:
+    entities, terms = sample_objects()
+    sync(migrated_engine, entities=entities, glossary_terms=terms)
+    products = next(len(c) for t, c in doc_columns().items() if t == "products")
+    total = count(migrated_engine, catalog_column)
+
+    summary = sync(
+        migrated_engine,
+        _without_table(tmp_path, "products"),
+        entities=entities,
+        glossary_terms=terms,
+    )
+    assert summary["datasets"]["removed"] == 1
+    assert summary["columns"]["removed"] == products
+    assert count(migrated_engine, catalog_column) == total - products
+    with migrated_engine.connect() as connection:
+        left = connection.execute(
+            select(func.count())
+            .select_from(catalog_column.join(catalog_dataset))
+            .where(catalog_dataset.c.name == "products")
+        ).scalar_one()
+    assert left == 0
+    assert issues(migrated_engine) == [("R01", "entity:product", "source.table")]
+
+    restored = sync(migrated_engine, entities=entities, glossary_terms=terms)
+    assert restored["datasets"]["added"] == 1 and restored["columns"]["added"] == products
+    assert restored["reference_issues"]["closed"] == 1
+    assert issues(migrated_engine) == []
+    assert count(migrated_engine, catalog_column) == total
+
+
+def test_an_open_issue_survives_while_its_file_is_invalid_and_keeps_its_id(
+    migrated_engine: Engine, tmp_path: Path
+) -> None:
+    entities, terms = sample_objects()
+    reduced = export_without_column(tmp_path / "r.yaml", "customers", "city")
+    sync(migrated_engine, reduced, entities=entities, glossary_terms=terms)
+
+    def rows() -> list[tuple[int, str, str]]:
+        with migrated_engine.connect() as connection:
+            return sorted(
+                (r.id, r.object_id, r.part)
+                for r in connection.execute(
+                    select(reference_issue).where(reference_issue.c.closed_at.is_(None))
+                )
+            )
+
+    before = rows()
+    assert ("entity:customer", "dimension:city") in [(o, p) for _, o, p in before]
+    # The customer file is now invalid: it is not among the entities, but its object is listed.
+    without = [e for e in entities if e.name != "customer"]
+    result = sync_catalog(
+        migrated_engine,
+        FileConnector(reduced),
+        tag_map=TAG_MAP,
+        entities=without,
+        glossary_terms=terms,
+        unreadable_objects={"entity:customer": "lending/entities/customer.yaml"},
+    )
+    assert rows() == before
+    assert result.summary.issues_closed == 0
+    assert len(result.warnings) == 1 and "lending/entities/customer.yaml" in result.warnings[0]
+    # Fixed again: the same rows are still open, not closed and reopened.
+    sync(migrated_engine, reduced, entities=entities, glossary_terms=terms)
+    assert rows() == before
+
+
+def test_rewording_an_open_issue_counts_as_a_change(
+    migrated_engine: Engine, tmp_path: Path
+) -> None:
+    entity = make_entity(
+        table="lending.core.branches",
+        primary_key=("branch_id",),
+        dimensions=[dimension("city", "nope_one")],
+    )
+    sync(migrated_engine, entities=[entity], glossary_terms=[])
+    changed = make_entity(
+        table="lending.core.branches",
+        primary_key=("branch_id",),
+        dimensions=[dimension("city", "nope_two")],
+    )
+    summary = sync(migrated_engine, entities=[changed], glossary_terms=[])
+    assert summary["reference_issues"] == {"opened": 0, "closed": 0, "reworded": 1}
+    assert summary["total_changes"] == 1
+    result = sync_catalog(
+        migrated_engine,
+        FileConnector(EXPORT),
+        tag_map=TAG_MAP,
+        entities=[
+            make_entity(
+                table="lending.core.branches",
+                primary_key=("branch_id",),
+                dimensions=[dimension("city", "nope_three")],
+            )
+        ],
+        glossary_terms=[],
+        record_unchanged=False,
+    )
+    assert result.run_id is not None  # a reworded message is a change, so a run is recorded
+
+
+def test_renaming_the_source_is_a_clear_error(migrated_engine: Engine, tmp_path: Path) -> None:
+    sync(migrated_engine)
+    data = copy.deepcopy(export_data())
+    data["source"]["name"] = "renamed"
+    renamed = write_export(tmp_path / "renamed.yaml", data)
+    with pytest.raises(ConnectorError) as error:
+        sync(migrated_engine, renamed)
+    message = str(error.value)
+    assert "lending-sample" in message and "renamed" in message and "lending.core." in message
+    assert count(migrated_engine, catalog_source) == 1 and count(migrated_engine, sync_run) == 1

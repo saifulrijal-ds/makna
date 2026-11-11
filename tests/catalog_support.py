@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from makna.definitions.loader import load_definitions
+from makna.definitions.loader import official_objects
 from makna.model.definitions import Entity, GlossaryTerm, parse_definition
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,16 +45,9 @@ def export_without_column(path: Path, table: str, column: str) -> Path:
 
 def sample_objects() -> tuple[list[Entity], list[GlossaryTerm]]:
     """Official entities and glossary terms of the sample definitions."""
-    entities: list[Entity] = []
-    terms: list[GlossaryTerm] = []
-    for file in load_definitions(DEFINITIONS).valid_files():
-        if file.is_proposal:
-            continue
-        if isinstance(file.definition, Entity):
-            entities.append(file.definition)
-        elif isinstance(file.definition, GlossaryTerm):
-            terms.append(file.definition)
-    return entities, terms
+    found = official_objects(DEFINITIONS)
+    assert not found.invalid
+    return found.entities, found.terms
 
 
 def make_entity(

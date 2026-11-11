@@ -118,18 +118,25 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
         directory = _definitions_directory(definitions)
         entities: list[Entity] | None = None
         terms: list[GlossaryTerm] = []
+        unreadable: dict[str, str] = {}
         if directory is not None:
             if not directory.is_dir():
                 print(f"makna catalog sync: {directory} is not a directory", file=sys.stderr)
                 return 2
-            entities, terms = official_objects(directory)
+            found = official_objects(directory)
+            entities, terms, unreadable = found.entities, found.terms, found.invalid
         else:
             print(
                 "makna catalog sync: no definitions directory, reference check skipped",
                 file=sys.stderr,
             )
         result = sync_catalog(
-            engine, FileConnector(file), tag_map=tag_map, entities=entities, glossary_terms=terms
+            engine,
+            FileConnector(file),
+            tag_map=tag_map,
+            entities=entities,
+            glossary_terms=terms,
+            unreadable_objects=unreadable,
         )
     except (RuntimeError, ConfigError) as error:
         print(f"makna catalog sync: {error}", file=sys.stderr)
@@ -137,6 +144,8 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
     except (ConnectorError, SQLAlchemyError) as error:
         print(f"makna catalog sync: {error}", file=sys.stderr)
         return 1
+    for warning in result.warnings:
+        print(f"makna catalog sync: warning: {warning}", file=sys.stderr)
     summary = result.summary.as_dict()
     for group in ("datasets", "columns", "glossary_terms", "reference_issues"):
         print(f"{group}: " + ", ".join(f"{k} {v}" for k, v in summary[group].items()))

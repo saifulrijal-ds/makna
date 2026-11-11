@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import Connection, Engine, delete, insert, select, update
 
 from makna.catalog import references
-from makna.catalog.base import CatalogConnector
+from makna.catalog.base import CatalogConnector, ConnectorError
 from makna.index.tables import (
     catalog_column,
     catalog_dataset,
@@ -50,6 +50,7 @@ class SyncSummary:
     glossary_terms: Counts = field(default_factory=Counts)
     issues_opened: int = 0
     issues_closed: int = 0
+    issues_reworded: int = 0
 
     @property
     def total_changes(self) -> int:
@@ -58,6 +59,7 @@ class SyncSummary:
             sum(c.added + c.changed + c.removed for c in counts)
             + self.issues_opened
             + self.issues_closed
+            + self.issues_reworded
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -65,7 +67,11 @@ class SyncSummary:
             "datasets": {**self.datasets.as_dict(), "unchanged": self.datasets_unchanged},
             "columns": self.columns.as_dict(),
             "glossary_terms": self.glossary_terms.as_dict(),
-            "reference_issues": {"opened": self.issues_opened, "closed": self.issues_closed},
+            "reference_issues": {
+                "opened": self.issues_opened,
+                "closed": self.issues_closed,
+                "reworded": self.issues_reworded,
+            },
             "total_changes": self.total_changes,
         }
 
@@ -75,6 +81,8 @@ class SyncResult:
     summary: SyncSummary
     run_id: int | None
     """Id of the `sync_run` row, or None when nothing changed and no run was recorded."""
+    warnings: tuple[str, ...] = ()
+    """Things the caller should show: definition files that could not be read."""
 
 
 def _column_values(
@@ -193,6 +201,10 @@ def _sync_datasets(
                 .where(catalog_dataset.c.id == row.id)
                 .values(removed_at=now, synced_at=now)
             )
+            gone = connection.execute(
+                delete(catalog_column).where(catalog_column.c.dataset_id == row.id)
+            )
+            summary.columns.removed += gone.rowcount
             summary.datasets.removed += 1
 
 
@@ -238,6 +250,26 @@ def _sync_terms(
             summary.glossary_terms.removed += 1
 
 
+def _refuse_foreign_tables(
+    connection: Connection, source_id: int, source_name: str, datasets: list[CatalogDataset]
+) -> None:
+    """A table already stored under another source means `source.name` was changed."""
+    clash = connection.execute(
+        select(catalog_dataset.c.engine_fqn, catalog_source.c.name)
+        .join(catalog_source, catalog_source.c.id == catalog_dataset.c.source_id)
+        .where(
+            catalog_dataset.c.source_id != source_id,
+            catalog_dataset.c.engine_fqn.in_([d.engine_fqn for d in datasets]),
+        )
+        .limit(1)
+    ).first()
+    if clash is not None:
+        raise ConnectorError(
+            f"source.name {source_name!r}: table {clash[0]} already belongs to source "
+            f"{clash[1]!r}; a source cannot be renamed by changing source.name in the file"
+        )
+
+
 def sync_catalog(
     engine: Engine,
     connector: CatalogConnector,
@@ -245,6 +277,7 @@ def sync_catalog(
     tag_map: Mapping[str, str],
     entities: Iterable[Entity] | None = None,
     glossary_terms: Iterable[GlossaryTerm] | None = None,
+    unreadable_objects: Mapping[str, str] | None = None,
     record_unchanged: bool = True,
 ) -> SyncResult:
     """Sync one source into the catalog tables, in one transaction.
@@ -252,11 +285,18 @@ def sync_catalog(
     The connector is read in full before the database is touched, so a connector error leaves
     everything as it was. When `entities` is given, the reference check (R01 to R04) runs
     against the new copy and its counts go into the summary; without it, issues are not touched.
+    `unreadable_objects` maps object ids to the definition files that failed to load; their open
+    issues are left as they are and the result carries a warning for each.
     """
     connector.check()
     datasets = list(connector.list_datasets())
     terms = list(connector.list_glossary_terms())
     started = datetime.now(UTC)
+    unreadable = dict(unreadable_objects or {})
+    warnings = tuple(
+        f"definition file {path} is not valid; reference issues of {object_id} left unchanged"
+        for object_id, path in unreadable.items()
+    )
     summary = SyncSummary()
     run_id: int | None = None
     with engine.begin() as connection:
@@ -269,11 +309,15 @@ def sync_catalog(
                 .values(name=connector.name, connector=connector.kind)
                 .returning(catalog_source.c.id)
             ).scalar_one()
+        _refuse_foreign_tables(connection, source_id, connector.name, datasets)
         _sync_datasets(connection, source_id, datasets, tag_map, started, summary)
         _sync_terms(connection, source_id, terms, summary)
         if entities is not None:
-            changes = references.check(connection, entities, glossary_terms or [], now=started)
+            changes = references.check(
+                connection, entities, glossary_terms or [], now=started, keep=unreadable
+            )
             summary.issues_opened, summary.issues_closed = changes.opened, changes.closed
+            summary.issues_reworded = changes.reworded
         if summary.total_changes or record_unchanged:
             finished = datetime.now(UTC)
             connection.execute(
@@ -292,4 +336,4 @@ def sync_catalog(
                 )
                 .returning(sync_run.c.id)
             ).scalar_one()
-    return SyncResult(summary, run_id)
+    return SyncResult(summary, run_id, warnings)

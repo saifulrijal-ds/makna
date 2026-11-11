@@ -89,28 +89,30 @@ def run_migrations(context: Context) -> str:
 
 
 def sync_catalog_step(context: Context) -> str:
-    entities, terms = official_objects(context.definitions_dir)
+    found = official_objects(context.definitions_dir)
     engine = make_engine(context.database_url)
     try:
         result = sync_catalog(
             engine,
             FileConnector(context.catalog_file),
             tag_map=load_tag_map(),
-            entities=entities,
-            glossary_terms=terms,
+            entities=found.entities,
+            glossary_terms=found.terms,
+            unreadable_objects=found.invalid,
             record_unchanged=False,
         )
     finally:
         engine.dispose()
     summary = result.summary
+    warning = "".join(f" WARNING: {w}" for w in result.warnings)
     if summary.total_changes == 0:
-        return "unchanged"
+        return "unchanged" + warning
     return (
         f"synced (datasets +{summary.datasets.added} ~{summary.datasets.changed} "
         f"-{summary.datasets.removed}, columns +{summary.columns.added} "
         f"~{summary.columns.changed} -{summary.columns.removed}, glossary terms "
         f"+{summary.glossary_terms.added}, reference issues opened {summary.issues_opened} "
-        f"closed {summary.issues_closed})"
+        f"closed {summary.issues_closed})" + warning
     )
 
 

@@ -17,7 +17,7 @@ untouched, and when it stops being true the row is closed (`closed_at` set), not
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -69,6 +69,10 @@ class Changes:
     @property
     def closed(self) -> int:
         return len(self.to_close)
+
+    @property
+    def reworded(self) -> int:
+        return len(self.to_reword)
 
     @property
     def is_empty(self) -> bool:
@@ -229,9 +233,16 @@ def open_issues(connection: Connection) -> list[Finding]:
 
 
 def plan_changes(
-    connection: Connection, entities: Iterable[Entity], terms: Iterable[GlossaryTerm]
+    connection: Connection,
+    entities: Iterable[Entity],
+    terms: Iterable[GlossaryTerm],
+    keep: Collection[str] = (),
 ) -> Changes:
-    """Compare the findings against the catalog tables with the open rows. Writes nothing."""
+    """Compare the findings against the catalog tables with the open rows. Writes nothing.
+
+    Open issues of the objects in `keep` (object ids whose definition file could not be read)
+    are left exactly as they are.
+    """
     found = {f.key: f for f in find_issues(entities, terms, load_view(connection))}
     still_open: set[tuple[str, str, str]] = set()
     to_close: list[int] = []
@@ -239,6 +250,8 @@ def plan_changes(
     for row in connection.execute(
         select(issue_table).where(issue_table.c.closed_at.is_(None)).order_by(issue_table.c.id)
     ):
+        if row.object_id in keep:
+            continue
         key = (row.object_id, row.part, row.code)
         current = found.get(key)
         if current is None or key in still_open:
@@ -284,9 +297,10 @@ def check(
     entities: Iterable[Entity],
     terms: Iterable[GlossaryTerm],
     now: datetime | None = None,
+    keep: Collection[str] = (),
 ) -> Changes:
     """Run the reference check and write `reference_issue`. Returns what changed."""
     entity_list, term_list = list(entities), list(terms)
-    changes = plan_changes(connection, entity_list, term_list)
+    changes = plan_changes(connection, entity_list, term_list, keep)
     apply_changes(connection, changes, now)
     return changes

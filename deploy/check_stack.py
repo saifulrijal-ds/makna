@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 
@@ -209,7 +210,11 @@ def main() -> int:
             check()
         except Exception as error:
             failed += 1
-            print(f"FAIL {check.__name__}: {error}")
+            where = traceback.extract_tb(error.__traceback__)[-1]
+            print(
+                f"FAIL {check.__name__}: {type(error).__name__}: {error!r}"
+                f" (at {where.filename}:{where.lineno}: {where.line})"
+            )
         else:
             print(f"ok   {check.__name__}")
     return 1 if failed else 0

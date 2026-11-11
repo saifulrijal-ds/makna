@@ -34,3 +34,32 @@ def test_a_bad_tag_map_is_a_config_error(tmp_path: Path) -> None:
     path.write_text('[sensitivity]\ntag_map = "x"\n', encoding="utf-8")
     with pytest.raises(ConfigError):
         load_tag_map(path)
+
+
+def test_official_objects_reports_invalid_files_with_their_object_ids(tmp_path: Path) -> None:
+    from makna.definitions.loader import official_objects
+
+    entities = tmp_path / "lending" / "entities"
+    entities.mkdir(parents=True)
+    (entities / "customer.yaml").write_text("kind: entity\nname: [broken\n", encoding="utf-8")
+    (tmp_path / "lending" / "entities" / "other.draft.yaml").write_text(
+        "kind: x\n", encoding="utf-8"
+    )
+    result = official_objects(tmp_path)
+    assert result.entities == [] and result.terms == []
+    assert result.invalid == {"entity:customer": "lending/entities/customer.yaml"}
+
+
+def test_a_failing_stack_check_never_prints_an_empty_message(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deploy import check_stack
+
+    def check_bare() -> None:
+        assert 1 + 1 == 3
+
+    monkeypatch.setattr(check_stack, "CHECKS", [check_bare])
+    assert check_stack.main() == 1
+    out = capsys.readouterr().out
+    assert out.startswith("FAIL check_bare: AssertionError: ")
+    assert "1 + 1 == 3" in out
