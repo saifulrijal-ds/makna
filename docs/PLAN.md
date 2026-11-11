@@ -108,13 +108,14 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-05 Development stack and database migrations
 
 - **Read**: `docs/ARCHITECTURE.md` sections 6.4 and 9; DR-11.
-- **Build**: `deploy/docker-compose.yml` with `postgres`, `trino`, `init`, and `app`; a minimal `makna serve` (a FastAPI application with only `/healthz`, extended by WP-12 and WP-16); an `init` entry point that runs an ordered list of idempotent steps, to which later packages add their step (WP-06 catalog sync, WP-07 index build, WP-12 demo users, WP-18 definitions repository); Trino catalog configuration; a loader that creates `lending.core` tables from the WP-02 table specification and loads the Parquet files; Alembic migrations for all tables in section 6.4; a CI job that starts the stack. Pin the Trino and PostgreSQL image versions and record them in `deploy/README.md`.
+- **Build**: `deploy/docker-compose.yml` with `postgres`, `trino`, `init`, and `app`; a minimal `makna serve` (a FastAPI application with only `/healthz`, extended by WP-12 and WP-16); an `init` entry point that runs an ordered list of idempotent steps, to which later packages add their step (WP-06 catalog sync, WP-07 index build, WP-12 demo users, WP-18 definitions repository); Trino catalog configuration; a loader that creates `lending.core` tables from the WP-02 table specification and loads the Parquet files; Alembic migrations for all tables in section 6.4; separate PostgreSQL roles for the `makna` and `lending` databases (section 9); a CI job that starts the stack. Pin the Trino and PostgreSQL image versions and record them in `deploy/README.md`.
 - **Acceptance**
   1. `docker compose -f deploy/docker-compose.yml up -d --wait` ends with all services healthy on a clean machine (CI job).
   2. Through Trino, `SELECT count(*) FROM lending.core.<table>` equals the row count of the generated file, for all nine tables.
   3. `alembic upgrade head` on an empty database creates every table of section 6.4; `alembic downgrade base` removes them; the `vector` extension is present.
   4. Running `init` a second time changes nothing and exits 0.
-  5. No secret has a value in any committed file; the compose file reads them from the environment with development defaults only for the local PostgreSQL password.
+  5. No secret has a value in any committed file; the compose file reads them from the environment with development defaults only for the local PostgreSQL passwords.
+  6. The `makna` database role cannot connect to the `lending` database, and Trino's role can only read it (CI stack job). Trino's port is published on `127.0.0.1` only.
 
 ## M1 Agent path
 
@@ -145,6 +146,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   7. Changing one metric's synonyms and calling `index_object` changes only that object's rows (other rows keep their `text_hash` and update time).
   8. Engine tier, real default model: the 95th percentile of 200 searches is under 500 ms (NFR-2), and "pembiayaan bermasalah" returns `metric:npf_ratio` or `metric:npf_outstanding_principal` first.
   9. With network access disabled after the image is built, `makna index build` and a search succeed (NFR-3; run in the CI stack job).
+  10. A `column` document for a column with derived sensitivity `personal` (for example `customers.national_id`) is never returned to a viewer or agent caller, even with `kinds: [column]`, and is returned to a curator.
 
 ### WP-08 Compiler: model snapshot, join graph, request planning
 
@@ -199,13 +201,13 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-12 Service layer, users, roles, tokens, tool-call log
 
 - **Read**: `docs/ARCHITECTURE.md` sections 4, 11, 14.
-- **Build**: `makna.services`: `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, each taking a `Caller` (user or token, role, teams, channel); the indexer step that stores each metric's available dimensions (using `available_dimensions` from WP-08) and each dimension's catalog-derived sensitivity; the in-memory model snapshot refreshed on `definitions_version`; user and token management (`makna user create`, `makna token create`); the permission checks of section 11 as one module; redaction and `tool_call_log` writes; `makna serve` (FastAPI app with `/healthz`).
+- **Build**: `makna.services`: `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, each taking a `Caller` (user or token, role, teams, channel); the indexer step that stores each metric's available dimensions (using `available_dimensions` from WP-08) and each dimension's catalog-derived sensitivity; the in-memory model snapshot refreshed on `definitions_version`; user and token management (`makna user create`, `makna token create`, with the owner's engine credentials stored encrypted for a token with `can_run`); the permission checks of section 11 as one module; redaction and `tool_call_log` writes; `makna serve` (FastAPI app with `/healthz`).
 - **Acceptance** (integration tier)
   1. A table-driven test covers every cell of the permission matrix in section 11 for the read and run permissions (write permissions are tested in WP-18).
   2. `search` as an agent token or viewer never returns a draft; as a curator it can.
   3. `get_definition` for a metric returns the fields shown in section 12, including available dimensions with their path label and the unavailable personal dimensions with a reason.
   4. `list_related("metric:npf_ratio")` includes its two inputs (`input_of`) and the glossary term `npf` (`explains`).
-  5. `run_query` raises `RUN_DISABLED` when `MAKNA_RUN_ENABLED` is false, `ENGINE_CREDENTIALS_REQUIRED` without credentials, and with a fake engine returns rows.
+  5. `run_query` raises `RUN_DISABLED` when `MAKNA_RUN_ENABLED` is false, `ENGINE_CREDENTIALS_REQUIRED` for a token with no stored credentials, and with a fake engine returns rows, the fake engine receiving the token owner's stored credentials. The `api_token` row holds no plaintext password (assert on the raw column), and decrypting with a different `MAKNA_CREDENTIALS_KEY` fails.
   6. Every service call writes one `tool_call_log` row, including failed and refused calls with `status` and `error_code`. A call whose query text contains an email address, a 16-digit number, and a phone number stores none of them. No row contains result row values (assert on a run that returns known values).
   7. A token is shown once at creation, stored only as a hash, rejected after revocation, and `last_used_at` is updated.
   8. After changing an official file and calling `index_object`, the next `get_definition` in the same process returns the new content with no restart.
@@ -213,7 +215,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-13 MCP server
 
 - **Read**: `docs/ARCHITECTURE.md` section 12; `docs/notes/mcp-sdk-2-renamed-fastmcp.md`.
-- **Build**: `makna.mcp.server` with the five tools, the server instructions, tool descriptions exactly as in section 12 (improve wording only with a note in the pull request), Streamable HTTP mounted at `/mcp` with bearer-token authentication, and stdio through `makna mcp`.
+- **Build**: `makna.mcp.server` with the five tools, the server instructions, tool descriptions exactly as in section 12 (improve wording only with a note in the pull request), Streamable HTTP mounted at `/mcp` with bearer-token authentication, and `makna mcp`, a stdio-to-HTTP bridge holding only `MAKNA_URL` and `MAKNA_TOKEN` (section 12).
 - **Acceptance** (integration tier, using the SDK's client in process and over HTTP)
   1. Listing tools returns the four always-on tools, plus `makna_run_query` only when running is enabled and the token has `can_run`. Every tool has `readOnlyHint` set. A snapshot test compares each tool description and the server instructions with a reviewed text file in the test directory, so a wording change is always a visible, reviewed change; the first snapshot is the text of section 12 (MCP-2).
   2. A full flow passes: search "kredit macet per wilayah", get the top metric's definition, compile a request using a dimension from that definition, and (with the fake engine) run it.
@@ -221,7 +223,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   4. A compile error is returned as a tool error whose JSON has `code`, `message`, and `details`; for `DIMENSION_NOT_AVAILABLE` the details list available dimensions.
   5. HTTP without a token, with a revoked token, and with a malformed token is rejected with 401.
   6. No tool accepts SQL text: the input schema of every tool has no property named `sql` or `query_sql`, and a test asserts this.
-  7. Engine credentials sent as headers reach the fake engine and appear in no log row and no response.
+  7. The stdio bridge refuses to start without `MAKNA_TOKEN`, starts and completes a search with no `MAKNA_DATABASE_URL` in its environment, and its calls are logged with the token's user. No tool input schema has a property for engine credentials, `X-Makna-Engine-*` headers are ignored, and `makna_run_query` reaches the fake engine with the token's stored credentials, which appear in no log row and no response.
 
 ### WP-14 Golden question set
 
@@ -255,7 +257,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-16 Web shell: layout, sign-in, sessions
 
 - **Read**: `docs/ARCHITECTURE.md` sections 11, 13; DR-8.
-- **Build**: base template, navigation, vendored HTMX, Pico CSS, and Ace under `makna/web/static/vendor/` with a `VENDORED.md` listing versions, licences, and source URLs; `/login`, `/logout`, `/account` (own tokens, engine credentials for the session); `/admin/users` and `/admin/tokens`; session cookie; CSRF protection; a role-aware navigation; error pages.
+- **Build**: base template, navigation, vendored HTMX, Pico CSS, and Ace under `makna/web/static/vendor/` with a `VENDORED.md` listing versions, licences, and source URLs; `/login`, `/logout`, `/account` (own tokens, with engine credentials for a token that may run queries; engine credentials for the web session); `/admin/users` and `/admin/tokens`; session cookie; CSRF protection; a role-aware navigation; error pages.
 - **Acceptance** (integration tier, FastAPI test client)
   1. Every route except `/login`, `/healthz`, and static files redirects to `/login` when signed out.
   2. Signing in with a wrong password fails with the same message as an unknown email; five failures in a minute for one email are followed by a refusal (basic throttling).

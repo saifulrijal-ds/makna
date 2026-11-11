@@ -149,7 +149,7 @@ Sources: `https://docs.open-metadata.org/latest/releases/all-releases`; `https:/
 
 ### DR-6 (answers Q-6): Four roles, owner-team approval, a two-person rule, and read-only agent tokens
 
-**Choice.** The matrix in `docs/ARCHITECTURE.md` section 11. Roles are `viewer`, `curator`, `approver`, `admin`. A user has one role and a list of teams. An object may be approved by an approver or admin, or by a curator whose teams include the object's owner team. No author of any commit on a proposal can approve it, unless `MAKNA_ALLOW_SELF_APPROVAL=true` (owner decision D-11; default `false`). **Revised after review (R-6):** approval rights follow the official file's owner team, not the proposal's; a new object's owner team must be one of the proposer's teams; a change of owner team needs an approver or admin. API tokens act as a viewer at most and can never write.
+**Choice.** The matrix in `docs/ARCHITECTURE.md` section 11. Roles are `viewer`, `curator`, `approver`, `admin`. A user has one role and a list of teams. An object may be approved by an approver or admin, or by a curator whose teams include the object's owner team. No author of any commit on a proposal can approve it, unless `MAKNA_ALLOW_SELF_APPROVAL=true` (owner decision D-11; default `false`). **Revised after review (R-6):** approval rights follow the official file's owner team, not the proposal's; a new object's owner team must be one of the proposer's teams; a change of owner team needs an approver or admin. API tokens act as a viewer at most and can never write. **Revised after review (R-2, R-3):** every MCP channel, stdio included, authenticates with a token (the stdio command is a bridge to the HTTP endpoint with no database settings), and agents never hold engine credentials: a token that may run queries carries its owner's engine credentials, stored encrypted on the server.
 
 **Reason.** This is the smallest model that satisfies "only owners or approvers can approve" (WEB-3) and D-4 and D-5. The two-person rule is the control a regulated lender expects; the switch exists so a single-developer install is not locked out. Per-domain roles and groups from single sign-on are phase 2.
 
@@ -189,7 +189,7 @@ Sources: `https://docs.open-metadata.org/latest/releases/all-releases`; `https:/
 
 ### DR-11 (refines P-6): Trino reads the sample data from PostgreSQL; DuckDB stands in for the engine in unit tests only
 
-**Choice.** The dev stack loads the synthetic data into a `lending` database on the same PostgreSQL server and exposes it through Trino's PostgreSQL connector as catalog `lending`. Unit tests print the compiler's syntax tree for DuckDB and run it in-process.
+**Choice.** The dev stack loads the synthetic data into a `lending` database on the same PostgreSQL server and exposes it through Trino's PostgreSQL connector as catalog `lending`. **Revised after review (R-2):** the two databases have separate roles; the application's role cannot connect to `lending`, and Trino reads it through a read-only role. Unit tests print the compiler's syntax tree for DuckDB and run it in-process.
 
 **Reason.** No extra storage service, durable data, fast load. The compiler builds a dialect-neutral sqlglot tree, so a DuckDB run costs nothing extra and gives fast correctness tests; the Trino tier still runs every approved metric on the real engine. DuckDB is a test tool, not a supported engine (CON-7 stays in phase 3).
 

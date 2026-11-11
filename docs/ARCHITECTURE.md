@@ -126,7 +126,7 @@ docs/                       this pack, plus docs/notes/
 4. **Generate** (`makna.compiler.sqlgen`): build one aggregate subquery per input, combine the inputs, compute the metric, order, and limit (section 7.5).
 5. **Verify** (`makna.compiler.governance`): walk the finished syntax tree and fail if a personal column appears outside a mask or an aggregate.
 6. Return the SQL text, the result columns, the explanation steps, and warnings.
-7. If the caller asked to run it and running is enabled: the service passes the SQL and the caller's engine credentials to the Trino connector, which returns columns and rows up to the limit. Credentials are used for that one call and never stored or logged.
+7. If the caller asked to run it and running is enabled: the service passes the SQL and the caller's engine credentials to the Trino connector, which returns columns and rows up to the limit. For a token these are the credentials stored, encrypted, with the token; for a web session they are the ones entered on `/account` for that session (section 12). Credentials are never returned or logged, and agents never hold them.
 8. The call is written to `tool_call_log` without row values.
 
 ## 5. The semantic model
@@ -306,11 +306,11 @@ All tables are in the `makna` database. Everything in the first two groups can b
 | Table | Columns |
 |---|---|
 | `app_user` | `id`, `email` unique, `display_name`, `password_hash`, `role`, `teams` text[], `is_active`, `created_at` |
-| `api_token` | `id`, `user_id`, `name`, `token_hash`, `can_run` boolean, `created_at`, `last_used_at`, `revoked_at` |
+| `api_token` | `id`, `user_id`, `name`, `token_hash`, `can_run` boolean, `engine_credentials` bytea (the owner's engine user and password, encrypted with `MAKNA_CREDENTIALS_KEY`; set only when `can_run`), `created_at`, `last_used_at`, `revoked_at` |
 | `audit_event` | `id`, `at`, `actor_user_id`, `actor_label`, `action`, `object_id`, `from_status`, `to_status`, `reason`, `commit_sha`; unique on (`commit_sha`, `object_id`, `action`) |
 | `tool_call_log` | `id`, `at`, `channel` (`mcp`, `web`, `cli`), `user_id`, `token_id`, `tool`, `request` jsonb (redacted), `result` jsonb (object ids returned, confidence, row count; never row values), `status` (`ok`, `error`, `refused`), `error_code`, `duration_ms` |
 
-**What becomes a search document.** One per approved or deprecated object; one per object that exists only as a proposal (with its proposal status); one per dimension of each indexed entity (`dimension:<entity>.<name>`); one per catalog column (`column:<engine_fqn>.<name>`, status `approved`); one per catalog glossary term that no Makna glossary term claims through `catalog_term`. `names` holds the name with underscores as spaces, the label, and all synonyms. `extra` holds example questions, the formula line, value descriptions, and caveats.
+**What becomes a search document.** One per approved or deprecated object; one per object that exists only as a proposal (with its proposal status); one per dimension of each indexed entity (`dimension:<entity>.<name>`); one per catalog column (`column:<engine_fqn>.<name>`, status `approved`; a column whose derived sensitivity is `personal` is returned only to curators and above, never to agents or viewers, so search is not a map of where raw personal data lives); one per catalog glossary term that no Makna glossary term claims through `catalog_term`. `names` holds the name with underscores as spaces, the label, and all synonyms. `extra` holds example questions, the formula line, value descriptions, and caveats.
 
 ## 7. The query compiler
 
@@ -507,8 +507,8 @@ When a question is ambiguous, Makna **returns the options** and never picks sile
 
 | Service | Image | Role |
 |---|---|---|
-| `postgres` | `pgvector/pgvector` for PostgreSQL 17 | Two databases: `makna` (the application) and `lending` (the sample data). |
-| `trino` | `trinodb/trino`, version pinned in WP-05 | One Trino catalog named `lending`, using the PostgreSQL connector to read the `lending` database. No authentication in the dev stack. |
+| `postgres` | `pgvector/pgvector` for PostgreSQL 17 | Two databases with separate roles: `makna` (the application, role `makna`) and `lending` (the sample data, owned by a loader role and read by Trino through a read-only role). The `makna` role cannot connect to `lending`, so the application's database settings never reach raw sample data. |
+| `trino` | `trinodb/trino`, version pinned in WP-05 | One Trino catalog named `lending`, using the PostgreSQL connector to read the `lending` database. No authentication in the dev stack, so its port is published on `127.0.0.1` only (for engine tests and evals). A real deployment must enable Trino authentication: Makna's masking does not replace engine access control (section 7.6). |
 | `init` | the Makna image | Runs once: generate data if missing, load it into `lending`, run migrations, copy `semantic/definitions/` into a new git repository in a volume, sync the catalog from `data/catalog/lending.catalog.yaml`, build the index, create four demo users (one per role). Each step is added by the work package that builds the feature (see `docs/PLAN.md`). |
 | `app` | the Makna image | `makna serve`: web app on `/`, MCP on `/mcp`, health on `/healthz`, one port (8000). |
 
@@ -518,7 +518,7 @@ Why PostgreSQL behind Trino: it is already in the stack, holds the sample data d
 
 An OpenMetadata server is **not** in the default stack (it needs its own database and a search engine). `deploy/docker-compose.openmetadata.yml` adds it for the connector's integration test (WP-21).
 
-Configuration: secrets and connection settings from environment variables (NFR-4): `MAKNA_DATABASE_URL`, `MAKNA_SECRET_KEY`, `MAKNA_DEFINITIONS_REPO`, `MAKNA_TRINO_URL`, `MAKNA_RUN_ENABLED` (default `false`; the dev stack sets `true`), `MAKNA_EMBEDDING_PROVIDER`, `MAKNA_ENGINE_SERVICE_USER`/`MAKNA_ENGINE_SERVICE_PASSWORD` (optional, used only by the freshness check), connector secrets such as `MAKNA_OPENMETADATA_TOKEN`. Non-secret settings (search weights, tag map, catalog sources) are in `config/makna.toml`. `deploy/.env.example` lists every variable with no values.
+Configuration: secrets and connection settings from environment variables (NFR-4): `MAKNA_DATABASE_URL`, `MAKNA_SECRET_KEY`, `MAKNA_CREDENTIALS_KEY` (encrypts stored engine credentials), `MAKNA_DEFINITIONS_REPO`, `MAKNA_TRINO_URL`, `MAKNA_RUN_ENABLED` (default `false`; the dev stack sets `true`), `MAKNA_EMBEDDING_PROVIDER`, `MAKNA_ENGINE_SERVICE_USER`/`MAKNA_ENGINE_SERVICE_PASSWORD` (optional, used only by the freshness check), connector secrets such as `MAKNA_OPENMETADATA_TOKEN`. Non-secret settings (search weights, tag map, catalog sources) are in `config/makna.toml`. `deploy/.env.example` lists every variable with no values.
 
 Self-hosting (NFR-3): nothing in the running system calls an outside service. The embedding model is downloaded once when the image is built and stored in the image; a build argument points to an internal mirror for sites without internet access.
 
@@ -565,7 +565,7 @@ The audit log (GOV-1) is therefore stored twice on purpose: in git history (cann
 
 ## 11. Access control (Q-6, DR-6)
 
-Sign-in is by email and password (Argon2 hash) with a server-side signed session cookie. Agents and scripts use API tokens (random 32 bytes, shown once, stored as a SHA-256 hash), sent as `Authorization: Bearer`. A token belongs to a user and acts with at most the `viewer` permissions of that user, plus `run` if the token has `can_run`. Single sign-on is phase 2 (WEB-5).
+Sign-in is by email and password (Argon2 hash) with a server-side signed session cookie. Agents and scripts use API tokens (random 32 bytes, shown once, stored as a SHA-256 hash), sent as `Authorization: Bearer`. A token belongs to a user and acts with at most the `viewer` permissions of that user, plus `run` if the token has `can_run` and stored engine credentials. Single sign-on is phase 2 (WEB-5).
 
 | Permission | viewer | curator | approver | admin | agent token |
 |---|---|---|---|---|---|
@@ -589,9 +589,9 @@ API tokens cannot perform any write action, whatever the user's role (D-4).
 
 ## 12. The MCP server (MCP-1, MCP-2, MCP-3, Q-7, DR-7)
 
-Built with the official Python SDK (`mcp` 2.x, class `MCPServer`; see `docs/notes/mcp-sdk-2-renamed-fastmcp.md`). Transports: Streamable HTTP mounted in the application at `/mcp` (the main one, with bearer token), and stdio (`makna mcp`, for a local process that has the database settings in its environment). Every tool is read-only and marked with `readOnlyHint`.
+Built with the official Python SDK (`mcp` 2.x, class `MCPServer`; see `docs/notes/mcp-sdk-2-renamed-fastmcp.md`). Transports: Streamable HTTP mounted in the application at `/mcp` (the main one, with bearer token), and stdio through `makna mcp`. The stdio command is a thin bridge for MCP clients that can only start a local process. It holds only `MAKNA_URL` and `MAKNA_TOKEN`, forwards every message to `/mcp` over HTTP, and has no database settings and no service code. It refuses to start without a token. Every channel therefore has a token-based caller, and no agent process ever holds the database URL. Every tool is read-only and marked with `readOnlyHint`.
 
-Engine credentials for `makna_run_query`: over HTTP, the client sends `X-Makna-Engine-User` and `X-Makna-Engine-Password` headers, configured once in the MCP client; over stdio, `MAKNA_ENGINE_USER` and `MAKNA_ENGINE_PASSWORD` in the process environment. They are passed to the engine for that call and never stored or logged.
+**Agents never hold engine credentials.** If they did, they could run any SQL on the engine directly, outside Makna's joins and masking. When a user creates a token with `can_run` on `/account`, they enter their own engine user and password once. Makna stores them encrypted with the token (`api_token.engine_credentials`, key `MAKNA_CREDENTIALS_KEY`) and never returns or logs them. `makna_run_query` runs the compiled SQL with those credentials, so the query runs as the token's owner on the engine (QRY-4) and engine access control still applies. The agent holds only the Makna token, which cannot be used to connect to the engine. No tool input or header accepts engine credentials.
 
 Server instructions (sent at initialization):
 
@@ -673,7 +673,7 @@ Errors: `{"error": {"code": "DIMENSION_NOT_AVAILABLE", "message": "...", "detail
 
 ### `makna_run_query` (registered only when `MAKNA_RUN_ENABLED` is true and the token has `can_run`)
 
-> Compile a structured request and run it on the query engine with your own engine credentials. Same input as makna_compile_query. Returns the rows (at most `limit`), the SQL that ran, and the explanation. Use this when the user wants the number itself. Errors are the same as for makna_compile_query, plus engine errors; an empty result means the data has no rows for that request, not that the metric is wrong.
+> Compile a structured request and run it on the query engine under your user's engine account. Same input as makna_compile_query. Returns the rows (at most `limit`), the SQL that ran, and the explanation. Use this when the user wants the number itself. Errors are the same as for makna_compile_query, plus engine errors; an empty result means the data has no rows for that request, not that the metric is wrong.
 
 Output adds `rows` (list of lists), `row_count`, and `truncated`.
 
@@ -695,9 +695,9 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; the SQL and explanation; and, if running is enabled and engine credentials are in the session, the first 100 rows. | WEB-4 |
 | `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19). | GOV-1, GOV-2 |
 | `/admin/users`, `/admin/tokens`, `/admin/catalog` | Users and roles; tokens (both built in WP-16); sync runs and the reference-issue report, with buttons to run a sync and an index sync (built in WP-19). | WEB-5, SEM-4 |
-| `/login`, `/logout`, `/account` | Sign-in; own tokens; engine credentials for this session. | WEB-5 |
+| `/login`, `/logout`, `/account` | Sign-in; own tokens (a token that may run queries is created together with the owner's engine credentials, stored encrypted); engine credentials for this web session. | WEB-5 |
 
-Engine credentials entered on `/account` are kept in server memory for the session (lost on restart), never in the cookie and never in the database.
+Engine credentials entered on `/account` for the web session are kept in server memory for the session (lost on restart), never in the cookie and never in the database. Engine credentials given for a token are stored only encrypted (section 12).
 
 **Freshness** (WEB-1): `makna freshness refresh` runs, for each measure, `SELECT MAX(<time dimension>)` on the engine with the service credentials, and stores the result in `data_freshness`. The dev stack runs it in `init`. Without service credentials the page shows "freshness not available". The page also shows the date of the last approval.
 
