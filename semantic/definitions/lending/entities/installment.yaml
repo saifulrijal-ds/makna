@@ -1,0 +1,39 @@
+apiVersion: makna/v1
+kind: entity
+name: installment
+label: Scheduled Installment
+description: >-
+  One scheduled installment of a contract. When a contract is restructured,
+  the old schedule rows stay in the table and are marked as not current, so
+  measures here count current rows only.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [repayment schedule, due installment]
+  id: [angsuran, jadwal angsuran]
+version: 1
+source: {table: lending.core.installment_schedules}
+primary_key: [schedule_id]
+dimensions:
+  - name: due_date
+    type: time
+    description: Date the installment falls due.
+    synonyms: {id: [tanggal jatuh tempo]}
+  - name: is_current
+    type: boolean
+    description: False for schedule rows replaced by a restructuring. Only current rows count as amounts due.
+    synonyms: {en: [current schedule row, active schedule], id: [jadwal berlaku, angsuran berlaku]}
+measures:
+  - name: due_amount
+    agg: sum
+    expr: installment_amount
+    filter: is_current
+    time_dimension: due_date
+    description: Installment amount (principal plus interest) falling due under the current schedule.
+relationships:
+  - name: contract
+    to: contract
+    keys: [{from: contract_id, to: contract_id}]
+    description: The contract this installment belongs to.

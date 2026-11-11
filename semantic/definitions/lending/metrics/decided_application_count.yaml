@@ -1,0 +1,29 @@
+apiVersion: makna/v1
+kind: metric
+name: decided_application_count
+label: Decided Application Count
+description: >-
+  Number of applications that received a credit decision, approved or
+  rejected, counted on the decision date. Applications withdrawn by the
+  customer and applications still in process are not included.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [decided applications, applications decided, credit decisions made]
+  id: [jumlah pengajuan diputus, pengajuan yang sudah diputus, jumlah putusan kredit]
+version: 1
+type: simple
+measure: application.decided_applications
+join_paths:
+  branch: [application.branch]
+format: {kind: count, unit: applications, decimals: 0}
+default_grain: month
+example_questions:
+  - How many applications received a decision in the first quarter?
+  - Berapa pengajuan yang sudah diputus per kelas risiko?
+example_requests:
+  - question: "Jumlah pengajuan yang diputus per grade risiko pada semester pertama 2026"
+    request: {dimensions: [application.risk_grade], time_start: "2026-01-01", time_end: "2026-07-01"}
+caveats: Uses the decision date, not the submission date. Reported by the branch that received the application.

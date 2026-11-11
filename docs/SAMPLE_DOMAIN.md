@@ -265,7 +265,7 @@ Each metric needs synonyms in English and Indonesian, at least two example quest
 | Name | State | Purpose |
 |---|---|---|
 | `write_off_amount` | draft, file `write_off_amount.draft.yaml`, `drafted_by: ai:sample-assistant` | A draft with no approved version. Sum of `outstanding_principal` at the last snapshot of contracts that became `written_off`. Must be visible to curators, ranked below approved results, hidden from agents by default, and refused by the compiler. |
-| `npl_ratio` | deprecated, `replaced_by: metric:npf_ratio`, synonyms include "NPL" and "kredit macet" | An old ratio based on contract counts. Must be hidden from search by default and must not outrank `npf_ratio`. |
+| `npl_ratio` | deprecated, `replaced_by: metric:npf_ratio`, synonyms include "NPL" and "kredit macet" | An older name and report for the share of non-performing financing, with the same inputs as `npf_ratio`, kept so that old questions lead to the official metric. Must be hidden from search by default and must not outrank `npf_ratio`. |
 
 ### Rules (D-17)
 
@@ -276,6 +276,7 @@ Conditions that several measures or metrics share are written once, as named rul
 | `contract_snapshot.non_performing` ★ | `days_past_due > 90` | `npf_outstanding_principal` (and through it `npf_ratio`) |
 | `contract_snapshot.past_due_30` | `days_past_due > 30` | `par30_outstanding_principal` (and `par30_ratio`) |
 | `contract.restructured` | `is_restructured` | `restructured_outstanding_principal` (a metric filter across a join, and `restructured_ratio`) |
+| `contract_snapshot.write_off_position` | `days_past_due > 210` | the draft `write_off_amount` (governance fixture). It selects exactly the write-off row: a contract is written off at the first month end past 210 days and has no later snapshot rows (quirk Q8). |
 
 ### Glossary terms
 

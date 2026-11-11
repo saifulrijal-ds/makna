@@ -1,0 +1,30 @@
+apiVersion: makna/v1
+kind: metric
+name: npl_ratio
+label: NPL Ratio (retired)
+description: >-
+  Retired ratio of non-performing loans, kept so that old reports and old
+  questions still lead to the current definition. Use the NPF Ratio instead.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: deprecated
+sensitivity: internal
+synonyms:
+  en: [NPL, NPL ratio, non-performing loan ratio, bad loan ratio]
+  id: [kredit macet, rasio kredit macet lama, rasio NPL]
+version: 2
+deprecation:
+  reason: >-
+    Older name and report for the share of non-performing financing. Replaced
+    by the NPF Ratio, which is the official figure.
+  replaced_by: metric:npf_ratio
+type: ratio
+numerator: npf_outstanding_principal
+denominator: outstanding_principal
+format: {kind: percent, decimals: 2}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - What is the NPL ratio?
+  - Berapa rasio kredit macet menurut laporan lama?
+caveats: Retired. Do not use for new reports.

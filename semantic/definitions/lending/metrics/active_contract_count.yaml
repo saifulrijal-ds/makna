@@ -1,0 +1,32 @@
+apiVersion: makna/v1
+kind: metric
+name: active_contract_count
+label: Active Contract Count
+description: >-
+  Number of contracts that still have principal owed at a month end. It is a
+  stock, not a flow: for a period longer than a month the value is the count
+  at the last month end in the period.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [active contracts, contracts in portfolio, live accounts, open contracts]
+  id: [jumlah kontrak aktif, kontrak berjalan, jumlah kontrak berjalan yang masih ada sisa pokok, jumlah akun aktif]
+version: 1
+type: simple
+measure: contract_snapshot.active_contracts
+join_paths:
+  branch: [contract_snapshot.contract, contract.servicing_branch]
+format: {kind: count, unit: contracts, decimals: 0}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - How many contracts are still running at the end of the quarter?
+  - Berapa kontrak aktif per produk di akhir tahun lalu?
+example_requests:
+  - question: "Active contracts at each quarter end from Q4 2025 to Q2 2026, by financing scheme"
+    request: {dimensions: [product.financing_scheme], grain: quarter, time_start: "2025-10-01", time_end: "2026-07-01"}
+caveats: >-
+  Available at month ends only; contracts fully repaid or written off have no
+  later position and are not counted. Reported by servicing branch.

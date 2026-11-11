@@ -1,0 +1,27 @@
+apiVersion: makna/v1
+kind: metric
+name: promise_to_pay_rate
+label: Promise to Pay Rate
+description: >-
+  Share of collection activities that ended with a promise to pay: promises to
+  pay divided by all collection activities in the same period.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [PTP rate, promise to pay ratio, promise rate]
+  id: [tingkat janji bayar, rasio janji bayar, persentase janji bayar]
+version: 1
+type: ratio
+numerator: promise_to_pay_count
+denominator: collection_action_count
+format: {kind: percent, decimals: 2}
+default_grain: month
+example_questions:
+  - What share of collection contacts end in a promise to pay?
+  - Berapa tingkat janji bayar per wilayah bulan lalu?
+example_requests:
+  - question: "Promise to pay rate by region, month by month, in the second quarter of 2026"
+    request: {dimensions: [branch.region_name], grain: month, time_start: "2026-04-01", time_end: "2026-07-01"}
+caveats: Counts activities, not customers. Reported by servicing branch.

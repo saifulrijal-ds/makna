@@ -1,0 +1,31 @@
+apiVersion: makna/v1
+kind: metric
+name: par30_outstanding_principal
+label: PAR 30 Outstanding Principal
+description: >-
+  Principal still owed at a month end on contracts that are more than 30 days
+  past due. This is the amount of portfolio at risk, not the ratio.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [PAR 30 amount, portfolio at risk amount, 30 days past due balance]
+  id: [nominal PAR 30, outstanding tunggakan di atas 30 hari, sisa pokok lewat 30 hari]
+version: 1
+type: simple
+measure: contract_snapshot.par30_outstanding_principal
+join_paths:
+  branch: [contract_snapshot.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - How much principal is more than 30 days past due?
+  - Berapa nominal PAR 30 per produk di akhir Maret 2026?
+example_requests:
+  - question: "PAR 30 amount by product category at the end of March 2026"
+    request: {dimensions: [product.product_category], time_start: "2026-03-01", time_end: "2026-04-01"}
+caveats: >-
+  Includes the non-performing amount, which is also more than 30 days past
+  due. Available at month ends only. Reported by servicing branch.

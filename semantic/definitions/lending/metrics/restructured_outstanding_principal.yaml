@@ -1,0 +1,33 @@
+apiVersion: makna/v1
+kind: metric
+name: restructured_outstanding_principal
+label: Restructured Outstanding Principal
+description: >-
+  Principal still owed at a month end on contracts whose repayment schedule
+  has been restructured at least once.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [restructured balance, rescheduled outstanding, restructured loans amount]
+  id: [outstanding restrukturisasi, nominal restrukturisasi, sisa pokok direstrukturisasi]
+version: 1
+type: simple
+measure: contract_snapshot.outstanding_principal
+filters:
+  - {rule: contract.restructured}
+join_paths:
+  branch: [contract_snapshot.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - How much principal sits in restructured contracts?
+  - Berapa sisa pokok kontrak restrukturisasi per skema pembiayaan?
+example_requests:
+  - question: "Restructured principal owed at the end of June 2026, by financing scheme"
+    request: {dimensions: [product.financing_scheme], time_start: "2026-06-01", time_end: "2026-07-01"}
+caveats: >-
+  A contract stays in this amount after restructuring, even when it is paying
+  again. Available at month ends only. Reported by servicing branch.

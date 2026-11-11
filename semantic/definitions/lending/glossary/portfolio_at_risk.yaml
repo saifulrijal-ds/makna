@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: portfolio_at_risk
+label: Portfolio at Risk (PAR)
+description: >-
+  The share of outstanding principal on contracts that are past due by more than a stated number of days. In this domain the threshold is 30 days, written PAR 30. It is a wider measure than NPF, which uses 90 days.
+domain: lending
+owner: {team: credit-risk}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [PAR, PAR 30, portfolio at risk, delinquent portfolio]
+  id: [portofolio berisiko, PAR, rasio PAR 30, kredit lewat jatuh tempo]
+version: 1
+related: [metric:par30_ratio, metric:par30_outstanding_principal, glossary_term:npf]

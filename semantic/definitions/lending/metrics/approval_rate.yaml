@@ -1,0 +1,30 @@
+apiVersion: makna/v1
+kind: metric
+name: approval_rate
+label: Approval Rate
+description: >-
+  Share of decided applications that were approved: approved applications
+  divided by approved plus rejected applications in the same period.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [approval ratio, acceptance rate, credit approval rate]
+  id: [tingkat persetujuan, rasio persetujuan kredit, persentase pengajuan disetujui]
+version: 1
+type: ratio
+numerator: approved_application_count
+denominator: decided_application_count
+format: {kind: percent, decimals: 2}
+default_grain: month
+example_questions:
+  - What share of decided applications did we approve last quarter?
+  - Berapa tingkat persetujuan per saluran pengajuan?
+example_requests:
+  - question: "Approval rate by channel, month by month, in the first half of 2026"
+    request: {dimensions: [application.channel], grain: month, time_start: "2026-01-01", time_end: "2026-07-01"}
+caveats: >-
+  Withdrawn and in-process applications are in neither the numerator nor the
+  denominator. Counted by decision date and reported by the branch that
+  received the application.

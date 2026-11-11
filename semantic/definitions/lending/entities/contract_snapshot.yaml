@@ -1,0 +1,98 @@
+apiVersion: makna/v1
+kind: entity
+name: contract_snapshot
+label: Contract Month-End Position
+description: >-
+  The position of every disbursed contract at each month end: how much
+  principal is still owed and how many days it is past due. One row per
+  contract per month end. Balances here must not be added up across months.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [portfolio position, month-end balance]
+  id: [posisi akhir bulan, posisi portofolio]
+version: 1
+source: {table: lending.core.contract_monthly_snapshots}
+primary_key: [snapshot_date, contract_id]
+dimensions:
+  - name: snapshot_date
+    type: time
+    description: The month-end date the position was taken.
+    synonyms: {en: [position date, as-of date], id: [tanggal posisi]}
+  - name: dpd_bucket
+    type: categorical
+    description: Days-past-due band of the contract at the snapshot date.
+    synonyms: {en: [aging bucket, delinquency bucket], id: [bucket tunggakan, kelompok keterlambatan]}
+    values:
+      - {value: current, description: Not past due.}
+      - {value: dpd_1_30}
+      - {value: dpd_31_60}
+      - {value: dpd_61_90}
+      - {value: dpd_91_180}
+      - {value: dpd_over_180}
+  - name: collectibility
+    type: categorical
+    description: Asset quality class from 1 (performing) to 5 (loss), derived from days past due.
+    synonyms: {en: [collectability, asset quality class], id: [kolektibilitas, kol]}
+    values:
+      - {value: "1", description: Lancar (current). 0 to 10 days past due.}
+      - {value: "2", description: Dalam perhatian khusus (special mention). 11 to 90 days past due.}
+      - {value: "3", description: Kurang lancar (substandard). 91 to 120 days past due.}
+      - {value: "4", description: Diragukan (doubtful). 121 to 180 days past due.}
+      - {value: "5", description: Macet (loss). More than 180 days past due.}
+rules:
+  - name: non_performing
+    label: Non-performing
+    description: A position more than 90 days past due. Written once and used by every NPF measure and metric.
+    expr: days_past_due > 90
+    synonyms: {en: [NPF, NPL, non-performing financing], id: [kredit macet, pembiayaan bermasalah]}
+  - name: past_due_30
+    label: More than 30 days past due
+    description: A position more than 30 days past due. Written once and used by every portfolio-at-risk (PAR 30) measure and metric.
+    expr: days_past_due > 30
+    synonyms: {en: [PAR 30, portfolio at risk, delinquent], id: [tunggakan di atas 30 hari, lewat jatuh tempo 30 hari]}
+  - name: write_off_position
+    label: Written-off position
+    description: The month-end position at which a contract is written off, more than 210 days past due. A contract is written off at the first month end that meets this and has no later positions, so it selects exactly one row per written-off contract.
+    expr: days_past_due > 210
+    synonyms: {en: [write-off, charge-off], id: [hapus buku, penghapusbukuan]}
+measures:
+  - name: outstanding_principal
+    agg: sum
+    expr: outstanding_principal
+    time_dimension: snapshot_date
+    semi_additive: last
+    description: Principal still owed at the snapshot date.
+  - name: npf_outstanding_principal
+    agg: sum
+    expr: outstanding_principal
+    rule: non_performing
+    time_dimension: snapshot_date
+    semi_additive: last
+    description: Principal still owed on contracts more than 90 days past due at the snapshot date.
+  - name: par30_outstanding_principal
+    agg: sum
+    expr: outstanding_principal
+    rule: past_due_30
+    time_dimension: snapshot_date
+    semi_additive: last
+    description: Principal still owed on contracts more than 30 days past due at the snapshot date.
+  - name: written_off_outstanding_principal
+    agg: sum
+    expr: outstanding_principal
+    rule: write_off_position
+    time_dimension: snapshot_date
+    semi_additive: last
+    description: Principal still owed at the month end when a contract is written off, because it is more than 210 days past due.
+  - name: active_contracts
+    agg: count
+    time_dimension: snapshot_date
+    semi_additive: last
+    description: Number of contracts with principal still owed at the snapshot date. One row per contract per month end.
+relationships:
+  - name: contract
+    to: contract
+    keys: [{from: contract_id, to: contract_id}]
+    description: The contract this position belongs to.

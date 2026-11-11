@@ -1,0 +1,31 @@
+apiVersion: makna/v1
+kind: metric
+name: new_customer_count
+label: New Customer Count
+description: >-
+  Number of customer records created in a period, counted on the registration
+  date. A customer is counted once, when first registered, whether or not a
+  contract follows.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [new customers, customer acquisitions, customers registered, new borrowers]
+  id: [nasabah baru, jumlah nasabah baru, pendaftaran nasabah, penambahan nasabah]
+version: 1
+type: simple
+measure: customer.new_customers
+join_paths:
+  branch: [customer.home_branch]
+format: {kind: count, unit: customers, decimals: 0}
+default_grain: month
+example_questions:
+  - How many new customers registered this year?
+  - Berapa nasabah baru per segmen setiap bulan?
+example_requests:
+  - question: "New customers each month of the second quarter of 2026, by customer segment"
+    request: {dimensions: [customer.customer_segment], grain: month, time_start: "2026-04-01", time_end: "2026-07-01"}
+caveats: >-
+  Counts customer records, not contracts. Reported by the customer's home
+  branch, the branch where the customer first registered.

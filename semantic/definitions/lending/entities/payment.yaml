@@ -1,0 +1,53 @@
+apiVersion: makna/v1
+kind: entity
+name: payment
+label: Payment
+description: >-
+  A payment received from a customer against a contract. Reversed payments
+  (for example a bounced transfer) stay in the table and are flagged.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [repayment, receipt]
+  id: [pembayaran, setoran]
+version: 1
+source: {table: lending.core.payments}
+primary_key: [payment_id]
+dimensions:
+  - name: payment_date
+    type: time
+    description: Date the customer paid, as reported by the payment channel.
+    synonyms: {en: [paid date], id: [tanggal bayar, tanggal pembayaran]}
+  - name: posting_date
+    type: time
+    description: Date the payment was booked in the core system, up to three days after the payment date. The official date for collection metrics.
+    synonyms: {id: [tanggal posting, tanggal pembukuan]}
+  - name: payment_channel
+    type: categorical
+    description: How the customer paid.
+    synonyms: {id: [kanal pembayaran]}
+    values: [{value: bank_transfer}, {value: virtual_account}, {value: retail_outlet}, {value: branch_cashier}, {value: collector}]
+measures:
+  - name: collected_amount
+    agg: sum
+    expr: principal_paid + interest_paid
+    filter: NOT is_reversed
+    time_dimension: posting_date
+    description: Principal and interest received, excluding penalties and reversed payments, counted on the posting date.
+  - name: penalty_received
+    agg: sum
+    expr: penalty_paid
+    filter: NOT is_reversed
+    time_dimension: posting_date
+    description: Late payment penalties received, excluding reversed payments, counted on the posting date.
+relationships:
+  - name: contract
+    to: contract
+    keys: [{from: contract_id, to: contract_id}]
+    description: The contract the payment was made against.
+  - name: installment
+    to: installment
+    keys: [{from: schedule_id, to: schedule_id}]
+    description: The scheduled installment this payment was applied to.

@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: disbursement
+label: Disbursement
+description: >-
+  The release of the financed amount to the customer, a few days after the contract is signed. A contract that is signed and then cancelled is never disbursed. Disbursement metrics are dated by the disbursement date, not the signing date.
+domain: lending
+owner: {team: sales-performance}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [funding, loan payout, release of funds, booking]
+  id: [pencairan, pencairan dana, realisasi pembiayaan, booking]
+version: 1
+related: [metric:disbursement_amount, metric:disbursed_contract_count, entity:contract]

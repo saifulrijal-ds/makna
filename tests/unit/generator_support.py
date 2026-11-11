@@ -40,7 +40,7 @@ def _section(heading_prefix: str) -> list[str]:
     return out
 
 
-def _cells(line: str) -> list[str]:
+def table_cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
@@ -53,7 +53,7 @@ def doc_columns() -> dict[str, list[tuple[str, str]]]:
             name = m.group(1)
             rows = []
             for row in _section(line):
-                cells = _cells(row)
+                cells = table_cells(row)
                 col = re.fullmatch(r"`(\w+)`", cells[0]) if row.startswith("| `") else None
                 if col and len(cells) >= 3:
                     rows.append((col.group(1), cells[1]))
@@ -66,7 +66,7 @@ def doc_relationships() -> set[tuple[str, str, str, str]]:
     out: set[tuple[str, str, str, str]] = set()
     for row in _section("### 3.10"):
         if row.startswith("| `"):
-            cells = [c.strip("`") for c in _cells(row)]
+            cells = [c.strip("`") for c in table_cells(row)]
             out.add((cells[0], cells[1], cells[2], cells[3]))
     return out
 
@@ -103,7 +103,7 @@ def doc_catalog_exceptions() -> dict[tuple[str, str | None], str]:
     for row in _section("### 6.1"):
         if not row.startswith("| ") or row.startswith("| Object") or row.startswith("|---"):
             continue
-        obj, text = _cells(row)[:2]
+        obj, text = table_cells(row)[:2]
         if text.startswith("none"):
             description = ""
         else:

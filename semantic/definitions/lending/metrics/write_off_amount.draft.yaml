@@ -1,0 +1,30 @@
+apiVersion: makna/v1
+kind: metric
+name: write_off_amount
+label: Write-Off Amount
+description: >-
+  Proposal: principal still owed at the month end when a contract was written
+  off, because it was more than 210 days past due. Not yet approved, so it is
+  not available for answering questions.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: draft
+sensitivity: internal
+synonyms:
+  en: [write-offs, written-off principal, bad debt written off, charge-offs]
+  id: [hapus buku, nominal hapus buku, penghapusbukuan, kredit dihapusbukukan]
+type: simple
+measure: contract_snapshot.written_off_outstanding_principal
+join_paths:
+  branch: [contract_snapshot.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+time_grains: [month]
+default_grain: month
+drafted_by: ai:sample-assistant
+example_questions:
+  - How much did we write off last year?
+  - Berapa nilai hapus buku tahun lalu?
+caveats: >-
+  Draft for review. Each written-off contract leaves the portfolio at the
+  month end of its write-off, so the amount is reported for that month end
+  only, which is why only the month grain is offered.

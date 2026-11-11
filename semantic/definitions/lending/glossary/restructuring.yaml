@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: restructuring
+label: Restructuring
+description: >-
+  Replacing the unpaid part of a contract's repayment schedule with an easier one, usually because the customer struggles to pay. The old schedule rows stay in the data and are marked as not current. A contract that has been restructured stays flagged as restructured.
+domain: lending
+owner: {team: credit-risk}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [rescheduling, loan modification, schedule change]
+  id: [restrukturisasi, restru, penjadwalan ulang, perubahan jadwal angsuran]
+version: 1
+related: [metric:restructured_outstanding_principal, metric:restructured_ratio, entity:installment]

@@ -1,0 +1,89 @@
+apiVersion: makna/v1
+kind: entity
+name: application
+label: Loan Application
+description: >-
+  A request by a customer for financing. One row per application, whether it
+  was approved, rejected, withdrawn, or is still being processed. The source
+  system uses short Indonesian and English column names; the dimensions here
+  give them plain names.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [financing application, loan request, credit application]
+  id: [pengajuan, permohonan pembiayaan, aplikasi kredit]
+version: 1
+source: {table: lending.core.loan_applications}
+primary_key: [appl_id]
+dimensions:
+  - name: submitted_date
+    type: time
+    expr: CAST(tgl_pengajuan AS DATE)
+    description: Date the application was submitted by the customer. The official date for application counts.
+    synonyms: {en: [submission date, application date], id: [tanggal pengajuan, tanggal permohonan]}
+  - name: decision_date
+    type: time
+    expr: tgl_putusan
+    description: Date of the credit decision. Empty while the application is still being processed. The official date for approval metrics.
+    synonyms: {en: [approval date, decision day], id: [tanggal putusan, tanggal keputusan kredit]}
+  - name: decision_status
+    type: categorical
+    expr: sts_putusan
+    description: Where the application stands. Only approved and rejected applications count as decided.
+    synonyms: {en: [application status, outcome of the application], id: [status putusan, status pengajuan]}
+    values:
+      - {value: approved, description: Approved by credit. A contract may follow.}
+      - {value: rejected, description: Declined by credit.}
+      - {value: cancelled, description: Withdrawn by the customer before a decision.}
+      - {value: in_process, description: No decision yet.}
+  - name: channel
+    type: categorical
+    expr: saluran
+    description: How the application reached the company.
+    synonyms: {en: [application channel, sales channel], id: [saluran, saluran pengajuan]}
+    values:
+      - {value: walk_in, description: The customer came to a branch.}
+      - {value: agent, description: Submitted through a sales agent.}
+      - {value: online, description: Submitted through the website or app.}
+      - {value: telesales, description: Submitted after a telephone sales call.}
+  - name: risk_grade
+    type: categorical
+    expr: grade_risiko
+    description: Credit risk grade assigned at the decision, from A (lowest risk) to E (highest risk). Empty while the application is being processed.
+    synonyms: {en: [credit grade, risk rating, credit score band], id: [grade risiko, peringkat risiko, kelas risiko]}
+    values:
+      - {value: A, description: Lowest risk.}
+      - {value: B}
+      - {value: C}
+      - {value: D}
+      - {value: E, description: Highest risk.}
+measures:
+  - name: submitted_applications
+    agg: count
+    time_dimension: submitted_date
+    description: Number of applications submitted, counted on the submission date.
+  - name: decided_applications
+    agg: count
+    filter: sts_putusan IN ('approved', 'rejected')
+    time_dimension: decision_date
+    description: Number of applications that received a credit decision, approved or rejected, counted on the decision date. Withdrawn and in-process applications are not counted.
+  - name: approved_applications
+    agg: count
+    filter: sts_putusan = 'approved'
+    time_dimension: decision_date
+    description: Number of applications approved, counted on the decision date.
+relationships:
+  - name: customer
+    to: customer
+    keys: [{from: cust_id, to: customer_id}]
+    description: The customer who applied.
+  - name: product
+    to: product
+    keys: [{from: prod_id, to: product_id}]
+    description: The financing product applied for.
+  - name: branch
+    to: branch
+    keys: [{from: cab_id, to: branch_id}]
+    description: The branch that received the application. Used for origination metrics that count applications.

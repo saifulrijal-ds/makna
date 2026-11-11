@@ -1,0 +1,28 @@
+apiVersion: makna/v1
+kind: metric
+name: collection_action_count
+label: Collection Action Count
+description: >-
+  Number of collection activities carried out in a period, counted on the
+  date of the activity: reminders, calls, field visits, and warning letters.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [collection activities, collection actions, dunning actions, collection effort]
+  id: [jumlah aktivitas penagihan, jumlah tindakan penagihan, jumlah kegiatan penagihan]
+version: 1
+type: simple
+measure: collection_action.collection_actions
+join_paths:
+  branch: [collection_action.contract, contract.servicing_branch]
+format: {kind: count, unit: actions, decimals: 0}
+default_grain: month
+example_questions:
+  - How many collection calls and visits did we make last month?
+  - Berapa jumlah aktivitas penagihan per jenis aksi?
+example_requests:
+  - question: "Collection activities in the second quarter of 2026 by type of activity"
+    request: {dimensions: [collection_action.action_type], time_start: "2026-04-01", time_end: "2026-07-01"}
+caveats: "Counts activities, not contracts: one late contract can have many. Reported by servicing branch."

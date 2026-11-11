@@ -1,0 +1,60 @@
+apiVersion: makna/v1
+kind: entity
+name: collection_action
+label: Collection Action
+description: >-
+  One collection activity on a late contract, such as a reminder message, a
+  phone call, a field visit, or a warning letter. The source system uses short
+  Indonesian and English column names; the dimensions here give them plain
+  names.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [collection activity, dunning action, collection effort]
+  id: [aktivitas penagihan, tindakan penagihan, kegiatan penagihan]
+version: 1
+source: {table: lending.core.collection_actions}
+primary_key: [act_id]
+dimensions:
+  - name: action_date
+    type: time
+    expr: tgl_aksi
+    description: Date the collection activity took place. The official date for collection activity metrics.
+    synonyms: {en: [activity date, collection date], id: [tanggal aksi, tanggal penagihan]}
+  - name: action_type
+    type: categorical
+    expr: jns_aksi
+    description: Kind of collection activity carried out.
+    synonyms: {en: [activity type, collection method], id: [jenis aksi, jenis penagihan]}
+    values:
+      - {value: reminder_message, description: A text or chat reminder.}
+      - {value: phone_call, description: A call to the customer.}
+      - {value: field_visit, description: A collector visited the customer.}
+      - {value: warning_letter, description: A written warning was sent.}
+  - name: outcome
+    type: categorical
+    expr: hasil
+    description: What came of the activity.
+    synonyms: {en: [result, activity result], id: [hasil, hasil penagihan]}
+    values:
+      - {value: promise_to_pay, description: The customer promised to pay on a given date.}
+      - {value: paid, description: The customer paid straight away.}
+      - {value: no_contact, description: The customer could not be reached.}
+      - {value: refused, description: The customer refused to pay.}
+measures:
+  - name: collection_actions
+    agg: count
+    time_dimension: action_date
+    description: Number of collection activities carried out, counted on the activity date.
+  - name: promise_to_pay_actions
+    agg: count
+    filter: hasil = 'promise_to_pay'
+    time_dimension: action_date
+    description: Number of collection activities that ended with a promise to pay, counted on the activity date.
+relationships:
+  - name: contract
+    to: contract
+    keys: [{from: kontrak_id, to: contract_id}]
+    description: The contract the collection activity was carried out on.

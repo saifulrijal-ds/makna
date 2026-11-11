@@ -32,7 +32,7 @@ evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the
 
 ```yaml
 - id: G04
-  question: "Berapa rasio kredit macet per wilayah bulan lalu?"
+  question: "Rasio kredit macet tiap wilayah pada bulan lalu?"
   language: id                      # en | id | mixed
   tags: [synonym, ratio, multi_hop, relative_time]
   outcome: answer                   # answer | clarify | no_metric | refuse
@@ -85,13 +85,13 @@ These go into `evals/golden/questions.yaml` unchanged. Time ranges assume today 
 | ID | Question | Lang | Outcome | Expected metric | Expected request (besides the metric) | What it tests |
 |---|---|---|---|---|---|---|
 | G01 | How much did we disburse in June 2026? | en | answer | `disbursement_amount` | time 2026-06-01 to 2026-07-01 | Direct. Disbursement date, not signing date; cancelled contracts excluded. |
-| G02 | Berapa total pencairan per wilayah tahun ini? | id | answer | `disbursement_amount` | dimensions `branch.region_name`; time 2026-01-01 to 2026-07-01 | Indonesian synonym; region through the booking branch. |
+| G02 | Total pencairan tahun ini untuk tiap wilayah? | id | answer | `disbursement_amount` | dimensions `branch.region_name`; time 2026-01-01 to 2026-07-01 | Indonesian synonym; region through the booking branch. |
 | G03 | What is our NPF ratio right now? | en | answer | `npf_ratio` | no time range | Balance with no period: latest month end. |
-| G04 | Berapa rasio kredit macet per wilayah bulan lalu? | id | answer | `npf_ratio` | dimensions `branch.region_name`; time 2026-06-01 to 2026-07-01 | Synonym "kredit macet"; two-hop join to the servicing branch. |
+| G04 | Rasio kredit macet tiap wilayah pada bulan lalu? | id | answer | `npf_ratio` | dimensions `branch.region_name`; time 2026-06-01 to 2026-07-01 | Synonym "kredit macet"; two-hop join to the servicing branch. |
 | G05 | Show the monthly NPF ratio trend for car-backed financing in the first half of 2026. | en | answer | `npf_ratio` | grain `month`; filter `product.product_category = car_backed`; time 2026-01-01 to 2026-07-01 | Grain, a declared value, a filter two joins away. |
 | G06 | Outstanding principal by DPD bucket at the end of June 2026 | en | answer | `outstanding_principal` | dimensions `contract_snapshot.dpd_bucket`; time 2026-06-01 to 2026-07-01 | Dimension on the measure's own entity. |
 | G07 | Berapa sisa pokok per kuartal sepanjang 2025? | id | answer | `outstanding_principal` | grain `quarter`; time 2025-01-01 to 2026-01-01 | Balance by quarter: last month end of each quarter, not a sum of months. |
-| G08 | What was the collection rate by region last quarter? | en | answer | `collection_rate` | dimensions `branch.region_name`; time 2026-04-01 to 2026-07-01 | Ratio across two fact tables; relative time. |
+| G08 | Show the collection rate for each region in the last quarter. | en | answer | `collection_rate` | dimensions `branch.region_name`; time 2026-04-01 to 2026-07-01 | Ratio across two fact tables; relative time. |
 | G09 | Tingkat penagihan bulanan untuk produk syariah, semester 1 2026 | id | answer | `collection_rate` | grain `month`; filter `product.financing_scheme = sharia`; time 2026-01-01 to 2026-07-01 | Indonesian; value matched through a synonym ("syariah"). |
 | G10 | Approval rate by product category in Q1 2026 | en | answer | `approval_rate` | dimensions `product.product_category`; time 2026-01-01 to 2026-04-01 | Ratio on one table; decision date, not submission date. |
 | G11 | Berapa nasabah baru bulan lalu? | id | answer | `new_customer_count` | time 2026-06-01 to 2026-07-01 | Indonesian synonym; a metric on the customer entity. |
