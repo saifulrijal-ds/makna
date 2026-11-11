@@ -108,14 +108,20 @@ INSUFFICIENT_PRIVILEGE = "42501"
 
 
 def expect_connect_denied(role: str, database: str) -> None:
-    """The server answered and refused with SQLSTATE 42501; an unreachable server is a failure."""
+    """The server answered and refused the CONNECT privilege.
+
+    libpq reports no SQLSTATE for a failed login, so the server's own FATAL message is the
+    evidence (it carries SQLSTATE 42501 on the wire). An unreachable server has another
+    message and fails this check.
+    """
     try:
         connect(role, database).close()
-    except psycopg.Error as error:
-        assert error.sqlstate == INSUFFICIENT_PRIVILEGE, (
-            f"{role} -> {database}: expected SQLSTATE {INSUFFICIENT_PRIVILEGE}, "
-            f"got {error.sqlstate}: {error}"
+    except psycopg.OperationalError as error:
+        text = str(error)
+        assert f'FATAL:  permission denied for database "{database}"' in text, (
+            f"{role} -> {database}: not a CONNECT denial: {text}"
         )
+        assert "User does not have CONNECT privilege" in text, text
         return
     raise AssertionError(f"{role} could connect to {database}")
 
