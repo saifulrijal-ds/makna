@@ -1,0 +1,47 @@
+# Working Rules for Agents in This Repository
+
+This repository builds Makna, an open semantic layer platform: a web app, connectors to data catalogs and query engines, hybrid search, a query compiler, and an MCP server for agents. Read `docs/PROJECT_BRIEF.md` first. Read `docs/DECISIONS.md` before you make a design choice.
+
+## Sources of truth
+
+- What we build and why: `docs/PROJECT_BRIEF.md`
+- Requirements and their IDs: `docs/REQUIREMENTS.md`
+- Decisions and open questions: `docs/DECISIONS.md`
+- Architecture (written in the design session): `docs/ARCHITECTURE.md`
+- Work plan and status: `docs/PLAN.md` and `docs/progress.json`
+- Lessons learned: `docs/notes/` (one lesson per file, one-line summary at the top)
+
+If two of these disagree, say so in your report. Do not silently pick one.
+
+## Language
+
+Python is the primary language for everything, including the web app's server side (decision D-8). Use JavaScript or TypeScript only for small browser-side pieces that Python cannot provide, and say why in the pull request. Do not add a separate frontend build without a decision record.
+
+## Data rules
+
+- Use only the synthetic data in `data/`. Never add real company data, real schemas, real credentials, or real personal data to this repository, even as an example.
+- Secrets come from environment variables. Never commit a `.env` file with values.
+
+## How to work
+
+- Read the code before you change or describe it. Do not make claims about code you have not opened.
+- Keep changes to what the task needs. Do not add features, abstractions, or configuration for hypothetical future needs. Validate input only at system boundaries.
+- Write a general solution, not one that only passes the tests. If a test is wrong, say so instead of working around it. Do not delete or weaken tests to make them pass.
+- Reference requirement IDs (for example `SRC-1`) in commit messages and pull request descriptions.
+- After a meaningful step, update `docs/progress.json` and, if you learned something reusable, add or update a note in `docs/notes/`.
+
+## Git
+
+- Work on a branch named `<area>/<short-description>`. Never commit directly to `main`.
+- Commit small, working steps with clear messages.
+- Open a pull request when a work package is complete and its checks pass. The project owner merges.
+
+## Actions that need the project owner
+
+Ask before: force-pushing, deleting branches you did not create, changing CI secrets or repository settings, or adding a dependency with a non-permissive license.
+
+These do not need approval: creating branches, committing, pushing your own branch, opening pull requests, installing dependencies with permissive licenses, running tests and evals, and retrying commands that failed for ordinary reasons.
+
+## Commands
+
+To be filled in when the project is scaffolded (start the stack, run tests, run evals, lint, type check).
