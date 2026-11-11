@@ -211,7 +211,7 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V16 | A measure's `time_dimension` is not a personal dimension (a time range would filter on raw personal dates, and freshness would show one). |
 | V17 | A personal dimension has no `values` (they would be returned by `get_definition` and indexed for search). |
 | V18 | A measure's `rule` names a rule on the same entity; a metric's `{rule: entity.rule}` names a rule on an entity reachable from its measure; a rule's `expr` reads no column of a personal dimension. |
-| V19 | Every example request plans and compiles with no error (checked with the compiler by `makna.services.examples`, which `makna validate` runs, and at submit and approve). Until SQL generation exists (WP-09) the check is that the request plans; it does not need the metric to be approved yet. |
+| V19 | Every example request plans and compiles with no error (checked with the compiler by `makna.services.examples`, which `makna validate` runs, and at submit and approve). "Compiles" means: it plans, SQL is generated for the `postgres` dialect, and that SQL re-parses with sqlglot's `postgres` dialect. Nothing is executed, so the check needs no database. It does not need the metric to be approved yet. |
 | V20 | A dimension that is not personal reads no column of a personal dimension on the same entity (a copy would bypass masking and refusals). |
 
 Reference issues (`makna.catalog.references`):
@@ -399,9 +399,18 @@ GROUP BY <the same key expressions>
 Then:
 
 - **Simple metric**: the input subquery is the query.
-- **Ratio or derived metric**: put each input in a CTE; `UNION ALL` the CTEs, each selecting the key columns, its own value, and NULL for the other inputs; `GROUP BY` the key columns taking `MAX` of each input (wrapped in `COALESCE(..., 0)` for `sum` and `count` inputs); then compute the metric in the outer query. A ratio is `CAST(numerator AS DOUBLE) / NULLIF(denominator, 0)`.
+- **Ratio or derived metric**: put each input in a CTE; `UNION ALL` the CTEs, each selecting the key columns, its own value, and NULL for the other inputs; `GROUP BY` the key columns taking `MAX` of each input (wrapped in `COALESCE(..., 0)` for `sum`, `count`, and `count_distinct` inputs); then compute the metric in the outer query. A ratio is `CAST(numerator AS DOUBLE) / NULLIF(denominator, 0)`.
 
 This "aggregate separately, then combine" shape is the core correctness rule. Inputs are never joined row to row. The spike shows the naive join giving a collection rate of 1.0006 where the correct value is 0.9411. `UNION ALL` plus `GROUP BY` is used instead of `FULL OUTER JOIN` because grouping treats NULL keys as equal, needs no null-safe join syntax, and extends to any number of inputs.
+
+Details settled in WP-09:
+
+- **Aliases.** Tables are aliased `t0` (the measure's table), `t1`, `t2`, ... in the order the joins are needed. An alias belongs to a join *path prefix*, not to a relationship name, so two dimensions that reach the same entity through different routes get separate joins.
+- **Combining.** As above, the `COALESCE(..., 0)` wrapper applies to `sum`, `count`, and `count_distinct` inputs; `avg`, `min`, and `max` inputs stay NULL when a group has no rows for them. Inputs of a ratio or derived metric that are themselves ratio or derived metrics are computed from the combined leaf columns, so nesting works.
+- **Missing keys.** Every join is a `LEFT JOIN`, as stated above; a row whose join key is NULL is kept under a NULL dimension value, for simple and for ratio metrics (tested on a hand-built table with one NULL key).
+- **Time filters** on a time-typed dimension are written as `CAST('<value>' AS DATE)` (a date-only value) or `CAST(... AS TIMESTAMP)`. Rows are ordered by the key columns with NULL keys last.
+- **Division.** The ratio casts its numerator to `DOUBLE PRECISION`; a derived metric's `a / b` is printed by sqlglot with a floating-point numerator for `postgres`, so integer inputs do not truncate (a test pins this).
+- **`metric.id`** in the response is `metric:<name>`.
 
 All SQL is built as a sqlglot syntax tree and printed for the configured dialect (`postgres` in the MVP; D-22). Expressions from YAML are parsed and their columns bound to a table alias. Filter values become literal nodes. **No SQL text is ever built by string concatenation or formatting.** Because the tree is dialect-neutral, unit tests print the same tree for DuckDB and run it in-process, and the engine tier runs it on PostgreSQL (section 15). `spikes/compiler/run_on_postgres.py` showed both on the spike cases.
 
@@ -450,6 +459,8 @@ The compiler returns an ordered list of plain sentences, built while planning, f
 1. "Collection Rate = Amount Collected divided by Amount Due. Each side is calculated separately and then combined by month and region."
 2. "Amount Collected: payments placed by posting date, from 2026-01-01 up to but not including 2026-07-01; reversed payments are excluded (part of the definition)."
 3. "Region comes from the servicing branch of the contract (payment, then contract, then servicing branch)."
+
+The sentences come in a fixed order: the formula and how the inputs are combined; for each input, its time dimension and time range; for each input, the filters and rules that are part of its definition; the filters the request added; then the join path behind each dimension or filter that lives on another entity. Warnings come after.
 
 It also returns `warnings`, for example "Outstanding Principal is a balance: the value for each quarter is the balance at its last month end.", or "3 groups with fewer than 10 customers were left out to protect personal data."
 

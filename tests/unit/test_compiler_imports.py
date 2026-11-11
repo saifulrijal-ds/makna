@@ -19,12 +19,21 @@ PLANNING_MODULES = [
     SRC / "compiler" / "plan.py",
     SRC / "model" / "request.py",
 ]
+GENERATION_MODULES = [
+    SRC / "compiler" / "sqlgen.py",
+    SRC / "compiler" / "explain.py",
+    SRC / "compiler" / "compile.py",
+]
 ALLOWED = frozenset(
     {
-        "__future__", "collections", "dataclasses", "datetime", "difflib", "enum", "re",
+        "__future__", "collections", "dataclasses", "datetime", "difflib", "enum", "math", "re",
         "types", "typing", "pydantic", "makna",
     }
 )  # fmt: skip
+
+
+# SQL generation may also use sqlglot, which parses and prints text and does no I/O (WP-09).
+GENERATION_ALLOWED = ALLOWED | {"functools", "sqlglot"}
 
 
 def top_level_imports(source: str) -> set[str]:
@@ -56,3 +65,19 @@ def test_planning_modules_import_only_model_from_makna(path: Path) -> None:
 def test_the_check_notices_an_io_library() -> None:
     assert top_level_imports("import os\nfrom pathlib import Path\n") == {"os", "pathlib"}
     assert not {"os", "pathlib", "socket", "sqlalchemy", "random", "time"} & ALLOWED
+
+
+@pytest.mark.parametrize("path", GENERATION_MODULES, ids=lambda p: p.name)
+def test_generation_modules_import_only_pure_libraries_and_sqlglot(path: Path) -> None:
+    assert top_level_imports(path.read_text(encoding="utf-8")) <= GENERATION_ALLOWED
+
+
+@pytest.mark.parametrize("path", GENERATION_MODULES, ids=lambda p: p.name)
+def test_generation_modules_import_only_model_from_makna(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    makna = {
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("makna")
+    }
+    assert all(m.startswith(("makna.model", "makna.compiler")) for m in makna), makna

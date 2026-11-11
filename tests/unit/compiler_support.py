@@ -8,8 +8,13 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from sqlglot import exp
+
+from makna.compiler.plan import plan_request
 from makna.compiler.snapshot import Model
+from makna.compiler.sqlgen import build_tree
 from makna.model.definitions import Entity, Metric, parse_definition
+from makna.model.request import QueryRequest
 from makna.services.examples import model_from_definitions
 
 from . import definition_fixtures as fx
@@ -59,3 +64,19 @@ def add_relationship(files: Files, entity: str, name: str, to: str) -> None:
             "description": f"The {name} of the row.",
         }
     )
+
+
+def request(metric: str, **fields: Any) -> QueryRequest:
+    return QueryRequest.model_validate({"metric": metric, **fields})
+
+
+def tree_of(model: Model, metric: str, **fields: Any) -> exp.Select:
+    """The dialect-neutral tree for a request, planned with the status gate on."""
+    return build_tree(model, plan_request(model, request(metric, **fields)))
+
+
+def source_tables(select: exp.Select) -> set[str]:
+    """Names of the tables this SELECT reads directly (its FROM and JOINs, not subqueries)."""
+    sources = [select.args["from_"].this] if select.args.get("from_") else []
+    sources.extend(join.this for join in select.args.get("joins") or [])
+    return {s.name for s in sources if isinstance(s, exp.Table)}
