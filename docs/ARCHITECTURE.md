@@ -703,6 +703,8 @@ Engine credentials entered on `/account` are kept in server memory for the sessi
 
 DuckDB appears only in tests, as a fast stand-in for the engine. It is not an engine connector and is not shipped.
 
+Coding sessions may have no Docker (D-15). There, the unit tier (including DuckDB) is what runs locally, and results on Trino count as proven only when the CI stack job passes. The rules are in `docs/PLAN.md`, "How to use this plan".
+
 CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a PostgreSQL service container; then a job that starts the dev stack and runs `tests/engine` and the retrieval and compile evals with thresholds. The agent eval runs on manual trigger and on a schedule when a model key is configured.
 
 ## 16. Where each requirement is met
@@ -760,5 +762,5 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 - An index of actual data values for filters; only values declared in YAML are known to the resolver.
 - Unmasking personal data for privileged users; row-level policies (QRY-5).
 - Pushing to or pulling from a git remote from inside the application (operators can do it with git and `makna index sync`).
-- Publishing approved metrics back into the catalog.
+- Publishing approved metrics back into the catalog (D-10: after the MVP; git stays the source of truth).
 - A public REST API (MCP-4), reranking (SRC-5), incremental sync (CON-5), single sign-on, Indonesian interface text (WEB-6).

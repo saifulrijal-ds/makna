@@ -8,6 +8,10 @@ Status: design output (2026-11-11). Progress is tracked in `docs/progress.json`.
 - Before starting a package, read `CLAUDE.md`, the sections of `docs/ARCHITECTURE.md` named in the package, and every file in `docs/notes/` (they are short).
 - A package is done when every acceptance criterion is covered by an automated test that passes in CI, unless the criterion starts with "Manual". For a manual criterion, the pull request states who checked it and what they saw. Then set its status in `docs/progress.json` to `done`.
 - Acceptance criteria are the minimum. Do not add features beyond the package's scope. If a criterion looks wrong or cannot be met, stop and say so in the pull request; do not weaken it.
+- **Where tests run (D-15).** A coding session may have no Docker, so no Trino and no dev stack.
+  - Run the unit tier locally. Compiler tests execute the generated SQL on DuckDB (`docs/ARCHITECTURE.md` section 15). A DuckDB pass shows the logic is right; it does not prove the SQL works on Trino.
+  - Run the integration tier locally only if a PostgreSQL with pgvector is available (`MAKNA_TEST_DATABASE_URL`). Otherwise the CI integration job is the proof.
+  - Anything that needs Trino or the dev stack (the engine tier, criteria marked "CI stack job", the retrieval and compile evals) is proven only when the CI stack job on GitHub Actions passes for the pull request. Write those tests, push, and read the CI result. Never mark such a criterion met because a DuckDB run passed, and never set the package to `done` while the stack job is red or has not run. Until then the package is `in_review`, and the pull request lists the criteria that are waiting for CI.
 - Statuses in `docs/progress.json`: `not_started`, `in_progress`, `in_review`, `done`, `blocked`.
 - Suggested models: **Sonnet 5.5** for most packages; **Haiku 5.5** where the work is well specified and high in volume. The orchestrator may split a package between them (for example Sonnet writes the generator's core logic and Haiku the fixtures).
 

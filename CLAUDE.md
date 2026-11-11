@@ -28,6 +28,7 @@ Python is the primary language for everything, including the web app's server si
 - Keep changes to what the task needs. Do not add features, abstractions, or configuration for hypothetical future needs. Validate input only at system boundaries.
 - Write a general solution, not one that only passes the tests. If a test is wrong, say so instead of working around it. Do not delete or weaken tests to make them pass.
 - Reference requirement IDs (for example `SRC-1`) in commit messages and pull request descriptions.
+- Testing without Docker (decision D-15). Your session may have no Docker, so no Trino and no dev stack. Run the unit tier locally; compiler tests run the generated SQL on DuckDB. Run the integration tier only if a PostgreSQL with pgvector is available. Treat Trino results as proven only when the CI stack job on GitHub Actions passes; a DuckDB pass is not proof that the SQL works on Trino. Details in `docs/PLAN.md` ("How to use this plan").
 - After a meaningful step, update `docs/progress.json` and, if you learned something reusable, add or update a note in `docs/notes/`.
 
 ## Git
