@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from data.generator import DEFAULT_SEED, TABLES, generate, write_parquet
 from data.lending_loader import load_all
 from makna.index import migrate
@@ -44,9 +47,17 @@ class Step:
     """Does the step's work and returns a short outcome such as `created` or `unchanged`."""
 
 
+def _unreadable(path: Path) -> bool:
+    """True when the file is missing or its Parquet footer cannot be read (a crashed write)."""
+    try:
+        pq.ParquetFile(path).close()
+    except (OSError, pa.ArrowException):
+        return True
+    return False
+
+
 def generate_sample_data(context: Context) -> str:
-    missing = [t.name for t in TABLES if not (context.data_dir / f"{t.name}.parquet").is_file()]
-    if not missing:
+    if not any(_unreadable(context.data_dir / f"{t.name}.parquet") for t in TABLES):
         return "unchanged (all nine files present)"
     write_parquet(generate(context.seed, context.scale), context.data_dir)
     return f"generated (seed {context.seed}, scale {context.scale})"

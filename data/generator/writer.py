@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
@@ -82,7 +83,10 @@ def write_parquet(tables: Mapping[str, pa.Table], out_dir: Path) -> dict[str, Pa
     paths: dict[str, Path] = {}
     for spec in TABLES:
         path = out_dir / f"{spec.name}.parquet"
-        pq.write_table(tables[spec.name], path, **PARQUET_OPTIONS)
+        # Write beside the target and rename, so a crash never leaves a truncated file.
+        temp = out_dir / f".{spec.name}.parquet.tmp"
+        pq.write_table(tables[spec.name], temp, **PARQUET_OPTIONS)
+        os.replace(temp, path)
         paths[spec.name] = path
     return paths
 

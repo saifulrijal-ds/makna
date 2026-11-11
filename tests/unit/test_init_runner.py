@@ -63,14 +63,26 @@ def test_the_step_list_starts_with_the_wp05_steps_in_dependency_order() -> None:
     assert len(names) == len(set(names))
 
 
-def test_generate_step_is_a_no_op_when_all_files_exist(tmp_path: Path) -> None:
-    from data.generator import TABLES
-
-    for table in TABLES:
-        (tmp_path / f"{table.name}.parquet").write_bytes(b"x")
+def test_generate_step_is_a_no_op_when_all_files_are_valid(tmp_path: Path) -> None:
+    init.generate_sample_data(context(tmp_path))
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
     assert init.generate_sample_data(context(tmp_path)).startswith("unchanged")
-    assert {p.name for p in tmp_path.iterdir()} == {f"{t.name}.parquet" for t in TABLES}
-    assert all(p.read_bytes() == b"x" for p in tmp_path.iterdir())
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize("damage", ["truncate", "garbage", "empty"])
+def test_generate_step_regenerates_an_unreadable_file(tmp_path: Path, damage: str) -> None:
+    init.generate_sample_data(context(tmp_path))
+    victim = tmp_path / "payments.parquet"
+    good = victim.read_bytes()
+    victim.write_bytes({"truncate": good[: len(good) // 2], "garbage": b"x", "empty": b""}[damage])
+    assert init.generate_sample_data(context(tmp_path)).startswith("generated")
+    assert victim.read_bytes() == good
+
+
+def test_write_parquet_leaves_no_temporary_files(tmp_path: Path) -> None:
+    init.generate_sample_data(context(tmp_path))
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".")) == []
 
 
 def test_generate_step_creates_missing_files_then_is_unchanged(tmp_path: Path) -> None:
