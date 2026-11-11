@@ -1,0 +1,70 @@
+# Development stack (NFR-1): `docker compose -f deploy/docker-compose.yml up -d --wait`.
+# Secrets come from the environment. Only the local PostgreSQL passwords have development
+# defaults; MAKNA_SECRET_KEY must be set (for example: export MAKNA_SECRET_KEY=$(openssl rand -hex 32)).
+name: makna
+
+x-makna-image: &makna-image
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: makna-dev:local
+
+services:
+  postgres:
+    # PostgreSQL 17 with pgvector 0.8.0. Pinned; see deploy/README.md.
+    image: pgvector/pgvector:0.8.0-pg17
+    environment:
+      POSTGRES_PASSWORD: ${MAKNA_POSTGRES_PASSWORD:-makna_dev_postgres}
+      MAKNA_DB_PASSWORD: ${MAKNA_DB_PASSWORD:-makna_dev_makna}
+      MAKNA_LENDING_LOADER_PASSWORD: ${MAKNA_LENDING_LOADER_PASSWORD:-makna_dev_loader}
+      MAKNA_LENDING_READER_PASSWORD: ${MAKNA_LENDING_READER_PASSWORD:-makna_dev_reader}
+    ports:
+      - "127.0.0.1:${MAKNA_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1: the temporary server of the first start listens on the socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d makna"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  init:
+    <<: *makna-image
+    command: ["python", "-m", "deploy.init"]
+    environment:
+      MAKNA_DATABASE_URL: postgresql://makna:${MAKNA_DB_PASSWORD:-makna_dev_makna}@postgres:5432/makna
+      MAKNA_LENDING_LOADER_URL: postgresql://lending_loader:${MAKNA_LENDING_LOADER_PASSWORD:-makna_dev_loader}@postgres:5432/lending
+    volumes:
+      - generated:/app/data/generated
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    <<: *makna-image
+    command: ["makna", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      MAKNA_DATABASE_URL: postgresql://makna:${MAKNA_DB_PASSWORD:-makna_dev_makna}@postgres:5432/makna
+      MAKNA_ENGINE_URL: postgresql://lending_reader:${MAKNA_LENDING_READER_PASSWORD:-makna_dev_reader}@postgres:5432/lending
+      MAKNA_SECRET_KEY: ${MAKNA_SECRET_KEY:?set MAKNA_SECRET_KEY (see deploy/README.md)}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  generated:

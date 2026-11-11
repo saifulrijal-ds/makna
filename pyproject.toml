@@ -60,7 +60,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests", "data"]
+files = ["src", "tests", "data", "deploy"]
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
