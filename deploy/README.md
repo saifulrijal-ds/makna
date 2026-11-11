@@ -55,10 +55,31 @@ It stops at the first failing step and exits 1. Every step is idempotent: a seco
 3. `migrate`: `alembic upgrade head` on the `makna` database.
 4. `sync-catalog`: syncs `data/catalog/lending.catalog.yaml` into the catalog tables and runs the reference check against `semantic/definitions`. When the file has not changed it writes nothing (no `sync_run` row), so a second run prints `unchanged`.
 
+5. `build-index`: indexes `semantic/definitions` and the synced catalog into `semantic_object` and `search_document`, with the provider from `config/makna.toml` / `MAKNA_EMBEDDING_PROVIDER` (default `fastembed`, whose model the image carries). It writes only differences, so a second run prints `unchanged` and writes nothing. If the model differs from the one that built the index, every document is embedded again.
+
 Existing Parquet files are kept whatever `--seed` or `--scale` is passed (a file that cannot be read is regenerated); to change the data, delete the `generated` volume and the `pgdata` volume (`down -v`).
 
 Later work packages append their step to `STEPS`. `init` lives here and not in `src/makna`
 because it uses the sample-data code in `data/`, which the installed product never imports.
+
+## The embedding model and the offline check
+
+The image downloads the default model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, about 0.22 GB, Apache-2.0) when it is built, into `/opt/makna/models`, and sets `HF_HUB_OFFLINE=1`; at run time the provider reads only those files and never tries the network (NFR-3). The model name and directory in the `Dockerfile` must equal `[embedding.fastembed]` in `config/makna.toml` (a test checks it). Outside Docker, `MAKNA_EMBEDDING_ALLOW_DOWNLOAD=true` lets the provider download the model into `cache_dir` once (or use `MAKNA_EMBEDDING_PROVIDER=hash`, which is for tests only). A site without internet access needs the model files in that directory; a build argument for an internal mirror is not built yet.
+
+Two search checks run in the CI `stack` job (and can be run by hand):
+
+```
+docker compose -f deploy/docker-compose.yml exec -T app python -m deploy.check_search
+```
+
+builds the index with the real model, asserts that the model has 384 dimensions and is deterministic, that "pembiayaan bermasalah" returns `metric:npf_ratio` or `metric:npf_outstanding_principal` first, and that the 95th percentile of 200 searches is under 500 ms (NFR-2). It also prints the recall of the keyword leg, the vector leg, and the fused list (information only).
+
+```
+docker compose -p makna-offline -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml up -d --wait
+docker compose -p makna-offline -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml exec -T app python -m deploy.check_search --require-offline
+```
+
+starts a second copy of the stack (its own project name, volumes, and a small data set) on a network with `internal: true`: containers reach each other and nothing else. `init` builds the index there with the model in the image, the check first proves that the container cannot connect to a public address, and CI also runs `makna index build` and `makna search` in that container. No port is published on that stack. Stop it with `down -v` and the same two `-f` options.
 
 ## Migrations
 

@@ -12,11 +12,15 @@ from makna.catalog.base import ConnectorError
 from makna.catalog.file import FileConnector
 from makna.catalog.references import open_issues
 from makna.catalog.sync import sync_catalog
-from makna.config import ConfigError, load_tag_map
-from makna.definitions.loader import load_definitions, official_objects
+from makna.config import ConfigError, load_search_runtime, load_tag_map
+from makna.definitions.loader import definition_objects, load_definitions, official_objects
 from makna.definitions.validate import validate
+from makna.index import indexer
 from makna.index.db import database_url_from_env, make_engine
 from makna.model.definitions import Entity, GlossaryTerm
+from makna.model.search import DOCUMENT_KINDS
+from makna.search.embedding import EmbeddingError, make_provider
+from makna.search.hybrid import ROLES, HybridSearch, SearchError
 from makna.services.examples import check_example_requests
 
 DEFAULT_CATALOG_FILE = Path("data/catalog/lending.catalog.yaml")
@@ -84,6 +88,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="list the open reference issues",
         description="Print one line per open reference issue: 'CODE object part: message'.",
     )
+    index = commands.add_parser(
+        "index",
+        help="build the search index",
+        description="Index commands. Need MAKNA_DATABASE_URL in the environment.",
+    )
+    index_commands = index.add_subparsers(dest="index_command", metavar="<command>")
+    build = index_commands.add_parser(
+        "build",
+        help="index the definitions and the synced catalog for search",
+        description=(
+            "Turn the definition files and the catalog copy into search documents with "
+            "embeddings. Only differences are written; a run that finds none writes nothing. "
+            "If the configured embedding model differs from the one that built the index, "
+            "every document is embedded again. Exits 0 on success, 1 if a definition file "
+            "cannot be read or the index cannot be written, 2 on bad usage or settings."
+        ),
+    )
+    build.add_argument(
+        "--definitions",
+        type=Path,
+        default=None,
+        help=(
+            f"definitions directory (default: MAKNA_DEFINITIONS_REPO, else {DEFAULT_DEFINITIONS})"
+        ),
+    )
+    search = commands.add_parser(
+        "search",
+        help="search the index",
+        description=(
+            "Hybrid search (keyword and vector) over the index. Needs MAKNA_DATABASE_URL. "
+            "Prints the confidence band, then one block per hit."
+        ),
+    )
+    search.add_argument("text", help="the query, in English or Indonesian")
+    search.add_argument(
+        "--role",
+        choices=ROLES,
+        default="viewer",
+        help="who is asking: agents and viewers see approved objects only (default: viewer)",
+    )
+    search.add_argument(
+        "--kind", action="append", choices=DOCUMENT_KINDS, help="limit to a kind (repeatable)"
+    )
+    search.add_argument("--domain", help="limit to a domain")
+    search.add_argument(
+        "--include-deprecated", action="store_true", help="also return deprecated objects"
+    )
+    search.add_argument("--limit", type=int, default=5, help="number of hits (default: 5)")
     return parser
 
 
@@ -171,6 +223,109 @@ def _catalog_issues() -> int:
     return 0
 
 
+def _index_build(definitions: Path | None) -> int:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        directory = _definitions_directory(definitions)
+        if directory is None or not directory.is_dir():
+            print(f"makna index build: no definitions directory ({directory})", file=sys.stderr)
+            return 2
+        runtime = load_search_runtime()
+        key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
+        provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
+        engine = make_engine(database_url_from_env())
+    except (RuntimeError, ConfigError) as error:
+        print(f"makna index build: {error}", file=sys.stderr)
+        return 2
+    loaded = load_definitions(directory)
+    if loaded.load_issues:
+        for issue in loaded.load_issues:
+            print(issue.format(f"{directory.as_posix().rstrip('/')}/"), file=sys.stderr)
+        print(
+            "makna index build: not indexing, because definition files cannot be read "
+            "(run `makna validate`)",
+            file=sys.stderr,
+        )
+        return 1
+    objects = definition_objects(loaded)
+    if not objects:
+        print(
+            f"makna index build: {directory} holds no definition objects; not indexing, "
+            "so that the index is not emptied by a wrong directory",
+            file=sys.stderr,
+        )
+        engine.dispose()
+        return 1
+    try:
+        result = indexer.build(engine, provider, objects)
+    except (EmbeddingError, indexer.IndexerError, SQLAlchemyError) as error:
+        print(f"makna index build: {error}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(
+        f"embedding model: {provider.model_id}"
+        + (" (re-embedded all)" if result.reembedded_everything else "")
+    )
+    print(
+        "documents: "
+        f"added {result.documents_added}, changed {result.documents_changed}, "
+        f"removed {result.documents_removed}, unchanged {result.documents_unchanged}"
+    )
+    print(
+        "objects: "
+        f"added {result.objects_added}, changed {result.objects_changed}, "
+        f"removed {result.objects_removed}, unchanged {result.objects_unchanged}"
+    )
+    print("in the index: " + ", ".join(f"{k} {v}" for k, v in sorted(result.by_kind.items())))
+    return 0
+
+
+def _search(
+    text: str,
+    role: str,
+    kinds: list[str] | None,
+    domain: str | None,
+    include_deprecated: bool,
+    limit: int,
+) -> int:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        runtime = load_search_runtime()
+        key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
+        provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
+        engine = make_engine(database_url_from_env())
+    except (RuntimeError, ConfigError) as error:
+        print(f"makna search: {error}", file=sys.stderr)
+        return 2
+    try:
+        result = HybridSearch(engine, provider, runtime.search).search(
+            text,
+            role=role,
+            kinds=kinds,
+            domain=domain,
+            include_deprecated=include_deprecated,
+            limit=limit,
+        )
+    except (SearchError, EmbeddingError, SQLAlchemyError) as error:
+        print(f"makna search: {error}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    confidence = result.confidence
+    print(f"confidence: {confidence.band} (coverage {confidence.coverage:.2f})")
+    if confidence.guidance:
+        print(confidence.guidance)
+    for rank, hit in enumerate(result.hits, start=1):
+        matched = f"  matched: {', '.join(hit.matched_terms)}" if hit.matched_terms else ""
+        print(f"{rank}. {hit.object_id}  [{hit.status}]  score {hit.score:.4f}{matched}")
+        summary = " ".join(hit.description.split())
+        print(f"   {summary[:140]}{'...' if len(summary) > 140 else ''}")
+    return 0
+
+
 def _serve(host: str, port: int) -> int:
     import uvicorn
 
@@ -198,6 +353,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _catalog_issues()
         print("makna catalog: choose sync or issues", file=sys.stderr)
         return 2
+    if args.command == "index":
+        if args.index_command == "build":
+            return _index_build(args.definitions)
+        print("makna index: choose build", file=sys.stderr)
+        return 2
+    if args.command == "search":
+        return _search(
+            args.text, args.role, args.kind, args.domain, args.include_deprecated, args.limit
+        )
     return 0
 
 

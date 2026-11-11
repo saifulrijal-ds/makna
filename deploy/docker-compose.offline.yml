@@ -1,0 +1,24 @@
+# The development stack with no route to the internet (NFR-3, WP-07 acceptance 9).
+#
+#   docker compose -p makna-offline -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml up -d --wait
+#
+# Use a project name of its own (-p makna-offline), so that this is a second, separate stack
+# with its own network and volumes. The only change to the services is the network: `default`
+# is `internal`, so containers reach each other (the app reaches postgres) and nothing else.
+# The image was built online and carries the embedding model, so `init` (which builds the index)
+# and the app must work with the model they find in the image. `init` generates a small sample
+# set, since this stack is for the offline check only. No port is published: an internal network
+# has no route out, and the checks run inside the app container (`docker compose exec`).
+name: makna-offline
+
+services:
+  postgres:
+    ports: !reset []
+  init:
+    command: ["python", "-m", "deploy.init", "--scale", "0.05"]
+  app:
+    ports: !reset []
+
+networks:
+  default:
+    internal: true

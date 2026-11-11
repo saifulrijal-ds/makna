@@ -3,7 +3,7 @@
 Run it as `python -m deploy.init` (the `init` service of docker-compose.yml does). It lives
 outside `src/makna` because the first steps use the sample-data code in `data/`, which the
 installed product package must not import. Later work packages append their step to `STEPS`
-(index build, demo users, definitions repository). A step is safe to run again:
+(demo users, definitions repository). A step is safe to run again:
 the second run of the whole list changes nothing and exits 0.
 """
 
@@ -24,10 +24,11 @@ from data.generator import DEFAULT_SEED, TABLES, generate, write_parquet
 from data.lending_loader import load_all
 from makna.catalog.file import FileConnector
 from makna.catalog.sync import sync_catalog
-from makna.config import load_tag_map
-from makna.definitions.loader import official_objects
-from makna.index import migrate
+from makna.config import load_search_runtime, load_tag_map
+from makna.definitions.loader import definition_objects, load_definitions, official_objects
+from makna.index import indexer, migrate
 from makna.index.db import make_engine
+from makna.search.embedding import make_provider
 
 
 class InitError(Exception):
@@ -116,12 +117,46 @@ def sync_catalog_step(context: Context) -> str:
     )
 
 
+def build_index_step(context: Context) -> str:
+    """Index the definitions and the synced catalog with the configured embedding provider.
+
+    The provider comes from `config/makna.toml` and `MAKNA_EMBEDDING_PROVIDER` (default
+    `fastembed`, whose model the image carries). A run that finds nothing to change writes
+    nothing, so a second `init` prints `unchanged`.
+    """
+    loaded = load_definitions(context.definitions_dir)
+    if loaded.load_issues:
+        problems = "; ".join(i.format("") for i in loaded.load_issues[:3])
+        raise InitError(f"definition files cannot be read, so nothing was indexed: {problems}")
+    objects = definition_objects(loaded)
+    if not objects:
+        raise InitError(
+            f"{context.definitions_dir} holds no definition objects; nothing was indexed"
+        )
+    runtime = load_search_runtime()
+    key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
+    provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
+    engine = make_engine(context.database_url)
+    try:
+        result = indexer.build(engine, provider, objects)
+    finally:
+        engine.dispose()
+    if result.total_changes == 0:
+        return "unchanged"
+    return (
+        f"indexed with {provider.model_id} (documents +{result.documents_added} "
+        f"~{result.documents_changed} -{result.documents_removed}, objects "
+        f"+{result.objects_added} ~{result.objects_changed} -{result.objects_removed})"
+    )
+
+
 # Later packages append here, in the order the steps must run.
 STEPS: list[Step] = [
     Step("generate-sample-data", generate_sample_data),
     Step("load-lending", load_lending),
     Step("migrate", run_migrations),
     Step("sync-catalog", sync_catalog_step),
+    Step("build-index", build_index_step),
 ]
 
 

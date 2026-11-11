@@ -106,3 +106,24 @@ def test_sync_catalog_runs_after_migrate_and_the_image_carries_its_inputs() -> N
     assert names.index("sync-catalog") == names.index("migrate") + 1
     dockerfile = (Path(__file__).resolve().parents[2] / "deploy" / "Dockerfile").read_text()
     assert "COPY semantic ./semantic" in dockerfile and "COPY data ./data" in dockerfile
+
+
+def test_build_index_runs_last_after_the_catalog_sync() -> None:
+    names = [step.name for step in init.STEPS]
+    assert names[-1] == "build-index"
+    assert names.index("build-index") == names.index("sync-catalog") + 1
+
+
+def test_build_index_refuses_a_directory_with_no_definitions(tmp_path: Path) -> None:
+    empty = tmp_path / "defs"
+    empty.mkdir()
+    ctx = Context(
+        data_dir=tmp_path,
+        seed=1,
+        scale=0.05,
+        database_url="postgresql://unused",
+        lending_loader_url="postgresql://unused",
+        definitions_dir=empty,
+    )
+    with pytest.raises(init.InitError, match="no definition objects"):
+        init.build_index_step(ctx)
