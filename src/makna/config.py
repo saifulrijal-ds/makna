@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
+from makna.model.search import EmbeddingSettings, SearchSettings
+
 ENV_PREFIX = "MAKNA_"
 DEFAULT_CONFIG_PATH = Path("config/makna.toml")
 
@@ -24,13 +26,6 @@ EmbeddingProvider = Literal["fastembed", "ollama", "openai_compatible", "hash"]
 
 class ConfigError(Exception):
     """Settings could not be loaded. The message names the variable or file at fault."""
-
-
-class SearchSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    w_keyword: float = 1.0
-    w_vector: float = 1.0
 
 
 class GovernanceSettings(BaseModel):
@@ -61,6 +56,7 @@ class Settings(BaseModel):
     definitions_repo: str | None = None
     engine_url: SecretStr | None = None
     embedding_provider: EmbeddingProvider = "fastembed"
+    embedding_api_key: SecretStr | None = None
     openmetadata_token: SecretStr | None = None
     # Two-person approval is on unless this is true (D-11).
     allow_self_approval: bool = False
@@ -68,6 +64,7 @@ class Settings(BaseModel):
     # From config/makna.toml.
     dialect: str = "postgres"
     search: SearchSettings = Field(default_factory=SearchSettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
     sensitivity: SensitivitySettings = Field(default_factory=SensitivitySettings)
 
@@ -78,6 +75,7 @@ _ENV_FIELDS = (
     "definitions_repo",
     "engine_url",
     "embedding_provider",
+    "embedding_api_key",
     "openmetadata_token",
     "allow_self_approval",
 )
@@ -91,6 +89,30 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
     except tomllib.TOMLDecodeError as error:
         raise ConfigError(f"{path}: invalid TOML: {error}") from error
+
+
+def _collect_values(env: Mapping[str, str], config_path: Path | str | None) -> dict[str, Any]:
+    """The TOML file's values with the environment's overrides applied."""
+    values: dict[str, Any] = _read_toml(Path(config_path or DEFAULT_CONFIG_PATH))
+    for field in _ENV_FIELDS:
+        value = env.get(ENV_PREFIX + field.upper())
+        if value:
+            values[field] = value
+    cache_dir = env.get(ENV_PREFIX + "EMBEDDING_CACHE_DIR")
+    if cache_dir:
+        embedding = dict(values.get("embedding") or {})
+        embedding["fastembed"] = {**(embedding.get("fastembed") or {}), "cache_dir": cache_dir}
+        values["embedding"] = embedding
+    return values
+
+
+def _problems(error: ValidationError) -> str:
+    problems = []
+    for item in error.errors():
+        where = ".".join(str(part) for part in item["loc"])
+        name = ENV_PREFIX + where.upper() if where in _ENV_FIELDS else where
+        problems.append(f"{name}: {item['msg']}")
+    return "Invalid settings: " + "; ".join(problems)
 
 
 def load_settings(
@@ -110,21 +132,39 @@ def load_settings(
     if missing:
         raise ConfigError("Missing required environment variable(s): " + ", ".join(missing))
 
-    values: dict[str, Any] = _read_toml(Path(config_path or DEFAULT_CONFIG_PATH))
-    for field in _ENV_FIELDS:
-        value = env.get(ENV_PREFIX + field.upper())
-        if value:
-            values[field] = value
-
     try:
-        return Settings.model_validate(values)
+        return Settings.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        problems = []
-        for item in error.errors():
-            where = ".".join(str(part) for part in item["loc"])
-            name = ENV_PREFIX + where.upper() if where in _ENV_FIELDS else where
-            problems.append(f"{name}: {item['msg']}")
-        raise ConfigError("Invalid settings: " + "; ".join(problems)) from error
+        raise ConfigError(_problems(error)) from error
+
+
+class SearchRuntime(BaseModel):
+    """What the indexer and the search need: the provider choice and the search weights.
+
+    Operator commands (`makna index build`, `makna search`) use this, so they do not require
+    `MAKNA_SECRET_KEY`.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    embedding_provider: EmbeddingProvider = "fastembed"
+    embedding_api_key: SecretStr | None = None
+    search: SearchSettings = Field(default_factory=SearchSettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+
+
+def load_search_runtime(
+    env: Mapping[str, str] | None = None, config_path: Path | str | None = None
+) -> SearchRuntime:
+    """The search settings of `config/makna.toml` and the embedding variables of the environment."""
+    if env is None:
+        import os
+
+        env = os.environ
+    try:
+        return SearchRuntime.model_validate(_collect_values(env, config_path))
+    except ValidationError as error:
+        raise ConfigError(_problems(error)) from error
 
 
 def load_tag_map(config_path: Path | str | None = None) -> dict[str, str]:

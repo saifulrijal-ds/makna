@@ -21,6 +21,7 @@ from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from makna.definitions.issues import Issue
 from makna.model.definitions import AnyDefinition, Entity, GlossaryTerm, parse_definition
+from makna.model.objects import DefinitionObject
 
 PROPOSAL_SUFFIX = ".draft.yaml"
 OFFICIAL_SUFFIX = ".yaml"
@@ -247,3 +248,29 @@ def official_objects(root: Path | str) -> OfficialObjects:
         elif isinstance(file.definition, GlossaryTerm):
             result.terms.append(file.definition)
     return result
+
+
+def definition_objects(definitions: DefinitionSet) -> list[DefinitionObject]:
+    """Pair each object's official file with its proposal file, for the indexer.
+
+    Files that failed to load are left out (the caller reports `definitions.load_issues`). When
+    two official files claim one name, the first in path order is used; V03 reports the clash.
+    """
+    official: dict[str, DefinitionFile] = {}
+    proposals: dict[str, DefinitionFile] = {}
+    for file in definitions.valid_files():
+        assert file.definition is not None
+        key = f"{file.definition.kind}:{file.definition.name}"
+        (proposals if file.is_proposal else official).setdefault(key, file)
+    objects: list[DefinitionObject] = []
+    for key in sorted(official.keys() | proposals.keys()):
+        found, draft = official.get(key), proposals.get(key)
+        objects.append(
+            DefinitionObject(
+                official=found.definition if found else None,
+                proposal=draft.definition if draft else None,
+                official_path=found.path if found else None,
+                proposal_path=draft.path if draft else None,
+            )
+        )
+    return objects

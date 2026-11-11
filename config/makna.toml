@@ -2,9 +2,55 @@
 
 dialect = "postgres"
 
+# Embedding provider: fastembed (default), ollama, openai_compatible, or hash (tests only).
+# MAKNA_EMBEDDING_PROVIDER overrides it. An API key for openai_compatible comes only from
+# MAKNA_EMBEDDING_API_KEY.
+embedding_provider = "fastembed"
+
+# Search fusion (ARCHITECTURE 8.2): score = (w_keyword / (60 + keyword rank) +
+# w_vector / (60 + vector rank)) * status weight * kind weight. Tuned on the golden set (WP-15).
 [search]
 w_keyword = 1.0
 w_vector = 1.0
+candidates = 30
+
+[search.status_weights]
+approved = 1.0
+deprecated = 0.5   # shown only when the caller asks for deprecated objects
+draft = 0.5
+in_review = 0.5
+
+[search.kind_weights]
+metric = 1.0
+glossary_term = 0.9
+entity = 0.8
+dimension = 0.8
+rule = 0.8
+domain = 0.7
+column = 0.6
+
+# Confidence band (ARCHITECTURE 8.3). low_cosine is unset until WP-15 has measured the model.
+[search.confidence]
+high = 0.6
+low = 0.3
+
+[embedding.fastembed]
+model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+# The Docker image downloads the model here at build time; MAKNA_EMBEDDING_CACHE_DIR overrides it.
+cache_dir = "/opt/makna/models"
+# false: use only the files in cache_dir and never try the network (NFR-3).
+allow_download = false
+
+[embedding.ollama]
+url = "http://localhost:11434"
+model = "bge-m3"
+
+[embedding.openai_compatible]
+url = "https://api.openai.com/v1"
+model = "text-embedding-3-small"
+
+[embedding.hash]
+dimension = 256
 
 [governance]
 team = "data-governance"
