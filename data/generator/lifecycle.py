@@ -609,26 +609,14 @@ def collectibility(days: int) -> str:
 
 def _snapshot_columns(out: _Out) -> Columns:
     s = out.snap
-    n = len(s["contract_id"])
     order = np.lexsort((np.array(s["contract_id"]), np.array(s["snapshot_date"])))
     take = [int(i) for i in order]
     dpd = [s["days_past_due"][i] for i in take]
-    return (
-        {
-            "snapshot_date": [s["snapshot_date"][i] for i in take],
-            "contract_id": [s["contract_id"][i] for i in take],
-            "outstanding_principal": [s["outstanding_principal"][i] for i in take],
-            "days_past_due": dpd,
-            "dpd_bucket": [dpd_bucket(d) for d in dpd],
-            "collectibility": [collectibility(d) for d in dpd],
-        }
-        if n
-        else {
-            "snapshot_date": [],
-            "contract_id": [],
-            "outstanding_principal": [],
-            "days_past_due": [],
-            "dpd_bucket": [],
-            "collectibility": [],
-        }
-    )
+    return {
+        "snapshot_date": [s["snapshot_date"][i] for i in take],
+        "contract_id": [s["contract_id"][i] for i in take],
+        "outstanding_principal": [s["outstanding_principal"][i] for i in take],
+        "days_past_due": dpd,
+        "dpd_bucket": [dpd_bucket(d) for d in dpd],
+        "collectibility": [collectibility(d) for d in dpd],
+    }
