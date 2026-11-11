@@ -738,7 +738,7 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | WEB-4 | 8.4, 13 `/bench` | WP-20 |
 | WEB-5 (basic) | 11 | WP-12, WP-16 |
 | WEB-6, WEB-7 | Not in MVP. | — |
-| GOV-1 | 10, 14 | WP-18 |
+| GOV-1 | 10, 14, 13 `/audit` | WP-18, WP-19 |
 | GOV-2 | 14, 13 `/logs/tool-calls` | WP-12, WP-19 |
 | GOV-3, GOV-4 | Not in MVP. 8.3 and 14 record the data GOV-3 needs. | — |
 | EVL-1 | `docs/EVALS.md` 2 | WP-14 |
@@ -749,10 +749,10 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | DAT-1, DAT-2 | `docs/SAMPLE_DOMAIN.md` 3 and 4 | WP-02 |
 | DAT-3 | `docs/SAMPLE_DOMAIN.md` 5 | WP-04 |
 | NFR-1 | 9 | WP-05, WP-23 |
-| NFR-2 | 8.1, 8.2 | WP-07, WP-23 |
+| NFR-2 | 8.1, 8.2; measured in `docs/EVALS.md` 3 | WP-07, WP-15, WP-23 |
 | NFR-3 | 9 self-hosting | WP-07, WP-23 |
 | NFR-4 | 9 configuration | WP-01 |
-| NFR-5 | 15 | WP-01 and every package |
+| NFR-5 | 15 | WP-01, WP-23, and the tests of every package |
 
 ## 17. Deliberately left out of the MVP
 

@@ -45,4 +45,4 @@ no-match signal: IDF-weighted coverage of the query by the best of the top 3 hit
   net promoter score                             metric:promise_to_pay_rate              0.00  0.37  0.00  (no answer expected)
   coverage, answerable: min 0.23, median 0.55; no-answer: max 0.28
 
-latency over 300 searches incl. stand-in embedding: p50 0.4 ms, p95 0.7 ms
+latency over 300 searches incl. stand-in embedding: p50 0.5 ms, p95 0.8 ms

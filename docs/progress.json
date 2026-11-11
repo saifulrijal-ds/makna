@@ -107,6 +107,7 @@
       ],
       "depends_on": [
         "WP-03",
+        "WP-04",
         "WP-05"
       ],
       "suggested_model": "Sonnet 5.5",
@@ -154,6 +155,7 @@
         "QRY-3"
       ],
       "depends_on": [
+        "WP-02",
         "WP-08"
       ],
       "suggested_model": "Sonnet 5.5",

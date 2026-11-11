@@ -10,6 +10,7 @@ owner: {team: data-governance}
 status: approved
 sensitivity: internal
 synonyms:
+  en: [financing product, loan product]
   id: [produk, produk pembiayaan]
 version: 1
 source: {table: lending.core.products}

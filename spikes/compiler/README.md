@@ -27,6 +27,8 @@ compares every row with a reference query written by hand without the compiler.
 5. A balance over a multi-month range is not summed across months.
 6. Governance: masked personal dimensions come out masked; an unmasked personal dimension, and any filter on personal data, are refused; a grain the metric does not allow is refused; a filter value containing SQL stays a string literal; two equally short join paths with no pin are refused with the options listed.
 
+The spike's request uses the short field names `start` and `end`; the product request uses `time_start` and `time_end` (`docs/ARCHITECTURE.md` section 7.1).
+
 **Design points the product compiler should keep.**
 
 - Every simple metric is aggregated in its own subquery (CTE) from its own base table, joining only "many-to-one" relationships. Nothing is ever joined fact to fact.

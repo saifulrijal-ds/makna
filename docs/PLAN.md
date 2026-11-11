@@ -6,7 +6,7 @@ Status: design output (2026-11-11). Progress is tracked in `docs/progress.json`.
 
 - One work package (WP) is one branch (`<area>/<short-description>`) and one pull request. Reference the requirement IDs in commits and in the pull request.
 - Before starting a package, read `CLAUDE.md`, the sections of `docs/ARCHITECTURE.md` named in the package, and every file in `docs/notes/` (they are short).
-- A package is done when every acceptance criterion is covered by an automated test that passes in CI, unless the criterion says "manual". Then set its status in `docs/progress.json` to `done`.
+- A package is done when every acceptance criterion is covered by an automated test that passes in CI, unless the criterion starts with "Manual". For a manual criterion, the pull request states who checked it and what they saw. Then set its status in `docs/progress.json` to `done`.
 - Acceptance criteria are the minimum. Do not add features beyond the package's scope. If a criterion looks wrong or cannot be met, stop and say so in the pull request; do not weaken it.
 - Statuses in `docs/progress.json`: `not_started`, `in_progress`, `in_review`, `done`, `blocked`.
 - Suggested models: **Sonnet 5.5** for most packages; **Haiku 5.5** where the work is well specified and high in volume. The orchestrator may split a package between them (for example Sonnet writes the generator's core logic and Haiku the fixtures).
@@ -23,7 +23,7 @@ M2 People path        WP-16 → WP-17; WP-18 → WP-19; WP-20; WP-21; WP-22; WP-
    -- Fable review 2: before the MVP release --
 ```
 
-Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12 and WP-13; WP-17, WP-18, WP-21 with each other.
+Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-04 with WP-05; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12 and WP-13; WP-17, WP-18, WP-21 with each other.
 
 | ID | Title | Requirements | Depends on | Model |
 |---|---|---|---|---|
@@ -32,10 +32,10 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 | WP-03 | Definition models, loader, validator | SEM-1, SEM-2, SEM-3 | WP-01 | Sonnet 5.5 |
 | WP-04 | Sample definitions for the lending domain | DAT-3, SEM-2 | WP-03 | Haiku 5.5 |
 | WP-05 | Development stack and database migrations | NFR-1 | WP-02 | Sonnet 5.5 |
-| WP-06 | Catalog model, file connector, sync, reference check | CON-1, CON-3, SEM-4 | WP-03, WP-05 | Sonnet 5.5 |
+| WP-06 | Catalog model, file connector, sync, reference check | CON-1, CON-3, SEM-4 | WP-03, WP-04, WP-05 | Sonnet 5.5 |
 | WP-07 | Indexer and hybrid search | SRC-1, SRC-2, SRC-3, SRC-4, NFR-2, NFR-3 | WP-04, WP-06 | Sonnet 5.5 |
 | WP-08 | Compiler: model snapshot, join graph, request planning | QRY-1 | WP-03, WP-04 | Sonnet 5.5 |
-| WP-09 | Compiler: SQL generation and explanation | QRY-1, QRY-3 | WP-08 | Sonnet 5.5 |
+| WP-09 | Compiler: SQL generation and explanation | QRY-1, QRY-3 | WP-02, WP-08 | Sonnet 5.5 |
 | WP-10 | Compiler: sensitivity, masking, refusals | QRY-2 | WP-09 | Sonnet 5.5 |
 | WP-11 | Trino connector and metrics on the real engine | CON-4, QRY-4 | WP-05, WP-10 | Sonnet 5.5 |
 | WP-12 | Service layer, users, roles, tokens, tool-call log | QRY-4, WEB-5, GOV-2 | WP-07, WP-11 | Sonnet 5.5 |
@@ -133,7 +133,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   1. After `makna index build` on the sample definitions and catalog, `search_document` holds one document for each case listed under "What becomes a search document" in section 6.4 (assert counts per kind).
   2. The queries "NPF", "kredit macet", and "non-performing financing ratio" each return `metric:npf_ratio` in the first 3 results (SRC-2).
   3. `metric:npl_ratio` (deprecated) is absent by default and present with `include_deprecated`; `metric:write_off_amount` (draft) is absent for an agent or viewer and present for a curator, ranked below an approved metric that matches the same query equally (SRC-3; build the tie with a fixture).
-  4. With the keyword weight set to 0 the order equals vector order, and with the vector weight set to 0 it equals keyword order (fusion is wired correctly).
+  4. With all status and kind weights set to 1: when the keyword weight is 0 the result order equals the vector order, and when the vector weight is 0 it equals the keyword order (fusion is wired correctly).
   5. Each provider passes a contract test (dimension matches, same text gives the same vector); `ollama` and `openai_compatible` are tested against a fake HTTP server. No test downloads a model.
   6. The confidence band is `low` for "website conversion funnel" and not `low` for "kredit macet".
   7. Changing one metric's synonyms and calling `index_object` changes only that object's rows (other rows keep their `text_hash` and update time).
@@ -185,7 +185,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 - **Acceptance** (engine tier)
   1. `list_tables` for `lending.core` returns the nine tables with their columns.
   2. `execute` returns columns and rows; with `max_rows=5` on a larger result it returns 5 rows and `truncated = true`; a query exceeding `timeout_s` raises `ENGINE_TIMEOUT`; invalid SQL raises `ENGINE_ERROR` carrying Trino's message.
-  3. The five spike cases, compiled by the product compiler, run on Trino and equal their reference queries run on Trino. Record in `deploy/README.md` that the open points in `spikes/compiler/README.md` are confirmed (or what had to change).
+  3. The five spike cases, compiled by the product compiler, run on Trino and equal their reference queries run on Trino. Manual: record in `deploy/README.md` that the open points in `spikes/compiler/README.md` are confirmed, or what had to change.
   4. Every approved sample metric compiles and runs on Trino with no dimensions and at its default grain, returning at least one row.
   5. The query runs under the user given in the credentials: `SELECT current_user` through `execute` returns that user. A unit test with a mocked client asserts that a password, when given, is sent as basic authentication and is never written to a log record.
   6. `makna catalog compare` reports no differences on the dev stack, and reports a missing column after one is dropped from a scratch copy of a table.
@@ -211,7 +211,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 - **Acceptance** (integration tier, using the SDK's client in process and over HTTP)
   1. Listing tools returns the four always-on tools, plus `makna_run_query` only when running is enabled and the token has `can_run`. Every tool has `readOnlyHint` set. A snapshot test compares each tool description and the server instructions with a reviewed text file in the test directory, so a wording change is always a visible, reviewed change; the first snapshot is the text of section 12 (MCP-2).
   2. A full flow passes: search "kredit macet per wilayah", get the top metric's definition, compile a request using a dimension from that definition, and (with the fake engine) run it.
-  3. `makna_search` output for each of the first 20 golden questions is at most 2,500 characters at the default limit; `makna_get_definition` in `full` is at most 6,000 characters for every approved sample metric.
+  3. `makna_search` output for each of the 20 question texts in `docs/EVALS.md` section 2.5 (copied into the test) is at most 2,500 characters at the default limit; `makna_get_definition` in `full` is at most 6,000 characters for every approved sample metric.
   4. A compile error is returned as a tool error whose JSON has `code`, `message`, and `details`; for `DIMENSION_NOT_AVAILABLE` the details list available dimensions.
   5. HTTP without a token, with a revoked token, and with a malformed token is rejected with 401.
   6. No tool accepts SQL text: the input schema of every tool has no property named `sql` or `query_sql`, and a test asserts this.
@@ -239,7 +239,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   3. The result comparison function has unit tests for: row order differences (equal), numeric tolerance (equal inside, different outside), an extra column in the compiled result (equal), a missing row (different).
   4. Compile part B covers every approved metric and every available non-personal dimension (assert the count of executed requests equals the count derived from the index).
   5. On the dev stack with the real default embedding model: recall at 3 is at least 0.90 and compile correctness is 100%. If recall is below the gate after tuning, do not lower the gate: report the failing questions and the per-leg scores in the pull request and mark the package `blocked` for the owner's decision on the embedding model (DR-9).
-  6. The tuned weights and thresholds are committed in `config/makna.toml` with the before and after scores in the pull request.
+  6. Manual: the tuned weights and thresholds are committed in `config/makna.toml`, and the pull request shows the scores before and after tuning.
   7. The CI stack job runs `makna-eval all` and uploads the report.
 
 **Fable review 1 (core complete)** follows WP-15.
@@ -266,7 +266,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 - **Build**: `/`, `/search`, `/domains/<name>`, `/metrics/<name>`, `/entities/<name>`, `/glossary/<name>`; `makna freshness refresh` and the `data_freshness` display.
 - **Acceptance** (integration tier)
   1. The metric page for `npf_ratio` contains, in this order in the HTML: the label, the plain-language description, the formula line, the owner team, the status and version, a freshness line, the caveats, and the example questions; SQL and YAML are not shown to a viewer.
-  2. `/search?q=kredit+macet` lists NPF Ratio first with an "approved" badge; the HTMX partial endpoint returns only the results fragment.
+  2. `/search?q=kredit+macet` lists NPF Ratio in the first 3 results with an "approved" badge; the HTMX partial endpoint returns only the results fragment.
   3. A viewer does not see drafts in search or on domain pages; a curator sees `write_off_amount` with a "draft" badge.
   4. A deprecated metric's page shows the deprecation reason and a link to its replacement.
   5. `/domains/lending` lists every approved object of the domain, grouped by kind.
