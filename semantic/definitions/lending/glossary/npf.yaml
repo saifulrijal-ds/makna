@@ -1,0 +1,17 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: npf
+label: Non-Performing Financing (NPF)
+description: >-
+  Financing that is more than 90 days past due, which corresponds to
+  collectibility classes 3, 4, and 5. The term is used for both the amount
+  and the ratio; ask which one is meant.
+domain: lending
+owner: {team: credit-risk}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [non-performing financing, non-performing loan, NPL, bad debt]
+  id: [kredit macet, pembiayaan bermasalah, kredit bermasalah]
+version: 1
+related: [metric:npf_ratio, metric:npf_outstanding_principal]

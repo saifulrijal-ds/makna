@@ -1,0 +1,31 @@
+apiVersion: makna/v1
+kind: metric
+name: outstanding_principal
+label: Outstanding Principal
+description: >-
+  Principal that customers still owe at a month end. It is a balance, not a
+  flow: for a period longer than a month the value is the balance at the last
+  month end in the period, never a sum of months.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [outstanding, OS, portfolio balance, receivables, exposure]
+  id: [sisa pokok, saldo pokok, outstanding pokok, piutang pembiayaan, baki debet]
+version: 1
+type: simple
+measure: contract_snapshot.outstanding_principal
+join_paths:
+  branch: [contract_snapshot.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - What is the outstanding principal at the end of June 2026?
+  - Outstanding per DPD bucket
+  - Berapa sisa pokok per cabang?
+example_requests:
+  - question: "Sisa pokok per wilayah di akhir Maret 2026"
+    request: {dimensions: [branch.region_name], time_start: "2026-03-01", time_end: "2026-04-01"}
+caveats: Available at month ends only. Reported by servicing branch.

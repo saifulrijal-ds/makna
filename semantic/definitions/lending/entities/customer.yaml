@@ -1,0 +1,106 @@
+apiVersion: makna/v1
+kind: entity
+name: customer
+label: Customer
+description: >-
+  An individual who has applied for or holds a financing contract. This entity
+  holds personal data; personal fields are masked or unavailable in results.
+domain: lending
+owner: {team: data-governance}
+status: approved
+sensitivity: confidential
+synonyms:
+  en: [borrower, debtor]
+  id: [nasabah, konsumen, debitur]
+version: 1
+source: {table: lending.core.customers}
+primary_key: [customer_id]
+dimensions:
+  - name: customer_segment
+    type: categorical
+    description: Marketing segment assigned at registration.
+    synonyms: {en: [segment, customer tier], id: [segmen, segmen nasabah]}
+    sensitivity: internal
+    values: [{value: mass}, {value: emerging_affluent}, {value: affluent}]
+  - name: occupation_group
+    type: categorical
+    description: Broad occupation group declared by the customer.
+    synonyms: {en: [occupation, job type], id: [pekerjaan, kelompok pekerjaan]}
+    sensitivity: internal
+    values:
+      - {value: employee, description: Salaried employee of a private company.}
+      - {value: self_employed, description: Runs their own business.}
+      - {value: civil_servant, description: Government employee.}
+      - {value: professional, description: "Doctor, lawyer, engineer, or similar profession."}
+      - {value: other, description: Any other occupation.}
+  - name: province
+    type: categorical
+    description: Province of the customer's home address. Not the province of any branch.
+    synonyms: {en: [home province], id: [provinsi, provinsi domisili]}
+    sensitivity: internal
+  - name: registered_date
+    type: time
+    expr: CAST(registered_at AS DATE)
+    description: Date the customer record was first created. The official date for new customer counts.
+    synonyms: {en: [registration date, sign-up date], id: [tanggal registrasi, tanggal pendaftaran]}
+    sensitivity: internal
+  - name: birth_year
+    type: time
+    expr: birth_date
+    description: Customer's date of birth, available only as a year.
+    synonyms: {en: [year of birth], id: [tahun lahir]}
+    sensitivity: personal
+    masking: {method: truncate_date, grain: year}
+  - name: gender
+    type: categorical
+    description: Gender of the customer as recorded at registration.
+    synonyms: {en: [sex], id: [jenis kelamin]}
+    sensitivity: internal
+    values:
+      - {value: F, description: Female.}
+      - {value: M, description: Male.}
+  - name: income_band
+    type: categorical
+    description: Band of the customer's declared monthly income in rupiah. The bands are millions of rupiah.
+    synonyms: {en: [income range, income bracket], id: [rentang penghasilan, kelompok penghasilan]}
+    sensitivity: internal
+    values:
+      - {value: lt_5m, description: Less than 5 million rupiah a month.}
+      - {value: 5m_10m, description: 5 million to 10 million rupiah a month.}
+      - {value: 10m_20m, description: 10 million to 20 million rupiah a month.}
+      - {value: gt_20m, description: More than 20 million rupiah a month.}
+  - name: city
+    type: categorical
+    description: City of the customer's home address.
+    synonyms: {en: [home city], id: [kota, kota domisili]}
+    sensitivity: internal
+  - name: email
+    type: categorical
+    description: Customer's email address. Never available in results.
+    synonyms: {en: [email address], id: [surel, alamat email]}
+    sensitivity: personal
+  - name: phone_number
+    type: categorical
+    description: Customer's mobile phone number. Never available in results.
+    synonyms: {en: [mobile number], id: [nomor telepon, nomor HP]}
+    sensitivity: personal
+  - name: full_name
+    type: categorical
+    description: Customer's full legal name. Never available in results.
+    synonyms: {en: [name, customer name], id: [nama lengkap, nama nasabah]}
+    sensitivity: personal
+  - name: national_id
+    type: categorical
+    description: National identity number (NIK). Never available in results.
+    sensitivity: personal
+    synonyms: {id: [NIK, nomor KTP]}
+measures:
+  - name: new_customers
+    agg: count
+    time_dimension: registered_date
+    description: Number of customer records created.
+relationships:
+  - name: home_branch
+    to: branch
+    keys: [{from: home_branch_id, to: branch_id}]
+    description: The branch where the customer first registered. Not the branch of any particular contract.

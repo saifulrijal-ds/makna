@@ -1,0 +1,99 @@
+apiVersion: makna/v1
+kind: entity
+name: contract
+label: Financing Contract
+description: >-
+  A signed financing agreement with a customer. One row per contract. A
+  contract carries several dates with different meanings; metrics name the
+  date they use.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [loan, agreement, account]
+  id: [kontrak, perjanjian pembiayaan]
+version: 1
+source: {table: lending.core.contracts}
+primary_key: [contract_id]
+dimensions:
+  - name: signed_date
+    type: time
+    description: Date the customer signed the contract. Money may not have moved yet.
+    synonyms: {en: [signing date, contract date], id: [tanggal akad, tanggal tanda tangan kontrak]}
+  - name: disbursement_date
+    type: time
+    description: Date the funds were released to the customer. Empty for contracts that were signed and then cancelled. The official date for disbursement metrics.
+    synonyms: {en: [payout date, funding date], id: [tanggal pencairan]}
+  - name: maturity_date
+    type: time
+    description: Date of the last scheduled installment under the current schedule.
+    synonyms: {en: [end date, final due date], id: [tanggal jatuh tempo akhir, tanggal berakhir]}
+  - name: contract_status
+    type: categorical
+    description: Current state of the contract.
+    synonyms: {en: [status], id: [status kontrak]}
+    values:
+      - {value: active}
+      - {value: closed, description: Fully repaid.}
+      - {value: written_off}
+      - {value: cancelled, description: Signed but never disbursed.}
+  - name: is_restructured
+    type: boolean
+    description: True when the repayment schedule has been restructured at least once.
+    synonyms: {id: [restrukturisasi, restru]}
+  - name: tenor_months
+    type: numeric
+    description: Number of monthly installments agreed at signing.
+    synonyms: {en: [tenor, loan term, term in months], id: [tenor, jangka waktu, lama angsuran]}
+  - name: annual_rate_pct
+    type: numeric
+    description: Flat annual interest rate of the contract, in percent.
+    synonyms: {en: [interest rate, annual rate], id: [suku bunga, bunga per tahun]}
+  - name: closed_date
+    type: time
+    description: Date the contract was fully repaid or written off. Empty while the contract is active.
+    synonyms: {en: [closing date, payoff date], id: [tanggal lunas, tanggal penutupan]}
+  - name: restructured_date
+    type: time
+    description: Date the repayment schedule was restructured. Empty for contracts that were never restructured.
+    synonyms: {en: [restructuring date], id: [tanggal restrukturisasi]}
+measures:
+  - name: disbursed_principal
+    agg: sum
+    expr: principal_amount
+    filter: disbursement_date IS NOT NULL
+    time_dimension: disbursement_date
+    description: Principal released to customers, counted on the disbursement date.
+  - name: disbursed_contracts
+    agg: count
+    filter: disbursement_date IS NOT NULL
+    time_dimension: disbursement_date
+    description: Number of contracts whose funds were released.
+rules:
+  - name: restructured
+    label: Restructured
+    description: A contract whose repayment schedule has been restructured at least once. Written once and used by every restructured-portfolio metric.
+    expr: is_restructured
+    synonyms: {en: [restructured contract, rescheduled], id: [restrukturisasi, kontrak direstrukturisasi]}
+relationships:
+  - name: application
+    to: application
+    keys: [{from: application_id, to: appl_id}]
+    description: The approved application that led to this contract.
+  - name: customer
+    to: customer
+    keys: [{from: customer_id, to: customer_id}]
+    description: The customer who signed the contract.
+  - name: product
+    to: product
+    keys: [{from: product_id, to: product_id}]
+    description: The financing product of the contract.
+  - name: booking_branch
+    to: branch
+    keys: [{from: booking_branch_id, to: branch_id}]
+    description: The branch that originated the contract. Never changes. Used for sales and disbursement metrics.
+  - name: servicing_branch
+    to: branch
+    keys: [{from: servicing_branch_id, to: branch_id}]
+    description: The branch that currently services and collects the contract. Changes when a customer is transferred. Used for portfolio and collection metrics.

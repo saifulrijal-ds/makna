@@ -1,0 +1,28 @@
+apiVersion: makna/v1
+kind: metric
+name: npf_outstanding_principal
+label: NPF Outstanding Principal
+description: >-
+  Principal still owed at a month end on contracts that are more than 90 days
+  past due. This is the amount of non-performing financing, not the ratio.
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [NPF amount, non-performing outstanding, NPL amount]
+  id: [nominal NPF, outstanding kredit macet, nominal pembiayaan bermasalah]
+version: 1
+type: simple
+measure: contract_snapshot.npf_outstanding_principal
+join_paths:
+  branch: [contract_snapshot.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - How much of the portfolio is non-performing in rupiah?
+  - Berapa sisa pokok pembiayaan bermasalah per wilayah?
+example_requests:
+  - question: "NPF amount by collectibility class at the end of June 2026"
+    request: {dimensions: [contract_snapshot.collectibility], time_start: "2026-06-01", time_end: "2026-07-01"}
