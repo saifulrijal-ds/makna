@@ -90,10 +90,10 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-03 Definition models, loader, validator
 
 - **Read**: `docs/ARCHITECTURE.md` section 5; `semantic/schema/makna.schema.json` and the examples.
-- **Build**: Pydantic models in `makna.model.definitions` matching the JSON Schema; `makna.definitions.loader` (read a repository directory into a `DefinitionSet`, official and proposal files); `makna.definitions.validate` implementing V01 to V18 (V19 needs the compiler and is added in WP-08) (reference issues R01 to R04 belong to WP-06); CLI `makna validate <dir>` printing one line per problem with file, line where known, code, and message, and exiting 1 on any error.
+- **Build**: Pydantic models in `makna.model.definitions` matching the JSON Schema; `makna.definitions.loader` (read a repository directory into a `DefinitionSet`, official and proposal files); `makna.definitions.validate` implementing V01 to V18 and V20 (V19 needs the compiler and is added in WP-08) (reference issues R01 to R04 belong to WP-06); CLI `makna validate <dir>` printing one line per problem with file, line where known, code, and message, and exiting 1 on any error.
 - **Acceptance**
   1. Every file under `semantic/schema/examples/` loads and validates with zero errors.
-  2. For each rule V01 to V18 there is at least one fixture that breaks only that rule, and the validator reports exactly that code.
+  2. For each rule V01 to V18 and V20 there is at least one fixture that breaks only that rule, and the validator reports exactly that code.
   3. A test proves the Pydantic models and the JSON Schema agree: every example round-trips (load, dump, validate against the schema), and a property the schema forbids (an unknown key, a ratio with `measure`, a metric without an `id` synonym) is rejected by both.
   4. `makna validate semantic/schema/examples` exits 0; on a directory with one broken fixture it exits 1 and prints the rule code.
   5. Loading never executes anything from YAML (uses the safe loader; a test feeds a YAML tag payload and expects a clean error).
