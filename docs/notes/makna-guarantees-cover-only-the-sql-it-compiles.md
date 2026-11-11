@@ -1,0 +1,3 @@
+An agent process must never hold Makna's database URL, and Makna's guarantees cover only the SQL it compiles: engine access control is what limits everything else.
+
+The design first gave the stdio MCP server the database URL and passed engine credentials from MCP clients (review R-2, R-3). Now `makna mcp` is a token-only bridge to `/mcp`, and Makna runs no queries at all (D-21): agents run the compiled SQL with their own tools and their own engine access. So an agent that has engine access can also run SQL Makna never saw. Makna's join rules and masking are a property of the SQL it generates; an adopter that exposes personal data must also restrict or mask it in the engine.

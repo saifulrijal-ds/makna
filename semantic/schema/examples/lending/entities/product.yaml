@@ -1,0 +1,38 @@
+apiVersion: makna/v1
+kind: entity
+name: product
+label: Financing Product
+description: >-
+  A financing product offered to customers, for example car-backed or
+  motorcycle-backed multipurpose financing.
+domain: lending
+owner: {team: data-governance}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [financing product, loan product]
+  id: [produk, produk pembiayaan]
+version: 1
+source: {table: lending.core.products}
+primary_key: [product_id]
+dimensions:
+  - name: product_name
+    type: categorical
+    description: Commercial name of the product.
+    synonyms: {en: [product], id: [produk]}
+  - name: product_category
+    type: categorical
+    description: Product group by collateral type.
+    synonyms: {id: [kategori produk, jenis produk]}
+    values:
+      - {value: car_backed, description: Financing secured by a car ownership document.}
+      - {value: motorcycle_backed, description: Financing secured by a motorcycle ownership document.}
+      - {value: used_car_purchase, description: Financing to buy a used car.}
+      - {value: unsecured, description: Financing without collateral.}
+  - name: financing_scheme
+    type: categorical
+    description: Whether the product follows a conventional or a sharia contract.
+    synonyms: {id: [skema pembiayaan, syariah]}
+    values:
+      - {value: conventional, description: Konvensional. Interest-based contract.}
+      - {value: sharia, description: Syariah. Contract under sharia principles.}

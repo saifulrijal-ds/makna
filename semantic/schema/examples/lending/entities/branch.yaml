@@ -1,0 +1,40 @@
+apiVersion: makna/v1
+kind: entity
+name: branch
+label: Branch
+description: >-
+  A branch office. Branches roll up to areas and areas roll up to regions.
+  A contract is linked to a branch in two ways (booking and servicing), so
+  metrics state which link they use.
+domain: lending
+owner: {team: data-governance}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [office, outlet]
+  id: [cabang, kantor cabang]
+version: 1
+source: {table: lending.core.branches}
+primary_key: [branch_id]
+dimensions:
+  - name: branch_name
+    type: categorical
+    description: Name of the branch office.
+    synonyms: {en: [branch], id: [cabang, nama cabang]}
+  - name: area_name
+    type: categorical
+    description: Area the branch belongs to. An area groups several branches.
+  - name: region_name
+    type: categorical
+    description: Region the branch belongs to. A region groups several areas.
+    synonyms: {en: [region], id: [wilayah, regional]}
+    values:
+      - {value: Jawa Barat}
+      - {value: Jawa Tengah}
+      - {value: Jawa Timur}
+      - {value: Sumatera}
+      - {value: Kalimantan Sulawesi}
+  - name: province
+    type: categorical
+    description: Province where the branch office is located.
+    synonyms: {id: [provinsi]}

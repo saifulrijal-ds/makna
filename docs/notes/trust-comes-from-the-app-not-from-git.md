@@ -1,0 +1,3 @@
+Commit trailers and file contents prove nothing about approval; only commits the application recorded in `audit_event` can make a definition official.
+
+Anyone with write access to the definitions repository (a person, a merged pull request, a coding agent) can write `status: approved` and copy the `Makna-*` trailers. The design therefore records an intent row before every application commit, and indexes every other commit as a proposal in review that is never served as approved (`docs/ARCHITECTURE.md` section 10, review R-1). Tests for the write path should always include a raw `git commit` that tries to make something official.

@@ -28,6 +28,7 @@ Python is the primary language for everything, including the web app's server si
 - Keep changes to what the task needs. Do not add features, abstractions, or configuration for hypothetical future needs. Validate input only at system boundaries.
 - Write a general solution, not one that only passes the tests. If a test is wrong, say so instead of working around it. Do not delete or weaken tests to make them pass.
 - Reference requirement IDs (for example `SRC-1`) in commit messages and pull request descriptions.
+- Testing without Docker (decision D-15). Your session may have no Docker, so no dev stack. The target engine is PostgreSQL (decision D-22). Run the unit tier locally; compiler tests run the generated SQL on DuckDB. Run the integration and engine tiers only if a PostgreSQL (with pgvector for integration) is available. Treat PostgreSQL and dev-stack results as proven only when CI on GitHub Actions passes; a DuckDB pass is not proof that the SQL works on PostgreSQL. Details in `docs/PLAN.md` ("How to use this plan").
 - After a meaningful step, update `docs/progress.json` and, if you learned something reusable, add or update a note in `docs/notes/`.
 
 ## Git

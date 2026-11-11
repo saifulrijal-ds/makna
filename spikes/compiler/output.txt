@@ -1,0 +1,377 @@
+
+=== Case 1 simple metric, booking-branch join, month grain
+request: {'metric': 'disbursement_amount', 'dimensions': ['branch.region_name'], 'grain': 'month', 'start': '2026-01-01', 'end': '2026-07-01'}
+--- Trino SQL
+SELECT
+  CAST(DATE_TRUNC('MONTH', "t0"."disbursement_date") AS DATE) AS "metric_time",
+  "t1"."region_name" AS "branch__region_name",
+  SUM("t0"."principal_amount") AS "disbursement_amount"
+FROM "lending"."core"."contracts" AS "t0"
+LEFT JOIN "lending"."core"."branches" AS "t1"
+  ON "t0"."booking_branch_id" = "t1"."branch_id"
+WHERE
+  (
+    NOT "t0"."disbursement_date" IS NULL
+  )
+  AND "t0"."disbursement_date" >= CAST('2026-01-01' AS DATE)
+  AND "t0"."disbursement_date" < CAST('2026-07-01' AS DATE)
+GROUP BY
+  CAST(DATE_TRUNC('MONTH', "t0"."disbursement_date") AS DATE),
+  "t1"."region_name"
+ORDER BY
+  "metric_time",
+  "branch__region_name"
+LIMIT 1000
+--- explanation
+  - disbursement_amount: join branch via contract.booking_branch (The branch that originated the contract. Never changes. Used for sales and disbursement metrics.)
+  - disbursement_amount: keep rows where disbursement_date IS NOT NULL (part of the measure definition)
+  - disbursement_amount: time is contract.disbursement_date, from 2026-01-01 up to but not including 2026-07-01
+--- rows: 20; first: [(datetime.date(2026, 1, 1), 'Jawa Barat', Decimal('831000000.00')), (datetime.date(2026, 1, 1), 'Jawa Timur', Decimal('790000000.00'))]
+--- matches reference: PASS
+
+=== Case 2 ratio of two balances, two-hop join to servicing branch, quarter grain (last month end per quarter)
+request: {'metric': 'npf_ratio', 'dimensions': ['branch.region_name'], 'grain': 'quarter', 'start': '2025-10-01', 'end': '2026-07-01'}
+--- Trino SQL
+WITH m_npf_outstanding_principal AS (
+  SELECT
+    CAST(DATE_TRUNC('QUARTER', "t0"."snapshot_date") AS DATE) AS "metric_time",
+    "t2"."region_name" AS "branch__region_name",
+    SUM("t0"."outstanding_principal") AS "npf_outstanding_principal"
+  FROM "lending"."core"."contract_monthly_snapshots" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."branches" AS "t2"
+    ON "t1"."servicing_branch_id" = "t2"."branch_id"
+  WHERE
+    (
+      "t0"."days_past_due" > 90
+    )
+    AND "t0"."snapshot_date" >= CAST('2025-10-01' AS DATE)
+    AND "t0"."snapshot_date" < CAST('2026-07-01' AS DATE)
+    AND "t0"."snapshot_date" IN (
+      SELECT
+        MAX("s"."snapshot_date")
+      FROM "lending"."core"."contract_monthly_snapshots" AS "s"
+      WHERE
+        "s"."snapshot_date" >= CAST('2025-10-01' AS DATE)
+        AND "s"."snapshot_date" < CAST('2026-07-01' AS DATE)
+      GROUP BY
+        CAST(DATE_TRUNC('QUARTER', "s"."snapshot_date") AS DATE)
+    )
+  GROUP BY
+    CAST(DATE_TRUNC('QUARTER', "t0"."snapshot_date") AS DATE),
+    "t2"."region_name"
+), m_outstanding_principal AS (
+  SELECT
+    CAST(DATE_TRUNC('QUARTER', "t0"."snapshot_date") AS DATE) AS "metric_time",
+    "t2"."region_name" AS "branch__region_name",
+    SUM("t0"."outstanding_principal") AS "outstanding_principal"
+  FROM "lending"."core"."contract_monthly_snapshots" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."branches" AS "t2"
+    ON "t1"."servicing_branch_id" = "t2"."branch_id"
+  WHERE
+    "t0"."snapshot_date" >= CAST('2025-10-01' AS DATE)
+    AND "t0"."snapshot_date" < CAST('2026-07-01' AS DATE)
+    AND "t0"."snapshot_date" IN (
+      SELECT
+        MAX("s"."snapshot_date")
+      FROM "lending"."core"."contract_monthly_snapshots" AS "s"
+      WHERE
+        "s"."snapshot_date" >= CAST('2025-10-01' AS DATE)
+        AND "s"."snapshot_date" < CAST('2026-07-01' AS DATE)
+      GROUP BY
+        CAST(DATE_TRUNC('QUARTER', "s"."snapshot_date") AS DATE)
+    )
+  GROUP BY
+    CAST(DATE_TRUNC('QUARTER', "t0"."snapshot_date") AS DATE),
+    "t2"."region_name"
+), unioned AS (
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "npf_outstanding_principal" AS "npf_outstanding_principal",
+    NULL AS "outstanding_principal"
+  FROM m_npf_outstanding_principal
+  UNION ALL
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    NULL AS "npf_outstanding_principal",
+    "outstanding_principal" AS "outstanding_principal"
+  FROM m_outstanding_principal
+), combined AS (
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    COALESCE(MAX("npf_outstanding_principal"), 0) AS "npf_outstanding_principal",
+    COALESCE(MAX("outstanding_principal"), 0) AS "outstanding_principal"
+  FROM unioned
+  GROUP BY
+    "metric_time",
+    "branch__region_name"
+)
+SELECT
+  "metric_time",
+  "branch__region_name",
+  "npf_outstanding_principal",
+  "outstanding_principal",
+  CAST("npf_outstanding_principal" AS DOUBLE) / NULLIF("outstanding_principal", 0) AS "npf_ratio"
+FROM combined
+ORDER BY
+  "metric_time",
+  "branch__region_name"
+LIMIT 1000
+--- explanation
+  - npf_outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
+  - npf_outstanding_principal: join branch via contract.servicing_branch (The branch that currently services and collects the contract. Changes when a customer is transferred. Used for portfolio and collection metrics.)
+  - npf_outstanding_principal: keep rows where rule contract_snapshot.non_performing holds (days_past_due > 90: A position more than 90 days past due. Written once and used by every NPF measure and metric.)
+  - npf_outstanding_principal: time is contract_snapshot.snapshot_date, from 2025-10-01 up to but not including 2026-07-01
+  - npf_outstanding_principal: balance measure, so only the last snapshot date in each quarter is used
+  - outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
+  - outstanding_principal: join branch via contract.servicing_branch (The branch that currently services and collects the contract. Changes when a customer is transferred. Used for portfolio and collection metrics.)
+  - outstanding_principal: time is contract_snapshot.snapshot_date, from 2025-10-01 up to but not including 2026-07-01
+  - outstanding_principal: balance measure, so only the last snapshot date in each quarter is used
+  - npf_ratio = npf_outstanding_principal / outstanding_principal; each side is aggregated separately, then combined on ['metric_time', 'branch__region_name']; a zero denominator gives NULL
+--- rows: 12; first: [(datetime.date(2025, 10, 1), 'Jawa Barat', Decimal('0.00'), Decimal('4726416666.66'), 0.0), (datetime.date(2025, 10, 1), 'Jawa Timur', Decimal('0.00'), Decimal('4380166666.67'), 0.0)]
+--- matches reference: PASS
+
+=== Case 3 ratio, no grain, filter on a dimension two hops away (latest snapshot only)
+request: {'metric': 'npf_ratio', 'filters': [{'dimension': 'product.product_category', 'op': '=', 'value': 'car_backed'}], 'end': '2026-07-01'}
+--- Trino SQL
+WITH m_npf_outstanding_principal AS (
+  SELECT
+    SUM("t0"."outstanding_principal") AS "npf_outstanding_principal"
+  FROM "lending"."core"."contract_monthly_snapshots" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."products" AS "t2"
+    ON "t1"."product_id" = "t2"."product_id"
+  WHERE
+    (
+      "t0"."days_past_due" > 90
+    )
+    AND "t2"."product_category" = 'car_backed'
+    AND "t0"."snapshot_date" < CAST('2026-07-01' AS DATE)
+    AND "t0"."snapshot_date" IN (
+      SELECT
+        MAX("s"."snapshot_date")
+      FROM "lending"."core"."contract_monthly_snapshots" AS "s"
+      WHERE
+        "s"."snapshot_date" < CAST('2026-07-01' AS DATE)
+    )
+), m_outstanding_principal AS (
+  SELECT
+    SUM("t0"."outstanding_principal") AS "outstanding_principal"
+  FROM "lending"."core"."contract_monthly_snapshots" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."products" AS "t2"
+    ON "t1"."product_id" = "t2"."product_id"
+  WHERE
+    "t2"."product_category" = 'car_backed'
+    AND "t0"."snapshot_date" < CAST('2026-07-01' AS DATE)
+    AND "t0"."snapshot_date" IN (
+      SELECT
+        MAX("s"."snapshot_date")
+      FROM "lending"."core"."contract_monthly_snapshots" AS "s"
+      WHERE
+        "s"."snapshot_date" < CAST('2026-07-01' AS DATE)
+    )
+), unioned AS (
+  SELECT
+    "npf_outstanding_principal" AS "npf_outstanding_principal",
+    NULL AS "outstanding_principal"
+  FROM m_npf_outstanding_principal
+  UNION ALL
+  SELECT
+    NULL AS "npf_outstanding_principal",
+    "outstanding_principal" AS "outstanding_principal"
+  FROM m_outstanding_principal
+), combined AS (
+  SELECT
+    COALESCE(MAX("npf_outstanding_principal"), 0) AS "npf_outstanding_principal",
+    COALESCE(MAX("outstanding_principal"), 0) AS "outstanding_principal"
+  FROM unioned
+)
+SELECT
+  "npf_outstanding_principal",
+  "outstanding_principal",
+  CAST("npf_outstanding_principal" AS DOUBLE) / NULLIF("outstanding_principal", 0) AS "npf_ratio"
+FROM combined
+LIMIT 1000
+--- explanation
+  - npf_outstanding_principal: keep rows where rule contract_snapshot.non_performing holds (days_past_due > 90: A position more than 90 days past due. Written once and used by every NPF measure and metric.)
+  - npf_outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
+  - npf_outstanding_principal: join product via contract.product (The financing product of the contract.)
+  - npf_outstanding_principal: time is contract_snapshot.snapshot_date, from None up to but not including 2026-07-01
+  - npf_outstanding_principal: balance measure, so only the last snapshot date in the time range is used
+  - outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
+  - outstanding_principal: join product via contract.product (The financing product of the contract.)
+  - outstanding_principal: time is contract_snapshot.snapshot_date, from None up to but not including 2026-07-01
+  - outstanding_principal: balance measure, so only the last snapshot date in the time range is used
+  - npf_ratio = npf_outstanding_principal / outstanding_principal; each side is aggregated separately, then combined on a single row; a zero denominator gives NULL
+--- rows: 1; first: [(Decimal('1051666666.67'), Decimal('10697583333.30'), 0.09830880806474455)]
+--- matches reference: PASS
+
+=== Case 4 ratio across two fact tables (payments / schedules), multi-hop joins, two dimensions, month grain
+request: {'metric': 'collection_rate', 'dimensions': ['branch.region_name', 'product.financing_scheme'], 'grain': 'month', 'start': '2026-01-01', 'end': '2026-07-01'}
+--- Trino SQL
+WITH m_collected_amount AS (
+  SELECT
+    CAST(DATE_TRUNC('MONTH', "t0"."posting_date") AS DATE) AS "metric_time",
+    "t2"."region_name" AS "branch__region_name",
+    "t3"."financing_scheme" AS "product__financing_scheme",
+    SUM("t0"."principal_paid" + "t0"."interest_paid") AS "collected_amount"
+  FROM "lending"."core"."payments" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."branches" AS "t2"
+    ON "t1"."servicing_branch_id" = "t2"."branch_id"
+  LEFT JOIN "lending"."core"."products" AS "t3"
+    ON "t1"."product_id" = "t3"."product_id"
+  WHERE
+    (
+      NOT "t0"."is_reversed"
+    )
+    AND "t0"."posting_date" >= CAST('2026-01-01' AS DATE)
+    AND "t0"."posting_date" < CAST('2026-07-01' AS DATE)
+  GROUP BY
+    CAST(DATE_TRUNC('MONTH', "t0"."posting_date") AS DATE),
+    "t2"."region_name",
+    "t3"."financing_scheme"
+), m_due_amount AS (
+  SELECT
+    CAST(DATE_TRUNC('MONTH', "t0"."due_date") AS DATE) AS "metric_time",
+    "t2"."region_name" AS "branch__region_name",
+    "t3"."financing_scheme" AS "product__financing_scheme",
+    SUM("t0"."installment_amount") AS "due_amount"
+  FROM "lending"."core"."installment_schedules" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."branches" AS "t2"
+    ON "t1"."servicing_branch_id" = "t2"."branch_id"
+  LEFT JOIN "lending"."core"."products" AS "t3"
+    ON "t1"."product_id" = "t3"."product_id"
+  WHERE
+    (
+      "t0"."is_current"
+    )
+    AND "t0"."due_date" >= CAST('2026-01-01' AS DATE)
+    AND "t0"."due_date" < CAST('2026-07-01' AS DATE)
+  GROUP BY
+    CAST(DATE_TRUNC('MONTH', "t0"."due_date") AS DATE),
+    "t2"."region_name",
+    "t3"."financing_scheme"
+), unioned AS (
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme",
+    "collected_amount" AS "collected_amount",
+    NULL AS "due_amount"
+  FROM m_collected_amount
+  UNION ALL
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme",
+    NULL AS "collected_amount",
+    "due_amount" AS "due_amount"
+  FROM m_due_amount
+), combined AS (
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme",
+    COALESCE(MAX("collected_amount"), 0) AS "collected_amount",
+    COALESCE(MAX("due_amount"), 0) AS "due_amount"
+  FROM unioned
+  GROUP BY
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme"
+)
+SELECT
+  "metric_time",
+  "branch__region_name",
+  "product__financing_scheme",
+  "collected_amount",
+  "due_amount",
+  CAST("collected_amount" AS DOUBLE) / NULLIF("due_amount", 0) AS "collection_rate"
+FROM combined
+ORDER BY
+  "metric_time",
+  "branch__region_name",
+  "product__financing_scheme"
+LIMIT 1000
+--- explanation
+  - collected_amount: join contract via payment.contract (The contract the payment was made against.)
+  - collected_amount: join branch via contract.servicing_branch (The branch that currently services and collects the contract. Changes when a customer is transferred. Used for portfolio and collection metrics.)
+  - collected_amount: join product via contract.product (The financing product of the contract.)
+  - collected_amount: keep rows where NOT is_reversed (part of the measure definition)
+  - collected_amount: time is payment.posting_date, from 2026-01-01 up to but not including 2026-07-01
+  - due_amount: join contract via installment.contract (The contract this installment belongs to.)
+  - due_amount: join branch via contract.servicing_branch (The branch that currently services and collects the contract. Changes when a customer is transferred. Used for portfolio and collection metrics.)
+  - due_amount: join product via contract.product (The financing product of the contract.)
+  - due_amount: keep rows where is_current (part of the measure definition)
+  - due_amount: time is installment.due_date, from 2026-01-01 up to but not including 2026-07-01
+  - collection_rate = collected_amount / due_amount; each side is aggregated separately, then combined on ['metric_time', 'branch__region_name', 'product__financing_scheme']; a zero denominator gives NULL
+--- rows: 48; first: [(datetime.date(2026, 1, 1), 'Jawa Barat', 'conventional', Decimal('462186666.65'), Decimal('483839999.98'), 0.9552469135852862), (datetime.date(2026, 1, 1), 'Jawa Barat', 'sharia', Decimal('63653333.33'), Decimal('75320000.00'), 0.8451053283324482)]
+--- matches reference: PASS
+
+=== Case 5 balance by DPD bucket over a multi-month range (must not sum months)
+request: {'metric': 'outstanding_principal', 'dimensions': ['contract_snapshot.dpd_bucket'], 'start': '2026-01-01', 'end': '2026-07-01'}
+--- Trino SQL
+SELECT
+  "t0"."dpd_bucket" AS "contract_snapshot__dpd_bucket",
+  SUM("t0"."outstanding_principal") AS "outstanding_principal"
+FROM "lending"."core"."contract_monthly_snapshots" AS "t0"
+WHERE
+  "t0"."snapshot_date" >= CAST('2026-01-01' AS DATE)
+  AND "t0"."snapshot_date" < CAST('2026-07-01' AS DATE)
+  AND "t0"."snapshot_date" IN (
+    SELECT
+      MAX("s"."snapshot_date")
+    FROM "lending"."core"."contract_monthly_snapshots" AS "s"
+    WHERE
+      "s"."snapshot_date" >= CAST('2026-01-01' AS DATE)
+      AND "s"."snapshot_date" < CAST('2026-07-01' AS DATE)
+  )
+GROUP BY
+  "t0"."dpd_bucket"
+ORDER BY
+  "contract_snapshot__dpd_bucket"
+LIMIT 1000
+--- explanation
+  - outstanding_principal: time is contract_snapshot.snapshot_date, from 2026-01-01 up to but not including 2026-07-01
+  - outstanding_principal: balance measure, so only the last snapshot date in the time range is used
+--- rows: 6; first: [('current', Decimal('14208749999.91')), ('dpd_1_30', Decimal('4873833333.33'))]
+--- matches reference: PASS
+
+=== Why separate aggregation matters
+collection_rate compiled: 0.9411; naive row-to-row join of payments and schedules: 1.0006
+
+=== Governance and error cases
+PASS  masked personal dimension is allowed: compiled; rows: [(datetime.date(1960, 1, 1), Decimal('672000000.00')), (datetime.date(1961, 1, 1), Decimal('954000000.00'))]
+PASS  unmasked personal dimension is refused: PERSONAL_DATA_REFUSED
+PASS  phone number is refused (partial masking removed, review R-4): PERSONAL_DATA_REFUSED
+PASS  filter on personal data is refused: PERSONAL_DATA_REFUSED
+PASS  filter on masked personal data is refused: PERSONAL_DATA_REFUSED
+PASS  grain finer than the metric allows: INVALID_GRAIN
+PASS  unknown dimension: UNKNOWN_DIMENSION
+PASS  SQL in a filter value stays a string literal: compiled; rows: [(None,)]
+injection attempt returned [(None,)] (no rows matched, as it must)
+PASS  two branch links without a pin: AMBIGUOUS_JOIN_PATH; options: [['contract.booking_branch'], ['contract.servicing_branch']]
+
+=== Example requests (V19: every example request in the examples compiles and runs)
+PASS  collected_amount: 'Berapa pembayaran angsuran yang diterima per wilayah bulan Juni 2026?' -> 4 rows
+PASS  collection_rate: 'Collection rate by financing scheme for each month of 2026 so far' -> 12 rows
+PASS  disbursement_amount: 'Monthly disbursement by product category in the first half of 2026' -> 15 rows
+PASS  due_amount: 'Installments falling due each month in the first half of 2026, by region' -> 24 rows
+PASS  npf_outstanding_principal: 'NPF amount by collectibility class at the end of June 2026' -> 2 rows
+PASS  npf_ratio: 'Rasio NPF per wilayah setiap kuartal dari Q4 2025 sampai Q2 2026' -> 12 rows
+PASS  outstanding_principal: 'Sisa pokok per wilayah di akhir Maret 2026' -> 4 rows
+
+ALL CHECKS PASSED

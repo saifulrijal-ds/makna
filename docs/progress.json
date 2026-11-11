@@ -1,0 +1,509 @@
+{
+  "updated": "2026-11-11",
+  "statuses": [
+    "not_started",
+    "in_progress",
+    "in_review",
+    "done",
+    "blocked"
+  ],
+  "design": {
+    "status": "done",
+    "branch": "design/architecture",
+    "review": {
+      "status": "done",
+      "file": "docs/reviews/design.md",
+      "fixed": [
+        "R-1",
+        "R-2",
+        "R-3",
+        "R-4",
+        "R-5",
+        "R-6",
+        "R-7",
+        "R-8",
+        "R-9",
+        "R-10",
+        "R-11",
+        "R-12"
+      ],
+      "left_open": [
+        "R-13",
+        "R-14",
+        "R-15",
+        "R-16",
+        "R-17",
+        "R-18",
+        "R-19",
+        "R-20"
+      ],
+      "owner_decisions": [
+        "D-10",
+        "D-11",
+        "D-12",
+        "D-13",
+        "D-14",
+        "D-15",
+        "D-16",
+        "D-17",
+        "D-18",
+        "D-19",
+        "D-20",
+        "D-21",
+        "D-22",
+        "D-23",
+        "D-24",
+        "D-25",
+        "D-26"
+      ]
+    }
+  },
+  "milestones": [
+    {
+      "id": "M0",
+      "title": "Foundations"
+    },
+    {
+      "id": "M1",
+      "title": "Agent path end to end",
+      "review_after": "Fable review 1: core complete"
+    },
+    {
+      "id": "M2",
+      "title": "People path and release",
+      "review_after": "Fable review 2: before the MVP release"
+    }
+  ],
+  "packages": [
+    {
+      "id": "WP-01",
+      "title": "Project scaffold and CI",
+      "milestone": "M0",
+      "requirements": [
+        "NFR-4",
+        "NFR-5"
+      ],
+      "depends_on": [],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-02",
+      "title": "Synthetic data generator",
+      "milestone": "M0",
+      "requirements": [
+        "DAT-1",
+        "DAT-2"
+      ],
+      "depends_on": [
+        "WP-01"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-03",
+      "title": "Definition models, loader, validator",
+      "milestone": "M0",
+      "requirements": [
+        "SEM-1",
+        "SEM-2",
+        "SEM-3"
+      ],
+      "depends_on": [
+        "WP-01"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-04",
+      "title": "Sample definitions for the lending domain",
+      "milestone": "M0",
+      "requirements": [
+        "DAT-3",
+        "SEM-2"
+      ],
+      "depends_on": [
+        "WP-03"
+      ],
+      "suggested_model": "Haiku 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-05",
+      "title": "Development stack and database migrations",
+      "milestone": "M0",
+      "requirements": [
+        "NFR-1"
+      ],
+      "depends_on": [
+        "WP-02"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-06",
+      "title": "Catalog model, file connector, sync, reference check",
+      "milestone": "M1",
+      "requirements": [
+        "CON-1",
+        "CON-3",
+        "SEM-4"
+      ],
+      "depends_on": [
+        "WP-03",
+        "WP-04",
+        "WP-05"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-07",
+      "title": "Indexer and hybrid search",
+      "milestone": "M1",
+      "requirements": [
+        "SRC-1",
+        "SRC-2",
+        "SRC-3",
+        "SRC-4",
+        "NFR-2",
+        "NFR-3"
+      ],
+      "depends_on": [
+        "WP-04",
+        "WP-06"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-08",
+      "title": "Compiler: model snapshot, join graph, request planning",
+      "milestone": "M1",
+      "requirements": [
+        "QRY-1",
+        "SEM-1"
+      ],
+      "depends_on": [
+        "WP-03",
+        "WP-04"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-09",
+      "title": "Compiler: SQL generation and explanation",
+      "milestone": "M1",
+      "requirements": [
+        "QRY-1",
+        "QRY-3"
+      ],
+      "depends_on": [
+        "WP-02",
+        "WP-08"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-10",
+      "title": "Compiler: sensitivity, masking, refusals",
+      "milestone": "M1",
+      "requirements": [
+        "QRY-2"
+      ],
+      "depends_on": [
+        "WP-09"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-11",
+      "title": "PostgreSQL engine connector and metrics on the target database",
+      "milestone": "M1",
+      "requirements": [
+        "CON-4",
+        "QRY-1"
+      ],
+      "depends_on": [
+        "WP-05",
+        "WP-10"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-12",
+      "title": "Service layer, permissions, tool-call log",
+      "milestone": "M1",
+      "requirements": [
+        "GOV-2"
+      ],
+      "depends_on": [
+        "WP-07",
+        "WP-11"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-12B",
+      "title": "Users and tokens",
+      "milestone": "M1",
+      "requirements": [
+        "WEB-5"
+      ],
+      "depends_on": [
+        "WP-12"
+      ],
+      "suggested_model": "Haiku 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-13",
+      "title": "MCP server",
+      "milestone": "M1",
+      "requirements": [
+        "MCP-1",
+        "MCP-2"
+      ],
+      "depends_on": [
+        "WP-12B"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-14",
+      "title": "Golden question set",
+      "milestone": "M1",
+      "requirements": [
+        "EVL-1"
+      ],
+      "depends_on": [
+        "WP-04",
+        "WP-05",
+        "WP-08"
+      ],
+      "suggested_model": "Sonnet 5.5 (first 20 and review), Haiku 5.5 (drafting the rest)",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-15",
+      "title": "Eval runner: retrieval and compile",
+      "milestone": "M1",
+      "requirements": [
+        "EVL-2",
+        "EVL-3",
+        "EVL-5",
+        "NFR-2"
+      ],
+      "depends_on": [
+        "WP-12",
+        "WP-14"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-16",
+      "title": "Web shell: layout, sign-in, sessions",
+      "milestone": "M2",
+      "requirements": [
+        "WEB-5"
+      ],
+      "depends_on": [
+        "WP-12B"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-17",
+      "title": "Discovery pages",
+      "milestone": "M2",
+      "requirements": [
+        "WEB-1"
+      ],
+      "depends_on": [
+        "WP-16"
+      ],
+      "suggested_model": "Sonnet 5.5 (pages), Haiku 5.5 (templates and page tests)",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-18",
+      "title": "Definition store write path and lifecycle",
+      "milestone": "M2",
+      "requirements": [
+        "SEM-3",
+        "WEB-3",
+        "GOV-1"
+      ],
+      "depends_on": [
+        "WP-12B"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-19",
+      "title": "Editor and Check",
+      "milestone": "M2",
+      "requirements": [
+        "WEB-2"
+      ],
+      "depends_on": [
+        "WP-16",
+        "WP-18"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-19B",
+      "title": "Review queue and audit page",
+      "milestone": "M2",
+      "requirements": [
+        "WEB-3",
+        "GOV-1"
+      ],
+      "depends_on": [
+        "WP-19"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-19C",
+      "title": "Tool-call log and catalog admin pages",
+      "milestone": "M2",
+      "requirements": [
+        "GOV-2",
+        "SEM-4"
+      ],
+      "depends_on": [
+        "WP-16",
+        "WP-18"
+      ],
+      "suggested_model": "Haiku 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-20",
+      "title": "Resolver and test bench",
+      "milestone": "M2",
+      "requirements": [
+        "WEB-4"
+      ],
+      "depends_on": [
+        "WP-16",
+        "WP-15"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-21",
+      "title": "OpenMetadata connector",
+      "milestone": "M2",
+      "requirements": [
+        "CON-2"
+      ],
+      "depends_on": [
+        "WP-06"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-22",
+      "title": "Agent eval scorer and report",
+      "milestone": "M2",
+      "requirements": [
+        "EVL-4"
+      ],
+      "depends_on": [
+        "WP-14",
+        "WP-15"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-22B",
+      "title": "Agent eval harness, Gemini adapter, and runs",
+      "milestone": "M2",
+      "requirements": [
+        "EVL-4",
+        "EVL-5"
+      ],
+      "depends_on": [
+        "WP-13",
+        "WP-22"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-22C",
+      "title": "MCP client compatibility",
+      "milestone": "M2",
+      "requirements": [
+        "MCP-3"
+      ],
+      "depends_on": [
+        "WP-13"
+      ],
+      "suggested_model": "Haiku 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-23",
+      "title": "Hardening and release check",
+      "milestone": "M2",
+      "requirements": [
+        "NFR-1",
+        "NFR-2",
+        "NFR-3",
+        "NFR-5"
+      ],
+      "depends_on": [
+        "WP-01",
+        "WP-02",
+        "WP-03",
+        "WP-04",
+        "WP-05",
+        "WP-06",
+        "WP-07",
+        "WP-08",
+        "WP-09",
+        "WP-10",
+        "WP-11",
+        "WP-12",
+        "WP-12B",
+        "WP-13",
+        "WP-14",
+        "WP-15",
+        "WP-16",
+        "WP-17",
+        "WP-18",
+        "WP-19",
+        "WP-19B",
+        "WP-19C",
+        "WP-20",
+        "WP-21",
+        "WP-22",
+        "WP-22B",
+        "WP-22C"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    }
+  ]
+}

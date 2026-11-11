@@ -1,0 +1,4 @@
+untyped vector, exact scan: keyword only   r@1 0.88 r@3 0.96 MRR 0.91
+untyped vector, exact scan: vector only*   r@1 0.71 r@3 0.96 MRR 0.83
+untyped vector, exact scan: hybrid (RRF)   r@1 0.75 r@3 1.00 MRR 0.87
+hybrid, approved-only (agent view): r@3 1.00
