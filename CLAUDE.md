@@ -54,6 +54,7 @@ Setup and checks (uv, Python 3.12 or newer):
 - Lint: `uv run ruff check .`; format check: `uv run ruff format --check .` (apply with `uv run ruff format .`)
 - Types: `uv run mypy` (strict for `makna.model` and `makna.compiler`)
 - CLI: `uv run makna --help`
+- Sample data: `uv run python -m data.generator --out data/generated --seed 20261111 --scale 1.0` (git-ignored output; `--scale 0.05` for a quick set)
 - Settings: copy the names in `deploy/.env.example` into your environment; non-secret settings are in `config/makna.toml`.
 
 `spikes/` and `docs/` are not linted or type-checked. To be added by later work packages: start the stack (WP-05) and run evals (WP-15).

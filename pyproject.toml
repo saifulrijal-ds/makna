@@ -5,6 +5,8 @@ description = "Makna: an open semantic layer platform."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "numpy>=2.0",
+    "pyarrow>=18",
     "pydantic>=2.8",
     "pyyaml>=6.0.3",
     "sqlglot>=30.31.0",
@@ -15,6 +17,7 @@ makna = "makna.cli.main:main"
 
 [dependency-groups]
 dev = [
+    "duckdb>=1.1",
     "jsonschema>=4.26.0",
     "mypy>=1.11",
     "pytest>=8.3",
@@ -32,6 +35,7 @@ module-name = "makna"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "--strict-markers"
 markers = [
     "unit: needs nothing but Python (DuckDB in process)",
@@ -49,7 +53,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+files = ["src", "tests", "data"]
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
@@ -58,3 +62,7 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["makna.model", "makna.model.*", "makna.compiler", "makna.compiler.*"]
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
