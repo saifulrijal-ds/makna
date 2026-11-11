@@ -1,4 +1,4 @@
-# Spike: compile metrics to Trino SQL with sqlglot
+# Spike: compile metrics to SQL with sqlglot
 
 **Question.** Is the schema in `semantic/schema/` enough to compile the hard
 cases into correct Trino SQL, using sqlglot only (P-3)?
@@ -26,6 +26,17 @@ compares every row with a reference query written by hand without the compiler.
 4. A ratio whose two sides live in different fact tables (`collection_rate` = payments / installment schedules), with two dimensions reached by multi-hop joins, matches a hand-written `FULL JOIN` reference. The same question answered with a naive row-to-row join gives 1.0006 instead of 0.9411: this is the fan-out error the compiler design prevents.
 5. A balance over a multi-month range is not summed across months.
 6. Governance: masked personal dimensions come out masked; an unmasked personal dimension, and any filter on personal data, are refused; a grain the metric does not allow is refused; a filter value containing SQL stays a string literal; two equally short join paths with no pin are refused with the options listed.
+
+7. Added after the design review (decisions D-17, D-18, D-22):
+   - **Named rules.** The NPF measure now uses the rule `contract_snapshot.non_performing` instead of an inline filter. The results are unchanged, and the explanation names the rule.
+   - **Example requests.** Every `example_requests` entry in the example metrics compiles and returns rows (the V19 check, at the end of `output.txt`).
+   - **PostgreSQL and DuckDB as targets.** `run_on_postgres.py` compiles the five cases for the `postgres` dialect and runs them on a real PostgreSQL 16 server (embedded through `pgserver`), holding the same data in database `lending`, schema `core`. It also compiles them for the `duckdb` dialect and runs them on DuckDB. All ten results match the reference queries (`output_postgres.txt`). PostgreSQL accepts the three-part names `lending.core.<table>` because the connection's database is `lending`.
+
+   ```
+   uv run --no-project -p 3.12 --with sqlglot --with duckdb --with pyyaml --with pgserver --with "psycopg[binary]" python spikes/compiler/run_on_postgres.py
+   ```
+
+**Trino.** The spike was written for Trino, then the reference engine. `run_spike.py` still prints Trino SQL and re-parses it with sqlglot's Trino dialect. Trino is now put aside (D-22): the MVP target is PostgreSQL, and DuckDB is used in unit tests. The compiler builds one dialect-neutral syntax tree, so adding Trino later means adding a dialect and a connector, not a different compiler.
 
 The spike's request uses the short field names `start` and `end`; the product request uses `time_start` and `time_end` (`docs/ARCHITECTURE.md` section 7.1).
 

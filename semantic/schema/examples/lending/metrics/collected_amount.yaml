@@ -22,4 +22,7 @@ default_grain: month
 example_questions:
   - How much did we collect in May 2026 by payment channel?
   - Berapa total pembayaran angsuran yang diterima bulan lalu?
+example_requests:
+  - question: "Berapa pembayaran angsuran yang diterima per wilayah bulan Juni 2026?"
+    request: {dimensions: [branch.region_name], time_start: "2026-06-01", time_end: "2026-07-01"}
 caveats: Uses the posting date, not the date the customer paid.

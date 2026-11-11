@@ -29,6 +29,9 @@ default_grain: month
 example_questions:
   - What was the collection rate by region last quarter?
   - Berapa tingkat penagihan cabang bulan ini?
+example_requests:
+  - question: "Collection rate by financing scheme for each month of 2026 so far"
+    request: {dimensions: [product.financing_scheme], grain: month, time_start: "2026-01-01", time_end: "2026-07-01"}
 caveats: >-
   Collections are dated by posting date and dues by due date, so a payment
   for an old installment counts in the month it is booked. Reported by

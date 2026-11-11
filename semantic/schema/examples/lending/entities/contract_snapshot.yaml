@@ -42,6 +42,12 @@ dimensions:
       - {value: "3", description: Kurang lancar (substandard). 91 to 120 days past due.}
       - {value: "4", description: Diragukan (doubtful). 121 to 180 days past due.}
       - {value: "5", description: Macet (loss). More than 180 days past due.}
+rules:
+  - name: non_performing
+    label: Non-performing
+    description: A position more than 90 days past due. Written once and used by every NPF measure and metric.
+    expr: days_past_due > 90
+    synonyms: {en: [NPF, NPL, non-performing financing], id: [kredit macet, pembiayaan bermasalah]}
 measures:
   - name: outstanding_principal
     agg: sum
@@ -52,7 +58,7 @@ measures:
   - name: npf_outstanding_principal
     agg: sum
     expr: outstanding_principal
-    filter: days_past_due > 90
+    rule: non_performing
     time_dimension: snapshot_date
     semi_additive: last
     description: Principal still owed on contracts more than 90 days past due at the snapshot date.

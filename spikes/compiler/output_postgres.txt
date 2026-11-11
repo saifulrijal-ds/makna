@@ -1,0 +1,97 @@
+PostgreSQL 16.2
+PASS postgres  PASS duckdb  case 1 simple metric, booking-branch join, month grain (20 rows)
+PASS postgres  PASS duckdb  case 2 ratio of two balances, two-hop join to servicing branch, quarter grain (last month end per quarter) (12 rows)
+PASS postgres  PASS duckdb  case 3 ratio, no grain, filter on a dimension two hops away (latest snapshot only) (1 rows)
+PASS postgres  PASS duckdb  case 4 ratio across two fact tables (payments / schedules), multi-hop joins, two dimensions, month grain (48 rows)
+--- PostgreSQL SQL for case 4
+WITH m_collected_amount AS (
+  SELECT
+    CAST(DATE_TRUNC('MONTH', "t0"."posting_date") AS DATE) AS "metric_time",
+    "t2"."region_name" AS "branch__region_name",
+    "t3"."financing_scheme" AS "product__financing_scheme",
+    SUM("t0"."principal_paid" + "t0"."interest_paid") AS "collected_amount"
+  FROM "lending"."core"."payments" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."branches" AS "t2"
+    ON "t1"."servicing_branch_id" = "t2"."branch_id"
+  LEFT JOIN "lending"."core"."products" AS "t3"
+    ON "t1"."product_id" = "t3"."product_id"
+  WHERE
+    (
+      NOT "t0"."is_reversed"
+    )
+    AND "t0"."posting_date" >= CAST('2026-01-01' AS DATE)
+    AND "t0"."posting_date" < CAST('2026-07-01' AS DATE)
+  GROUP BY
+    CAST(DATE_TRUNC('MONTH', "t0"."posting_date") AS DATE),
+    "t2"."region_name",
+    "t3"."financing_scheme"
+), m_due_amount AS (
+  SELECT
+    CAST(DATE_TRUNC('MONTH', "t0"."due_date") AS DATE) AS "metric_time",
+    "t2"."region_name" AS "branch__region_name",
+    "t3"."financing_scheme" AS "product__financing_scheme",
+    SUM("t0"."installment_amount") AS "due_amount"
+  FROM "lending"."core"."installment_schedules" AS "t0"
+  LEFT JOIN "lending"."core"."contracts" AS "t1"
+    ON "t0"."contract_id" = "t1"."contract_id"
+  LEFT JOIN "lending"."core"."branches" AS "t2"
+    ON "t1"."servicing_branch_id" = "t2"."branch_id"
+  LEFT JOIN "lending"."core"."products" AS "t3"
+    ON "t1"."product_id" = "t3"."product_id"
+  WHERE
+    (
+      "t0"."is_current"
+    )
+    AND "t0"."due_date" >= CAST('2026-01-01' AS DATE)
+    AND "t0"."due_date" < CAST('2026-07-01' AS DATE)
+  GROUP BY
+    CAST(DATE_TRUNC('MONTH', "t0"."due_date") AS DATE),
+    "t2"."region_name",
+    "t3"."financing_scheme"
+), unioned AS (
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme",
+    "collected_amount" AS "collected_amount",
+    NULL AS "due_amount"
+  FROM m_collected_amount
+  UNION ALL
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme",
+    NULL AS "collected_amount",
+    "due_amount" AS "due_amount"
+  FROM m_due_amount
+), combined AS (
+  SELECT
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme",
+    COALESCE(MAX("collected_amount"), 0) AS "collected_amount",
+    COALESCE(MAX("due_amount"), 0) AS "due_amount"
+  FROM unioned
+  GROUP BY
+    "metric_time",
+    "branch__region_name",
+    "product__financing_scheme"
+)
+SELECT
+  "metric_time",
+  "branch__region_name",
+  "product__financing_scheme",
+  "collected_amount",
+  "due_amount",
+  CAST("collected_amount" AS DOUBLE PRECISION) / NULLIF("due_amount", 0) AS "collection_rate"
+FROM combined
+ORDER BY
+  "metric_time",
+  "branch__region_name",
+  "product__financing_scheme"
+LIMIT 1000
+PASS postgres  PASS duckdb  case 5 balance by DPD bucket over a multi-month range (must not sum months) (6 rows)
+
+ALL CHECKS PASSED

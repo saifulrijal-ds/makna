@@ -246,8 +246,10 @@ class LeafQuery:
         if meas.get("filter"):
             where.append(exp.paren(_qualify(meas["filter"], "t0")))
             self.steps.append(f"{self.metric['name']}: keep rows where {meas['filter']} (part of the measure definition)")
+        if meas.get("rule"):  # a named rule on the measure's entity (D-17)
+            where.append(self.rule_expr(f"{self.entity}.{meas['rule']}"))
         for f in self.metric.get("filters", []) + req.get("filters", []):
-            where.append(self.filter_expr(f))
+            where.append(self.rule_expr(f["rule"]) if "rule" in f else self.filter_expr(f))
         rng = []
         if req.get("start"):
             rng.append(exp.GTE(this=time_col.copy(), expression=_date(req["start"])))
@@ -279,6 +281,14 @@ class LeafQuery:
             q = q.group_by(*group)
         self.assert_no_raw_personal(q)
         return q
+
+    def rule_expr(self, ref: str) -> exp.Expression:
+        ent, name = ref.split(".")
+        rule = next((r for r in self.model.entities[ent].get("rules", []) if r["name"] == name), None)
+        if rule is None:
+            raise CompileError("UNKNOWN_RULE", ref)
+        self.steps.append(f"{self.metric['name']}: keep rows where rule {ref} holds ({rule['expr']}: {rule['description']})")
+        return exp.paren(_qualify(rule["expr"], self.alias_for(ent)))
 
     def filter_expr(self, f: dict) -> exp.Expression:
         col = self.dim_expr(f["dimension"], for_filter=True)

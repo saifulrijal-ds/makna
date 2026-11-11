@@ -23,3 +23,6 @@ default_grain: month
 example_questions:
   - How much falls due next month?
   - Total tagihan jatuh tempo per cabang bulan ini
+example_requests:
+  - question: "Installments falling due each month in the first half of 2026, by region"
+    request: {dimensions: [branch.region_name], grain: month, time_start: "2026-01-01", time_end: "2026-07-01"}

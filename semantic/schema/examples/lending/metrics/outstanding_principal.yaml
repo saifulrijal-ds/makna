@@ -25,4 +25,7 @@ example_questions:
   - What is the outstanding principal at the end of June 2026?
   - Outstanding per DPD bucket
   - Berapa sisa pokok per cabang?
+example_requests:
+  - question: "Sisa pokok per wilayah di akhir Maret 2026"
+    request: {dimensions: [branch.region_name], time_start: "2026-03-01", time_end: "2026-04-01"}
 caveats: Available at month ends only. Reported by servicing branch.

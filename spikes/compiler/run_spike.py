@@ -232,6 +232,25 @@ def main() -> int:
         failures += not ok
         print(f"{'PASS' if ok else 'FAIL'}  two branch links without a pin: {e.code}; options: {e.details.get('options')}")
 
+    print("\n=== Example requests (V19: every example request in the examples compiles and runs)")
+    model = Model.load(EXAMPLES)  # reload: the pin was removed above
+    for m in sorted(model.metrics.values(), key=lambda m: m["name"]):
+        for ex in m.get("example_requests", []):
+            r = dict(ex["request"])
+            req = {"metric": m["name"], **{k: v for k, v in r.items() if k not in ("time_start", "time_end")}}
+            if "time_start" in r:
+                req["start"] = r["time_start"]
+            if "time_end" in r:
+                req["end"] = r["time_end"]
+            try:
+                rows = con.execute(compile_request(model, req)["sql"]).fetchall()
+                ok = len(rows) > 0
+                print(f"{'PASS' if ok else 'FAIL'}  {m['name']}: {ex['question']!r} -> {len(rows)} rows")
+            except CompileError as e:
+                ok = False
+                print(f"FAIL  {m['name']}: {ex['question']!r} -> {e.code}")
+            failures += not ok
+
     print(f"\n{'ALL CHECKS PASSED' if not failures else str(failures) + ' CHECK(S) FAILED'}")
     return 1 if failures else 0
 

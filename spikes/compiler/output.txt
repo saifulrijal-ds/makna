@@ -126,7 +126,7 @@ LIMIT 1000
 --- explanation
   - npf_outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
   - npf_outstanding_principal: join branch via contract.servicing_branch (The branch that currently services and collects the contract. Changes when a customer is transferred. Used for portfolio and collection metrics.)
-  - npf_outstanding_principal: keep rows where days_past_due > 90 (part of the measure definition)
+  - npf_outstanding_principal: keep rows where rule contract_snapshot.non_performing holds (days_past_due > 90: A position more than 90 days past due. Written once and used by every NPF measure and metric.)
   - npf_outstanding_principal: time is contract_snapshot.snapshot_date, from 2025-10-01 up to but not including 2026-07-01
   - npf_outstanding_principal: balance measure, so only the last snapshot date in each quarter is used
   - outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
@@ -202,7 +202,7 @@ SELECT
 FROM combined
 LIMIT 1000
 --- explanation
-  - npf_outstanding_principal: keep rows where days_past_due > 90 (part of the measure definition)
+  - npf_outstanding_principal: keep rows where rule contract_snapshot.non_performing holds (days_past_due > 90: A position more than 90 days past due. Written once and used by every NPF measure and metric.)
   - npf_outstanding_principal: join contract via contract_snapshot.contract (The contract this position belongs to.)
   - npf_outstanding_principal: join product via contract.product (The financing product of the contract.)
   - npf_outstanding_principal: time is contract_snapshot.snapshot_date, from None up to but not including 2026-07-01
@@ -364,5 +364,14 @@ PASS  unknown dimension: UNKNOWN_DIMENSION
 PASS  SQL in a filter value stays a string literal: compiled; rows: [(None,)]
 injection attempt returned [(None,)] (no rows matched, as it must)
 PASS  two branch links without a pin: AMBIGUOUS_JOIN_PATH; options: [['contract.booking_branch'], ['contract.servicing_branch']]
+
+=== Example requests (V19: every example request in the examples compiles and runs)
+PASS  collected_amount: 'Berapa pembayaran angsuran yang diterima per wilayah bulan Juni 2026?' -> 4 rows
+PASS  collection_rate: 'Collection rate by financing scheme for each month of 2026 so far' -> 12 rows
+PASS  disbursement_amount: 'Monthly disbursement by product category in the first half of 2026' -> 15 rows
+PASS  due_amount: 'Installments falling due each month in the first half of 2026, by region' -> 24 rows
+PASS  npf_outstanding_principal: 'NPF amount by collectibility class at the end of June 2026' -> 2 rows
+PASS  npf_ratio: 'Rasio NPF per wilayah setiap kuartal dari Q4 2025 sampai Q2 2026' -> 12 rows
+PASS  outstanding_principal: 'Sisa pokok per wilayah di akhir Maret 2026' -> 4 rows
 
 ALL CHECKS PASSED

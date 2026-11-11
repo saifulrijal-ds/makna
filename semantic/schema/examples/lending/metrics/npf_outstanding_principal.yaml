@@ -23,3 +23,6 @@ default_grain: month
 example_questions:
   - How much of the portfolio is non-performing in rupiah?
   - Berapa sisa pokok pembiayaan bermasalah per wilayah?
+example_requests:
+  - question: "NPF amount by collectibility class at the end of June 2026"
+    request: {dimensions: [contract_snapshot.collectibility], time_start: "2026-06-01", time_end: "2026-07-01"}

@@ -224,7 +224,8 @@
         "domain",
         "owner",
         "status",
-        "sensitivity"
+        "sensitivity",
+        "synonyms"
       ],
       "properties": {
         "apiVersion": true,
@@ -250,7 +251,7 @@
           "$ref": "#/$defs/sensitivity"
         },
         "synonyms": {
-          "$ref": "#/$defs/synonyms"
+          "$ref": "#/$defs/requiredSynonyms"
         },
         "tags": {
           "$ref": "#/$defs/tags"
@@ -360,7 +361,7 @@
         "expr": {
           "type": "string",
           "minLength": 1,
-          "description": "Scalar SQL expression (Trino syntax) over columns of this entity's source table. Defaults to the dimension name. No subqueries, no aggregates."
+          "description": "Scalar SQL expression (plain SQL that sqlglot parses and prints for the target dialect, PostgreSQL or DuckDB) over columns of this entity's source table. Defaults to the dimension name. No subqueries, no aggregates."
         },
         "description": {
           "type": "string",
@@ -428,7 +429,7 @@
         "expr": {
           "type": "string",
           "minLength": 1,
-          "description": "Scalar SQL expression (Trino syntax) over columns of this entity's source table. Required unless agg is count, where it defaults to counting rows."
+          "description": "Scalar SQL expression (plain SQL that sqlglot parses and prints for the target dialect, PostgreSQL or DuckDB) over columns of this entity's source table. Required unless agg is count, where it defaults to counting rows."
         },
         "filter": {
           "type": "string",
@@ -448,6 +449,10 @@
         "description": {
           "type": "string",
           "minLength": 10
+        },
+        "rule": {
+          "$ref": "#/$defs/name",
+          "description": "Name of a rule on the same entity. Rows that do not match are excluded before aggregation, together with `filter` if both are given."
         }
       },
       "if": {
@@ -531,7 +536,8 @@
         "sensitivity",
         "source",
         "primary_key",
-        "dimensions"
+        "dimensions",
+        "synonyms"
       ],
       "properties": {
         "apiVersion": true,
@@ -557,7 +563,7 @@
           "$ref": "#/$defs/sensitivity"
         },
         "synonyms": {
-          "$ref": "#/$defs/synonyms"
+          "$ref": "#/$defs/requiredSynonyms"
         },
         "tags": {
           "$ref": "#/$defs/tags"
@@ -610,6 +616,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/relationship"
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rule"
           }
         }
       }
@@ -751,7 +763,8 @@
         "status",
         "sensitivity",
         "type",
-        "format"
+        "format",
+        "synonyms"
       ],
       "properties": {
         "apiVersion": true,
@@ -777,7 +790,7 @@
           "$ref": "#/$defs/sensitivity"
         },
         "synonyms": {
-          "$ref": "#/$defs/synonyms"
+          "$ref": "#/$defs/requiredSynonyms"
         },
         "tags": {
           "$ref": "#/$defs/tags"
@@ -805,9 +818,16 @@
         "filters": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/filter"
+            "oneOf": [
+              {
+                "$ref": "#/$defs/filter"
+              },
+              {
+                "$ref": "#/$defs/ruleRef"
+              }
+            ]
           },
-          "description": "simple only: filters that are part of the definition. Dimensions may live on joined entities."
+          "description": "simple only: filters that are part of the definition, either structured filters or references to named rules. Dimensions and rules may live on joined entities."
         },
         "join_paths": {
           "description": "simple only: the approved path from the measure's entity to another entity, as a chain of entity.relationship steps. Required when more than one shortest path exists; may also override the shortest path.",
@@ -910,6 +930,14 @@
         "drafted_by": {
           "type": "string",
           "description": "Who or what wrote the first draft (for example ai:assistant-name). Informational; approval is always by a person."
+        },
+        "example_requests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/exampleRequest"
+          },
+          "description": "Verified question and request pairs. Every approved metric has at least one (WP-04)."
         }
       },
       "allOf": [
@@ -1088,6 +1116,126 @@
       "type": "integer",
       "minimum": 1,
       "description": "Set by the platform. Incremented each time a change to this object is approved."
+    },
+    "requiredSynonyms": {
+      "description": "Synonyms that metrics, entities, and glossary terms must carry: at least one in English (en) and one in Indonesian (id) (decision D-19, SEM-2).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/synonyms"
+        },
+        {
+          "required": [
+            "en",
+            "id"
+          ],
+          "properties": {
+            "en": {
+              "minItems": 1
+            },
+            "id": {
+              "minItems": 1
+            }
+          }
+        }
+      ]
+    },
+    "rule": {
+      "description": "A named business rule on an entity: a boolean condition written once and reused by measures and metric filters (decision D-17). Changing it changes every measure and metric that uses it, and review shows which ones those are.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "expr"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10
+        },
+        "expr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Boolean SQL expression over columns of this entity's source table. Same rules as a dimension expression. May not read a column of a personal dimension (V18)."
+        },
+        "synonyms": {
+          "$ref": "#/$defs/synonyms"
+        }
+      }
+    },
+    "ruleRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule"
+      ],
+      "properties": {
+        "rule": {
+          "$ref": "#/$defs/qualifiedRef",
+          "description": "entity.rule, on the measure's entity or an entity reachable from it."
+        }
+      }
+    },
+    "exampleRequest": {
+      "description": "A verified pair: a business question and the structured request (docs/ARCHITECTURE.md section 7.1, without `metric`) that answers it with this metric. Every example request must compile with no error (V19), so the pair cannot drift from the definition. Relative time is resolved against today = 2026-07-01 in the sample domain.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question",
+        "request"
+      ],
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 5
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "dimensions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/qualifiedRef"
+              }
+            },
+            "filters": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/filter"
+              }
+            },
+            "grain": {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ]
+            },
+            "time_start": {
+              "type": "string",
+              "format": "date"
+            },
+            "time_end": {
+              "type": "string",
+              "format": "date"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          }
+        }
+      }
     }
   }
 }

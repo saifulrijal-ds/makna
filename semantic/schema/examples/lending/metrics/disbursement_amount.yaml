@@ -25,4 +25,7 @@ example_questions:
   - How much did we disburse last month?
   - Berapa total pencairan per wilayah tahun ini?
   - Disbursement by product category in Q1 2026
+example_requests:
+  - question: "Monthly disbursement by product category in the first half of 2026"
+    request: {dimensions: [product.product_category], grain: month, time_start: "2026-01-01", time_end: "2026-07-01"}
 caveats: Uses the disbursement date, not the signing date. Reported by booking branch.
