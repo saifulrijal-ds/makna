@@ -22,3 +22,4 @@ time_grains: [month, quarter, year]
 default_grain: month
 example_questions:
   - How much of the portfolio is non-performing in rupiah?
+  - Berapa sisa pokok pembiayaan bermasalah per wilayah?

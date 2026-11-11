@@ -88,7 +88,7 @@ flowchart LR
 | Web app | `makna.web` | Routes, templates, static files. | No logic of its own beyond form handling. |
 | CLI | `makna.cli` | `makna` command: validate, sync, index, serve, user and token management, freshness. | |
 
-**Dependency rule.** `model` depends on nothing. `compiler`, `definitions`, `catalog`, `engine`, `search`, and `index` depend on `model` (and `index`/`search` on the database). `resolve` depends on `search`. `services` depends on all of them. `mcp`, `web`, and `cli` depend on `services` only. A test in WP-01 enforces this with an import check.
+**Dependency rule.** `model` depends on nothing. `compiler`, `definitions`, `catalog`, `engine`, `search`, and `index` depend on `model` (and `index`/`search` on the database). `resolve` depends on `search`. `services` depends on all of them. `mcp` and `web` depend on `services` only (plus `model` and `config`). `cli` may also import `definitions`, `catalog`, `index`, `search`, and `engine`, because operator commands (`validate`, `catalog sync`, `index build`, `search`, `catalog compare`) are built before the service layer exists; commands that act for a user or an agent (`serve`, user and token management, `resolve`) go through `services`, and `makna mcp` is only an HTTP bridge (section 12). A test in WP-01 enforces this with an import check.
 
 ## 3. Repository layout
 
@@ -478,7 +478,7 @@ The spike found that fusing a weak list with a strong one can lower the first re
 
 Search always returns its best guesses; rank scores cannot say "none of these is right". The spike showed that raw scores do not separate a valid weak match from no match. So search returns evidence, and three parties share the judgement:
 
-- **Makna computes a confidence band** for the result set. `coverage` = the share (weighted by inverse document frequency over the `names` field) of the query's non-stop words that appear in the `names` of any of the top 3 hits. `high` if coverage is at least 0.6; `low` if coverage is below 0.3 and the top cosine similarity is below `low_cosine`; otherwise `medium`. `low_cosine` is set in WP-15 from the real model's score distribution; until then only coverage is used. Each hit also lists `matched_terms`.
+- **Makna computes a confidence band** for the result set. First the query's non-stop words are split into **qualifier words** and **content words**. Qualifier words describe a cut or a period rather than name a metric: time and grain words (the vocabulary of section 8.4, kept in one module, `makna.search.terms`, that the resolver also uses), and words that appear in the names, synonyms, or declared values of an indexed dimension but in no metric or glossary term name. The rest are content words. `coverage` = the share (weighted by inverse document frequency over the `names` field) of the content words that appear in the `names` of any of the top 3 hits. If a query has no content words, the band is `low`. Without this split, valid questions such as "total pencairan per wilayah tahun ini" came out `low` on the spike data, because "wilayah" and "tahun" never occur in metric names (review R-5). `high` if coverage is at least 0.6; `low` if coverage is below 0.3 and the top cosine similarity is below `low_cosine`; otherwise `medium`. `low_cosine` is set in WP-15 from the real model's score distribution; until then only coverage is used. Each hit also lists `matched_terms`.
 - **The response says what to do.** With `low` confidence the response carries the guidance "No governed definition clearly matches. Tell the user that no approved metric exists for this; do not approximate it with a different metric."
 - **The agent reads the descriptions** of the hits and decides. The tool description tells it to do so (section 12).
 
@@ -579,7 +579,8 @@ Sign-in is by email and password (Argon2 hash) with a server-side signed session
 | Use the test bench | yes | yes | yes | yes | n/a |
 | Create, edit, submit, withdraw proposals | no | yes | yes | yes | no |
 | Approve, reject, deprecate | no | owner team only | yes | yes | no |
-| See audit log and tool-call log | no | yes | yes | yes | no |
+| See audit log | no | yes | yes | yes | no |
+| See tool-call log (query text may still hold a name a user typed) | no | no | yes | yes | no |
 | Manage users, tokens of others, catalog sync, index | no | no | no | yes | no |
 
 **Who can approve** (WEB-3 "only owners or approvers"): a user may approve or deprecate an object if they are an approver or admin, **or** they are a curator and the object's `owner.team` is in their `teams`. Three more rules close the gaps around this (D-11, review R-6):
@@ -708,7 +709,7 @@ Engine credentials entered on `/account` for the web session are kept in server 
 ## 14. Audit and logs (GOV-1, GOV-2)
 
 - **`audit_event`**: one row per lifecycle action (section 10), with actor, object, states, reason, and commit.
-- **`tool_call_log`**: one row per call to `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, and `resolve`, from any channel. `request` holds the query text and request after **redaction**: sequences of 9 or more digits, email addresses, and phone-like numbers are replaced with `[REDACTED]`. `result` holds the ids returned, the confidence band, the error code, and the row count. Row values are never logged. Failures and refusals are logged like successes, with `status` and `error_code`.
+- **`tool_call_log`**: one row per call to `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, and `resolve`, from any channel. `request` holds the query text and request after **redaction**: sequences of 9 or more digits, email addresses, and phone-like numbers are replaced with `[REDACTED]`; the value of any filter on a personal dimension is replaced with `[REDACTED]` whatever the call's outcome; for a call refused with `PERSONAL_DATA_REFUSED`, no free text is stored at all (only the tool, the dimension refs, and the error code). Names and other free-text personal data cannot be detected reliably, so query text kept after redaction may still contain a name someone typed. That is why the tool-call log is visible to approvers and admins only (section 11). It is a known limit of GOV-2's "with personal data removed", recorded in `docs/reviews/design.md` (R-12). `result` holds the ids returned, the confidence band, the error code, and the row count. Row values are never logged. Failures and refusals are logged like successes, with `status` and `error_code`.
 - Application logs are JSON lines on standard output with a request id. OpenTelemetry traces (GOV-4) are phase 2; the service layer functions are the natural span boundaries.
 
 ## 15. Testing strategy (NFR-5)

@@ -66,7 +66,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 - **Acceptance**
   1. `uv sync && uv run pytest -m unit` passes on a fresh clone.
   2. `uv run ruff check .` and `uv run mypy` pass.
-  3. A unit test fails if any module in `makna.mcp`, `makna.web`, or `makna.cli` imports from a package other than `makna.services`, `makna.model`, and `makna.config`, or if `makna.compiler` imports a database or network library (the dependency rule of section 2).
+  3. A unit test fails if any module in `makna.mcp` or `makna.web` imports from a package other than `makna.services`, `makna.model`, and `makna.config`; if `makna.cli` imports anything outside those and `makna.definitions`, `makna.catalog`, `makna.index`, `makna.search`, and `makna.engine`; or if `makna.compiler` imports a database or network library (the dependency rule of section 2).
   4. A unit test fails if `deploy/.env.example` contains a non-empty value, and if any tracked file is named `.env`.
   5. Loading settings with a required variable missing raises an error that names the variable.
 
@@ -101,7 +101,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   1. `makna validate semantic/definitions` exits 0.
   2. A test asserts the exact set of 23 approved metric names in section 5, their types, and (for simple metrics) their measure's entity and time dimension as listed in the tables.
   3. Every metric and every entity has at least one English and one Indonesian synonym; every metric has at least two example questions; every dimension and measure has a description.
-  4. Every metric whose table row says "booking" or "servicing" pins `branch` to a path ending in `contract.booking_branch` or `contract.servicing_branch` respectively.
+  4. Every **simple** metric whose table row says "booking" or "servicing" pins `branch` to a path ending in `contract.booking_branch` or `contract.servicing_branch` respectively. Ratio and derived metrics cannot carry `join_paths` (schema); for them, every input pins the link their row names.
   5. The five personal columns of `customers` are each read by a dimension with `sensitivity: personal`; `full_name`, `national_id`, and `email` have no masking rule.
   6. The files under `semantic/schema/examples/lending/metrics/` are identical to the files of the same name in `semantic/definitions/lending/metrics/`.
 
@@ -135,14 +135,14 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-07 Indexer and hybrid search
 
 - **Read**: `docs/ARCHITECTURE.md` sections 4.1, 5.4, 6.4, 8.1 to 8.3; `spikes/search/README.md`; `docs/notes/search-scores-cannot-say-no-match.md`.
-- **Build**: `makna.index.indexer` (`build` from a definitions directory and the catalog tables; `index_object` for one object; of the derived facts of section 5.4, compute inputs and the formula line here; available dimensions are added by WP-12, which connects the indexer to the planner of WP-08); `makna.search.embedding` with the `fastembed`, `ollama`, `openai_compatible`, and `hash` providers; `makna.search.query`; `makna.search.hybrid`; `makna.search.confidence`; CLI `makna index build` and `makna search "<text>"`.
+- **Build**: `makna.index.indexer` (`build` from a definitions directory and the catalog tables; `index_object` for one object; of the derived facts of section 5.4, compute inputs and the formula line here; available dimensions are added by WP-12, which connects the indexer to the planner of WP-08); `makna.search.embedding` with the `fastembed`, `ollama`, `openai_compatible`, and `hash` providers; `makna.search.query`; `makna.search.hybrid`; `makna.search.confidence`; `makna.search.terms` (the time and grain vocabulary of section 8.4, shared with the resolver of WP-20); CLI `makna index build` and `makna search "<text>"`.
 - **Acceptance** (integration tier, `hash` provider unless stated)
   1. After `makna index build` on the sample definitions and catalog, `search_document` holds one document for each case listed under "What becomes a search document" in section 6.4 (assert counts per kind).
   2. The queries "NPF", "kredit macet", and "non-performing financing ratio" each return `metric:npf_ratio` in the first 3 results (SRC-2).
   3. `metric:npl_ratio` (deprecated) is absent by default and present with `include_deprecated`; `metric:write_off_amount` (draft) is absent for an agent or viewer and present for a curator, ranked below an approved metric that matches the same query equally (SRC-3; build the tie with a fixture).
   4. With all status and kind weights set to 1: when the keyword weight is 0 the result order equals the vector order, and when the vector weight is 0 it equals the keyword order (fusion is wired correctly).
   5. Each provider passes a contract test (dimension matches, same text gives the same vector); `ollama` and `openai_compatible` are tested against a fake HTTP server. No test downloads a model.
-  6. The confidence band is `low` for "website conversion funnel" and not `low` for "kredit macet".
+  6. The confidence band is `low` for "website conversion funnel" and for "employee attrition by region last month", and not `low` for "kredit macet", for "Berapa total pencairan per wilayah tahun ini?" (G02), or for "NPF ratio by region last quarter" (qualifier words are left out of coverage, section 8.3).
   7. Changing one metric's synonyms and calling `index_object` changes only that object's rows (other rows keep their `text_hash` and update time).
   8. Engine tier, real default model: the 95th percentile of 200 searches is under 500 ms (NFR-2), and "pembiayaan bermasalah" returns `metric:npf_ratio` or `metric:npf_outstanding_principal` first.
   9. With network access disabled after the image is built, `makna index build` and a search succeed (NFR-3; run in the CI stack job).
@@ -209,7 +209,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   3. `get_definition` for a metric returns the fields shown in section 12, including available dimensions with their path label and the unavailable personal dimensions with a reason.
   4. `list_related("metric:npf_ratio")` includes its two inputs (`input_of`) and the glossary term `npf` (`explains`).
   5. `run_query` raises `RUN_DISABLED` when `MAKNA_RUN_ENABLED` is false, `ENGINE_CREDENTIALS_REQUIRED` for a token with no stored credentials, and with a fake engine returns rows, the fake engine receiving the token owner's stored credentials. The `api_token` row holds no plaintext password (assert on the raw column), and decrypting with a different `MAKNA_CREDENTIALS_KEY` fails.
-  6. Every service call writes one `tool_call_log` row, including failed and refused calls with `status` and `error_code`. A call whose query text contains an email address, a 16-digit number, and a phone number stores none of them. No row contains result row values (assert on a run that returns known values).
+  6. Every service call writes one `tool_call_log` row, including failed and refused calls with `status` and `error_code`. A call whose query text contains an email address, a 16-digit number, and a phone number stores none of them. A filter value on a personal dimension is never stored, and a call refused with `PERSONAL_DATA_REFUSED` stores no free text. No row contains result row values (assert on a run that returns known values).
   7. A token is shown once at creation, stored only as a hash, rejected after revocation, and `last_used_at` is updated.
   8. After changing an official file and calling `index_object`, the next `get_definition` in the same process returns the new content with no restart.
 
@@ -310,7 +310,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   5. `/new/metric` opens a template that fails validation only on fields the author must fill.
   6. `/audit` shows the events of acceptance 2 to 4, newest first, and can be filtered by object.
   7. With JavaScript disabled, the editor falls back to a plain text area and saving still works (test the form POST directly).
-  8. `/logs/tool-calls` lists calls newest first with channel, tool, status, error code, and duration, can be filtered by tool and status, shows the redacted request, and is refused (403) for a viewer.
+  8. `/logs/tool-calls` lists calls newest first with channel, tool, status, error code, and duration, can be filtered by tool and status, shows the redacted request, and is refused (403) for a viewer and for a curator.
   9. `/admin/catalog` shows the last sync run's summary and every open reference issue with its object and code (create one with a fixture); the sync button is refused (403) for anyone but an admin; after a sync that fixes the fixture, the issue is no longer listed (SEM-4).
 
 ### WP-20 Resolver and test bench
