@@ -456,16 +456,13 @@ def _check_status(closure: list[Metric]) -> None:
 
 
 def _definition_entities(leaves: list[Metric]) -> set[str]:
-    """Entities named by the measures, filters, rules, and pinned paths of the simple metrics."""
+    """Entities named by the measures, filters, and rules of the simple metrics."""
     names: set[str] = set()
     for leaf in leaves:
         names.add((leaf.measure or "").partition(".")[0])
         for item in leaf.filters or []:
             ref = item.rule if isinstance(item, RuleRef) else item.dimension
             names.add(ref.partition(".")[0])
-        for chain in (leaf.join_paths or {}).values():
-            names.update(step.partition(".")[0] for step in chain)
-        names.update((leaf.join_paths or {}).keys())
     return names
 
 

@@ -50,7 +50,7 @@ def test_a_request_is_read_from_json_shaped_data_and_is_comparable() -> None:
 def test_the_request_leaves_judging_values_to_the_planner() -> None:
     odd = QueryRequest(
         metric="m", grain="fortnight", time_start="soon", limit=10**6,
-        filters=({"dimension": "a.b", "op": "like", "value": "x"},),  # type: ignore[arg-type]
+        filters=({"dimension": "a.b", "op": "like", "value": "x"},),
     )  # fmt: skip
     assert odd.grain == "fortnight" and odd.limit == 10**6
 
