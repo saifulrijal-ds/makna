@@ -8,10 +8,16 @@ import shutil
 from pathlib import Path
 
 import pytest
+from sqlglot.errors import ParseError
 
 from makna.cli.main import main
+from makna.compiler.compile import compile_plan
+from makna.compiler.plan import QueryPlan
+from makna.compiler.snapshot import Model
+from makna.compiler.sqlgen import Dialect
 from makna.definitions.loader import load_definitions
 from makna.definitions.validate import validate
+from makna.model.request import CompileResponse, ErrorCode, QueryError
 from makna.services.examples import check_example_requests
 
 from . import definition_fixtures as fx
@@ -174,3 +180,51 @@ def test_a_sample_example_request_that_asks_for_a_payment_dimension_fails_v19(
     )
     (line,) = v19(root)
     assert line.startswith("lending/metrics/npf_ratio.yaml:") and "DIMENSION_NOT_AVAILABLE" in line
+
+
+# ---- WP-09: V19 also generates the SQL ---------------------------------------------------
+
+
+def test_v19_generates_postgres_sql_for_each_example_and_reads_it_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    printed: list[str] = []
+
+    def spy(model: Model, plan: QueryPlan, dialect: Dialect = "postgres") -> CompileResponse:
+        response = compile_plan(model, plan, dialect)
+        printed.append(f"{dialect}:{response.metric.id}")
+        return response
+
+    monkeypatch.setattr("makna.services.examples.compile_plan", spy)
+    assert all_codes(DEFINITIONS) == []
+    files = load_definitions(DEFINITIONS).valid_files()
+    expected = sum(
+        len(getattr(f.definition, "example_requests", None) or []) for f in files
+    )  # fmt: skip
+    assert len(printed) == expected >= 20
+    assert {entry.split(":")[0] for entry in printed} == {"postgres"}
+
+
+def test_v19_reports_sql_that_does_not_parse_for_postgres(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(sql: str, dialect: Dialect) -> None:
+        raise ParseError("Invalid expression / Unexpected token\n second line")
+
+    monkeypatch.setattr("makna.services.examples.reparse", broken)
+    lines = v19(fx.write(_files(), tmp_path))
+    assert lines and all(
+        "does not parse for postgres: Invalid expression" in line for line in lines
+    )
+    assert all(" V19 " in line for line in lines)
+
+
+def test_v19_reports_a_failure_while_generating_sql(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(model: Model, plan: QueryPlan, dialect: Dialect = "postgres") -> CompileResponse:
+        raise QueryError(ErrorCode.INVALID_FILTER, "cannot be written")
+
+    monkeypatch.setattr("makna.services.examples.compile_plan", fails)
+    lines = v19(fx.write(_files(), tmp_path))
+    assert lines and all("does not compile to SQL: INVALID_FILTER" in line for line in lines)

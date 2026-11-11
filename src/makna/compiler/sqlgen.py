@@ -65,6 +65,11 @@ def to_sql(tree: exp.Expr, dialect: Dialect, *, pretty: bool = True) -> str:
     return tree.sql(dialect=dialect, pretty=pretty, unsupported_level=ErrorLevel.RAISE)
 
 
+def reparse(sql: str, dialect: Dialect) -> exp.Expr:
+    """Read SQL text back with sqlglot's parser for `dialect`; `SqlglotError` if it cannot."""
+    return sqlglot.parse_one(sql, read=dialect)
+
+
 def build_tree(model: Model, plan: QueryPlan) -> exp.Select:
     """The whole query for `plan`, with `ORDER BY` and `LIMIT`."""
     nodes = {node.name: node for node in plan.nodes}

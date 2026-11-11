@@ -43,7 +43,7 @@ def run_sql(con: duckdb.DuckDBPyConnection, sql: str) -> Rows:
 
 
 def same_rows(got: Sequence[Sequence[Any]], want: Sequence[Sequence[Any]]) -> bool:
-    """Rows equal in order; numbers compare to a relative 1e-9 (a ratio is a float, a sum a decimal)."""
+    """Rows equal in order; numbers match to a relative 1e-9 (floats and decimals mix)."""
     if len(got) != len(want):
         return False
     for g_row, w_row in zip(got, want, strict=True):
