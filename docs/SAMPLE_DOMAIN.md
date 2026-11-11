@@ -10,15 +10,15 @@ A financing company lends to individuals through branch offices. A customer subm
 
 ## 2. Physical layout
 
-- Query engine name: Trino catalog `lending`, schema `core`. A table is addressed as `lending.core.<table>`.
-- In the development stack the tables live in PostgreSQL (database `lending`, schema `core`) and Trino reads them through its PostgreSQL connector (see `docs/ARCHITECTURE.md` section 9).
+- Target engine: PostgreSQL, database `lending`, schema `core` (D-22). A table is addressed as `lending.core.<table>`; unit tests attach a DuckDB database named `lending` so the same names resolve there.
+- In the development stack the tables live in that PostgreSQL database (see `docs/ARCHITECTURE.md` section 9).
 - Clock: the data covers **2024-01-01 to 2026-06-30**. The "as of" date of the dataset is 2026-06-30. Evals use a fixed "today" of 2026-07-01 (see `docs/EVALS.md`).
 - Random seed: `20261111`. The same seed must produce byte-identical output files.
 - Target sizes (approximate; the generator takes a `--scale` factor, default 1.0): 40 branches, 8 products, 6,000 customers, 9,000 applications, 5,500 contracts, 130,000 schedule rows, 90,000 payments, 80,000 snapshot rows, 15,000 collection actions.
 
 ## 3. Tables and columns
 
-Types are Trino types. "PII" marks personal data. The catalog export (WP-06) carries the tag `PII.Sensitive` on these columns.
+Types are SQL types with the same names in PostgreSQL and DuckDB (`varchar`, `integer`, `decimal(18,2)`, `date`, `timestamp`, `boolean`). "PII" marks personal data. The catalog export (WP-06) carries the tag `PII.Sensitive` on these columns.
 
 The "Meaning" column is the true meaning, for the generator and for people writing definitions. It is **not** what the catalog says: the catalog's descriptions are specified separately in section 6, and some are deliberately missing or vague (D-14). Two tables, `loan_applications` and `collection_actions`, come from older source systems and have abbreviated column names that mix Indonesian and English (quirk Q11). The semantic model gives them clean names: for example the dimension `application.decision_status` reads the column `sts_putusan`.
 

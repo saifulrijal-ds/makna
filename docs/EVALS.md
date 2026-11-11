@@ -24,7 +24,7 @@ The evals answer the four success questions in `docs/PROJECT_BRIEF.md`:
 
 ```
 evals/golden/questions.yaml        all questions
-evals/golden/reference_sql/<id>.sql    hand-written Trino SQL, for questions with outcome "answer"
+evals/golden/reference_sql/<id>.sql    hand-written PostgreSQL SQL, for questions with outcome "answer"
 evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the seeded data
 ```
 
@@ -58,7 +58,8 @@ Fields by outcome:
 
 ### 2.3 Rules for writing questions
 
-- The reference SQL is written by hand against the physical tables, **without looking at the compiler's output**, following the plain-language definition in `docs/SAMPLE_DOMAIN.md` and the rules in `docs/notes/never-join-fact-tables.md`. A second person or agent reviews each one. The expected CSV is produced by running the reference SQL on the dev stack's Trino; it is committed and changes only when the data generator or the definition changes.
+- The reference SQL is written by hand against the physical tables, **without looking at the compiler's output**, following the plain-language definition in `docs/SAMPLE_DOMAIN.md` and the rules in `docs/notes/never-join-fact-tables.md`. A second person or agent reviews each one. The expected CSV is produced by running the reference SQL on the sample PostgreSQL database; it is committed and changes only when the data generator or the definition changes.
+- **No leaks from the definitions.** No golden question's text equals an `example_questions` entry or an example request's question in the definitions, and no expected request equals an example request of the same metric (D-18). Otherwise the agent would find the answer in `makna_get_definition`, and retrieval would be scored on text it was given.
 - The question text must not contain the metric's `name`. It may use its label or a synonym, as a real user would.
 - A reference result must have at least one row and at most 200 rows.
 
@@ -127,7 +128,7 @@ The report also shows recall at 3 and mean reciprocal rank for keyword only, vec
 
 ## 4. Compile correctness eval (EVL-3)
 
-**Part A: golden requests.** For each `answer` question and each candidate of each `clarify` question: compile `expected.request`, run it on Trino, and compare with the expected CSV.
+**Part A: golden requests.** For each `answer` question and each candidate of each `clarify` question: compile `expected.request` for the `postgres` dialect, run it on the sample database, and compare with the expected CSV.
 
 **Part B: every approved metric.** For each approved metric, with no golden question needed: compile and run (1) the metric with no dimensions over 2026-01-01 to 2026-07-01; (2) the metric at its default grain over the same range; (3) the metric by each available non-personal dimension, one at a time, at the latest month. Each must run without error and return at least one row. This backs the brief's "every compiled query for an approved metric runs on the engine".
 
@@ -145,7 +146,7 @@ The same language model, the same system prompt apart from the tool section, the
 
 | | Arm M: Makna | Arm R: raw schema |
 |---|---|---|
-| Tools | The five Makna MCP tools, with running enabled. | `list_tables()`, `describe_table(name)` (columns, types, and the catalog's column descriptions), `run_sql(sql)` on the same Trino, limited to 1000 rows. |
+| Tools | The four Makna MCP tools, plus the same `run_sql(sql)` as arm R to run the SQL Makna compiles (Makna runs nothing itself, D-21). | `list_tables()`, `describe_table(name)` (columns, types, and the catalog's column descriptions), `run_sql(sql)` on the sample PostgreSQL database with a read-only role, limited to 1000 rows. |
 | Knows the business definitions | Through Makna only. | No. It has what a catalog gives: table and column descriptions. |
 
 Arm R gets the catalog's table and column descriptions on purpose: an agent with bare column names would be a straw man. Those descriptions are the realistic catalog of `docs/SAMPLE_DOMAIN.md` section 6.1 (D-14): most are good, some are missing, vague, abbreviated, or in Indonesian, and two tables have abbreviated mixed-language column names. The comparison is therefore "semantic layer versus a typical catalog", not versus an unrealistically tidy one.
