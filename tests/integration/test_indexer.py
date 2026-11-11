@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 import yaml
 from sqlalchemy import Engine, func, select
@@ -109,15 +110,20 @@ def test_the_embedding_model_is_recorded(indexed_engine: Engine) -> None:
     assert state["definitions_version"]
 
 
-def counters(engine: Engine) -> dict[str, tuple[int, int, int]]:
+def counters(engine: Engine) -> dict[str, dict[str, Any]]:
+    """Text hashes of the documents and update times of the objects, by id."""
     with engine.connect() as connection:
-        rows = connection.execute(
+        documents = connection.execute(
             select(search_document.c.object_id, search_document.c.text_hash)
         ).all()
-        updated = connection.execute(
+        objects = connection.execute(
             select(semantic_object.c.id, semantic_object.c.updated_at)
         ).all()
-    return {"documents": tuple(sorted(rows)), "objects": tuple(sorted(updated))}  # type: ignore[dict-item]
+    return {"documents": dict(documents), "objects": dict(objects)}
+
+
+def changed_ids(before: dict[str, Any], after: dict[str, Any]) -> set[str]:
+    return {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
 
 
 def test_a_second_build_changes_nothing(fresh_indexed_engine: Engine) -> None:
@@ -149,11 +155,9 @@ def test_index_object_changes_only_that_objects_rows(fresh_indexed_engine: Engin
     after = counters(fresh_indexed_engine)
     assert result.documents_changed == 1 and result.objects_changed == 1
     assert result.documents_embedded == 1
-    changed_documents = set(after["documents"]) - set(before["documents"])  # type: ignore[call-overload]
-    assert {oid for oid, _ in changed_documents} == {"metric:npf_ratio"}
-    changed_objects = set(after["objects"]) - set(before["objects"])  # type: ignore[call-overload]
-    assert {oid for oid, _ in changed_objects} == {"metric:npf_ratio"}
-    assert len(after["documents"]) == len(before["documents"])  # type: ignore[arg-type]
+    assert changed_ids(before["documents"], after["documents"]) == {"metric:npf_ratio"}
+    assert changed_ids(before["objects"], after["objects"]) == {"metric:npf_ratio"}
+    assert len(after["documents"]) == len(before["documents"])
 
 
 def test_index_object_with_no_change_writes_nothing(fresh_indexed_engine: Engine) -> None:
