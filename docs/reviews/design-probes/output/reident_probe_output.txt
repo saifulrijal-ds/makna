@@ -1,0 +1,9 @@
+request: {'metric': 'npf_outstanding_principal', 'dimensions': ['customer.phone_number', 'customer.birth_year', 'customer.province'], 'end': '2026-07-01'}
+compiled OK (no governance error); rows: 14
+   ('***0037', datetime.date(1986, 1, 1), 'Jawa Timur', Decimal('36666666.67'))
+   ('***1018', datetime.date(1991, 1, 1), 'Kalimantan', Decimal('85000000.00'))
+   ('***1543', datetime.date(1993, 1, 1), 'Jawa Timur', Decimal('320000000.00'))
+   ('***1674', datetime.date(1962, 1, 1), 'Jawa Timur', Decimal('103333333.33'))
+   ('***1748', datetime.date(1979, 1, 1), 'Jawa Barat', Decimal('130000000.00'))
+customers: 200; distinct (masked phone, birth year, province) groups: 200; groups holding exactly one customer: 200
+customers uniquely identified by last 4 phone digits alone: 198/200

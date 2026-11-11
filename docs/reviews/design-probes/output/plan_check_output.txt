@@ -1,0 +1,51 @@
+requirements: 51; MVP: 39
+packages: plan 23 progress 23
+
+MVP req | arch16 WPs | PLAN-table WPs | mismatch
+CON-1  | WP-06                  | WP-06                 
+CON-2  | WP-21                  | WP-21                 
+CON-3  | WP-06                  | WP-06                 
+CON-4  | WP-11                  | WP-11                 
+SEM-1  | WP-03                  | WP-03                 
+SEM-2  | WP-03,WP-04            | WP-03,WP-04           
+SEM-3  | WP-03,WP-18            | WP-03,WP-18           
+SEM-4  | WP-06,WP-19            | WP-06,WP-19           
+SRC-1  | WP-07                  | WP-07                 
+SRC-2  | WP-07                  | WP-07                 
+SRC-3  | WP-07                  | WP-07                 
+SRC-4  | WP-07                  | WP-07                 
+QRY-1  | WP-08,WP-09            | WP-08,WP-09           
+QRY-2  | WP-10                  | WP-10                 
+QRY-3  | WP-09                  | WP-09                 
+QRY-4  | WP-11,WP-12            | WP-11,WP-12           
+MCP-1  | WP-13                  | WP-13                 
+MCP-2  | WP-13                  | WP-13                 
+MCP-3  | WP-22                  | WP-22                 
+WEB-1  | WP-17                  | WP-17                 
+WEB-2  | WP-19                  | WP-19                 
+WEB-3  | WP-18,WP-19            | WP-18,WP-19           
+WEB-4  | WP-20                  | WP-20                 
+WEB-5  | WP-12,WP-16            | WP-12,WP-16           
+GOV-1  | WP-18,WP-19            | WP-18,WP-19           
+GOV-2  | WP-12,WP-19            | WP-12,WP-19           
+EVL-1  | WP-14                  | WP-14                 
+EVL-2  | WP-15                  | WP-15                 
+EVL-3  | WP-15                  | WP-15                 
+EVL-4  | WP-22                  | WP-22                 
+EVL-5  | WP-15,WP-22            | WP-15,WP-22           
+DAT-1  | WP-02                  | WP-02                 
+DAT-2  | WP-02                  | WP-02                 
+DAT-3  | WP-04                  | WP-04                 
+NFR-1  | WP-05,WP-23            | WP-05,WP-23           
+NFR-2  | WP-07,WP-15,WP-23      | WP-07,WP-15,WP-23     
+NFR-3  | WP-07,WP-23            | WP-07,WP-23           
+NFR-4  | WP-01                  | WP-01                 
+NFR-5  | WP-01,WP-23            | WP-01,WP-23           
+cycle check done
+WP-07 transitively depends on ['WP-01', 'WP-02', 'WP-03', 'WP-04', 'WP-05', 'WP-06']
+WP-08 transitively depends on ['WP-01', 'WP-03', 'WP-04']
+WP-14 transitively depends on ['WP-01', 'WP-02', 'WP-03', 'WP-04', 'WP-05', 'WP-08']
+WP-17 transitively depends on ['WP-01', 'WP-02', 'WP-03', 'WP-04', 'WP-05', 'WP-06', 'WP-07', 'WP-08', 'WP-09', 'WP-10', 'WP-11', 'WP-12', 'WP-16']
+WP-18 transitively depends on ['WP-01', 'WP-02', 'WP-03', 'WP-04', 'WP-05', 'WP-06', 'WP-07', 'WP-08', 'WP-09', 'WP-10', 'WP-11', 'WP-12']
+WP-19 transitively depends on ['WP-01', 'WP-02', 'WP-03', 'WP-04', 'WP-05', 'WP-06', 'WP-07', 'WP-08', 'WP-09', 'WP-10', 'WP-11', 'WP-12', 'WP-16', 'WP-18']
+WP-20 transitively depends on ['WP-01', 'WP-02', 'WP-03', 'WP-04', 'WP-05', 'WP-06', 'WP-07', 'WP-08', 'WP-09', 'WP-10', 'WP-11', 'WP-12', 'WP-14', 'WP-15', 'WP-16']

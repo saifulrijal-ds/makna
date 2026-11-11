@@ -1,0 +1,19 @@
+REJECTED  metric with unknown key  -> Additional properties are not allowed ('unknown_key' was unexpected)
+REJECTED  ratio with measure  -> {'apiVersion': 'makna/v1', 'kind': 'metric', 'name': 'npf_ratio', 'label': 'NPF Ratio', 'description': 'Share 
+REJECTED  deprecated metric without deprecation  -> 'deprecation' is a required property
+ACCEPTED  deprecated ENTITY without deprecation (V14 says every deprecated object needs a reason)
+ACCEPTED  deprecated GLOSSARY TERM without deprecation
+ACCEPTED  domain with no synonyms (SEM-2: every object has synonyms)
+ACCEPTED  metric with no synonyms (SEM-2)
+ACCEPTED  personal dimension national_id listing raw values
+ACCEPTED  national_id masked with partial keep_last 8 (half the NIK)
+ACCEPTED  time dimension birth_year with partial masking (V11 mismatch)
+ACCEPTED  measure MIN(birth_date) over a personal column (V12)
+ACCEPTED  measure whose time_dimension is the personal birth_year
+REJECTED  filter op in with scalar value  -> 'Jawa Barat' is not of type 'array'
+ACCEPTED  metric filter on personal dimension (V10)
+ACCEPTED  description containing SQL ('No SQL')
+ACCEPTED  values on a time dimension
+ACCEPTED  default_grain not in time_grains (V15)
+REJECTED  join_paths with empty chain  -> [] should be non-empty
+ACCEPTED  relationship type one_to_one (not described in ARCHITECTURE 5.1)

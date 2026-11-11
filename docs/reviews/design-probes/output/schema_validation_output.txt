@@ -1,0 +1,18 @@
+schema itself: valid Draft 2020-12 schema; jsonschema 4.26.0
+PASS examples/lending/domain.yaml (kind=domain)
+PASS examples/lending/entities/branch.yaml (kind=entity)
+PASS examples/lending/entities/contract.yaml (kind=entity)
+PASS examples/lending/entities/contract_snapshot.yaml (kind=entity)
+PASS examples/lending/entities/customer.yaml (kind=entity)
+PASS examples/lending/entities/installment.yaml (kind=entity)
+PASS examples/lending/entities/payment.yaml (kind=entity)
+PASS examples/lending/entities/product.yaml (kind=entity)
+PASS examples/lending/glossary/npf.yaml (kind=glossary_term)
+PASS examples/lending/metrics/collected_amount.yaml (kind=metric)
+PASS examples/lending/metrics/collection_rate.yaml (kind=metric)
+PASS examples/lending/metrics/disbursement_amount.yaml (kind=metric)
+PASS examples/lending/metrics/due_amount.yaml (kind=metric)
+PASS examples/lending/metrics/npf_outstanding_principal.yaml (kind=metric)
+PASS examples/lending/metrics/npf_ratio.yaml (kind=metric)
+PASS examples/lending/metrics/outstanding_principal.yaml (kind=metric)
+16/16 files pass
