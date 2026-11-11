@@ -25,8 +25,20 @@ ALLOWED_MAKNA: dict[str, frozenset[str] | None] = {
     "mcp": frozenset({"services", "model", "config"}),
     "web": frozenset({"services", "model", "config"}),
     "cli": frozenset(
-        {"services", "model", "config", "definitions", "catalog", "index", "search", "engine"}
+        {
+            "services",
+            "model",
+            "config",
+            "definitions",
+            "catalog",
+            "index",
+            "search",
+            "engine",
+            "app",
+        }
     ),
+    # The composition root mounts the interfaces; it is the only module that may import both.
+    "app": frozenset({"services", "web", "mcp", "model", "config"}),
     "compiler": frozenset({"model"}),
     "model": frozenset(),
 }
@@ -124,6 +136,10 @@ def test_every_package_of_the_architecture_exists() -> None:
         ("web/routes.py", "from ..catalog import sync\n", "makna.catalog"),
         ("cli/commands.py", "from makna.compiler import plan\n", "makna.compiler"),
         ("cli/commands.py", "from makna.resolve import resolver\n", "makna.resolve"),
+        ("cli/commands.py", "from makna.web import routes\n", "makna.web"),
+        ("cli/commands.py", "import makna.mcp.server\n", "makna.mcp.server"),
+        ("app.py", "from makna.compiler import plan\n", "makna.compiler"),
+        ("app.py", "from makna.index import tables\n", "makna.index"),
         ("compiler/sql.py", "import sqlalchemy\n", "sqlalchemy"),
         ("compiler/sql.py", "import psycopg\n", "psycopg"),
         ("compiler/net.py", "import httpx\n", "httpx"),
@@ -148,5 +164,7 @@ def test_allowed_imports_pass(tmp_path: Path) -> None:
     _write(tmp_path, "web/a.py", "from makna import config\nfrom makna.config import Settings\n")
     _write(tmp_path, "web/b.py", "from . import a\nfrom .a import thing\n")
     _write(tmp_path, "cli/a.py", "from makna.definitions import v\nfrom makna.engine import e\n")
+    _write(tmp_path, "cli/b.py", "from makna.app import create_app\n")
+    _write(tmp_path, "app.py", "from makna.web import w\nfrom makna.mcp import m\n")
     _write(tmp_path, "compiler/a.py", "import sqlglot\nfrom makna.model import m\n")
     assert check_dependency_rule(tmp_path) == []
