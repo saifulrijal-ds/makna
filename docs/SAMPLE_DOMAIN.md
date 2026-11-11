@@ -265,7 +265,7 @@ Each metric needs synonyms in English and Indonesian, at least two example quest
 | Name | State | Purpose |
 |---|---|---|
 | `write_off_amount` | draft, file `write_off_amount.draft.yaml`, `drafted_by: ai:sample-assistant` | A draft with no approved version. Sum of `outstanding_principal` at the last snapshot of contracts that became `written_off`. Must be visible to curators, ranked below approved results, hidden from agents by default, and refused by the compiler. |
-| `npl_ratio` | deprecated, `replaced_by: metric:npf_ratio`, synonyms include "NPL" and "kredit macet" | An old ratio based on contract counts. Must be hidden from search by default and must not outrank `npf_ratio`. |
+| `npl_ratio` | deprecated, `replaced_by: metric:npf_ratio`, synonyms include "NPL" and "kredit macet" | An older name and report for the share of non-performing financing, with the same inputs as `npf_ratio`, kept so that old questions lead to the official metric. Must be hidden from search by default and must not outrank `npf_ratio`. |
 
 ### Rules (D-17)
 
