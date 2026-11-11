@@ -45,4 +45,15 @@ These do not need approval: creating branches, committing, pushing your own bran
 
 ## Commands
 
-To be filled in when the project is scaffolded (start the stack, run tests, run evals, lint, type check).
+Setup and checks (uv, Python 3.12 or newer):
+
+- Install: `uv sync`
+- Unit tests (the tier to run locally): `uv run pytest -m unit`
+- Integration tests (need PostgreSQL with pgvector in `MAKNA_TEST_DATABASE_URL`): `uv run pytest -m integration`
+- Engine tests (need the generated sample data in PostgreSQL): `uv run pytest -m engine`
+- Lint: `uv run ruff check .`; format check: `uv run ruff format --check .` (apply with `uv run ruff format .`)
+- Types: `uv run mypy` (strict for `makna.model` and `makna.compiler`)
+- CLI: `uv run makna --help`
+- Settings: copy the names in `deploy/.env.example` into your environment; non-secret settings are in `config/makna.toml`.
+
+`spikes/` and `docs/` are not linted or type-checked. To be added by later work packages: start the stack (WP-05) and run evals (WP-15).
