@@ -1,0 +1,16 @@
+# Non-secret settings. Secrets and connection settings come from MAKNA_* environment variables.
+
+dialect = "postgres"
+
+[search]
+w_keyword = 1.0
+w_vector = 1.0
+
+[governance]
+team = "data-governance"
+min_group_size = 10
+
+[sensitivity.tag_map]
+"PII.Sensitive" = "personal"
+"PersonalData.Personal" = "personal"
+"PII.NonSensitive" = "confidential"
