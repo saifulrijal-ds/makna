@@ -33,5 +33,5 @@ dimensions:
     description: Whether the product follows a conventional or a sharia contract.
     synonyms: {id: [skema pembiayaan, syariah]}
     values:
-      - {value: conventional}
-      - {value: sharia}
+      - {value: conventional, description: Konvensional. Interest-based contract.}
+      - {value: sharia, description: Syariah. Contract under sharia principles.}

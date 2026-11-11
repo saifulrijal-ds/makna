@@ -198,3 +198,17 @@ Sources: `https://docs.open-metadata.org/latest/releases/all-releases`; `https:/
 **Reason.** The compile step is where Makna's governance must act (DR-5), where the explanation is produced (QRY-3), and where errors must be shaped for agents (DR-7). The scope is bounded on purpose: one metric per request; joins only from "many" to "one"; three metric types; one extra rule for balances. `spikes/compiler/` implements all of it in about 300 lines and matches hand-written reference queries on five cases, including a ratio across two fact tables.
 
 **What we lose.** Features MetricFlow has and we do not: cumulative and time-offset metrics, conversion metrics, several metrics in one request, and joins from "one" to "many". Add them only when a real metric needs them.
+
+### DR-13: View of the other tools named in `docs/LANDSCAPE.md`
+
+None of these is adopted as a dependency. This record states why, so the question is not reopened without new information.
+
+| Tool | What was checked on 2026-11-11 | View |
+|---|---|---|
+| OrionBelt Semantic Layer | PyPI: `orionbelt-semantic-layer` 2.36.0 (2026-10-26), Python 3.12 or newer, built on sqlglot, FastAPI, and YAML models; licence **BUSL-1.1**. | The closest existing project in shape (YAML models compiled to SQL for agents). It cannot be a dependency: the Business Source License is not permissive (`CLAUDE.md`), and it does not carry the review workflow, catalog layering, or masking rules that are Makna's reason to exist. Useful as a reference design to read, not to copy code from. |
+| Open Knowledge Format (OKF) | Google Cloud blog of 2026-06-12: version 0.1; a bundle is a directory of Markdown files with YAML front matter, one concept per file; the only required field is `type`; the licence is not stated in the article. | A format for agent-readable knowledge documents, not a semantic model: it has no schema for measures, dimensions, or joins, so nothing can be compiled from it. It is a possible **export** in a later phase (one Markdown concept per approved metric) for agents that read OKF bundles. Not a storage format. |
+| Cube | Not re-checked in this session. | From general knowledge: a separate server with its own data model, caching layer, and JavaScript-centred modeling. Adopting it would replace Makna's core and conflict with D-8. Not used. |
+| MCP Toolbox for Databases | Not re-checked in this session. | From general knowledge: it exposes predefined SQL statements as MCP tools. Makna's run path is "compile a governed request, then execute", so predefined statements do not fit. An agent that also needs free-form SQL can use the Toolbox next to Makna; Makna does not depend on it. |
+| DataHub | PyPI: `acryl-datahub` 1.7.0.19, Apache-2.0. | A sound second catalog connector after OpenMetadata (DR-2). |
+
+Sources: `https://pypi.org/project/orionbelt-semantic-layer/`; `https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing`; `https://pypi.org/project/acryl-datahub/`.

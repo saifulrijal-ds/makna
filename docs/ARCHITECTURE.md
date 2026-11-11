@@ -1,6 +1,6 @@
 # Architecture
 
-Status: design output (2026-11-11). Written in the design session for the build team. Decisions and their reasons are in `docs/DECISIONS.md` (records DR-1 to DR-12); this document describes the result. Work packages are in `docs/PLAN.md`.
+Status: design output (2026-11-11). Written in the design session for the build team. Decisions and their reasons are in `docs/DECISIONS.md` (records DR-1 to DR-13); this document describes the result. Work packages are in `docs/PLAN.md`.
 
 If you find that this document contradicts another source of truth, say so in your report (see `CLAUDE.md`).
 
@@ -355,7 +355,7 @@ In the sample domain, `contract` reaches `branch` by `contract.booking_branch` a
 
 ### 7.4 Available dimensions
 
-- For a **simple metric**: every non-hidden dimension of the measure's entity and of every entity reachable by rule 7.3.
+- For a **simple metric**: every dimension of the measure's entity and of every entity reachable by rule 7.3.
 - For a **ratio or derived metric**: a dimension `E.d` is available only if every input can reach `E` **and every input's path enters `E` through the same final relationship**. This prevents dividing a number by booking branch by a number by servicing branch.
 - A personal dimension without a masking rule is listed as unavailable with the reason, so agents do not try it.
 
@@ -509,7 +509,7 @@ When a question is ambiguous, Makna **returns the options** and never picks sile
 |---|---|---|
 | `postgres` | `pgvector/pgvector` for PostgreSQL 17 | Two databases: `makna` (the application) and `lending` (the sample data). |
 | `trino` | `trinodb/trino`, version pinned in WP-05 | One Trino catalog named `lending`, using the PostgreSQL connector to read the `lending` database. No authentication in the dev stack. |
-| `init` | the Makna image | Runs once: generate data if missing, load it into `lending`, run migrations, copy `semantic/definitions/` into a new git repository in a volume, sync the catalog from `data/catalog/lending.catalog.yaml`, build the index, create four demo users (one per role). |
+| `init` | the Makna image | Runs once: generate data if missing, load it into `lending`, run migrations, copy `semantic/definitions/` into a new git repository in a volume, sync the catalog from `data/catalog/lending.catalog.yaml`, build the index, create four demo users (one per role). Each step is added by the work package that builds the feature (see `docs/PLAN.md`). |
 | `app` | the Makna image | `makna serve`: web app on `/`, MCP on `/mcp`, health on `/healthz`, one port (8000). |
 
 The requirement lists "API, MCP server, web app" separately; in the MVP they are three interfaces of one process. They can be split into separate processes later without code changes because they share only the service layer.
@@ -524,7 +524,7 @@ Self-hosting (NFR-3): nothing in the running system calls an outside service. Th
 
 ## 10. The definition store and lifecycle (Q-4, DR-4)
 
-The definitions repository is an ordinary git repository on a path the application can write (`MAKNA_DEFINITIONS_REPO`), with a single branch. **The application writes to it by making commits.** It calls the `git` command line through one small wrapper class (`makna.definitions.repo.GitRepo`: `add`, `rm`, `commit`, `log`, `show`, `rev_parse`, `diff_names`). Organizations that want pull-request review in their git host can point a remote at it; the index follows whatever is at `HEAD`.
+The definitions repository is an ordinary git repository on a path the application can write (`MAKNA_DEFINITIONS_REPO`), with a single branch. Reading needs only the files: until WP-18 adds the write path, the indexer and services read a plain directory and leave the commit columns empty. **The application writes to it by making commits.** It calls the `git` command line through one small wrapper class (`makna.definitions.repo.GitRepo`: `add`, `rm`, `commit`, `log`, `show`, `rev_parse`, `diff_names`). Organizations that want pull-request review in their git host can point a remote at it; the index follows whatever is at `HEAD`.
 
 Every lifecycle action is one commit:
 
@@ -609,7 +609,7 @@ Output (budget: 2,500 characters at the default limit):
 
 ### `makna_get_definition`
 
-> Get the full approved definition of one object by id (from makna_search). For a metric this includes its meaning, formula in words, official date, caveats, the dimensions you may group or filter by, their allowed values, and the allowed time grains. Read this before compiling a query, and use only the dimensions it lists.
+> Get the full approved definition of one object by id (from makna_search). For a metric this returns its meaning, formula in words, official date, caveats, the dimensions you may group or filter by, their allowed values, and the allowed time grains. Read this before compiling a query, and use only the dimensions it lists. If the id is unknown, the error lists close ids; if none fits, search again with different words.
 
 Input: `id` (for example `metric:npf_ratio`), `detail` (`brief` or `full`, default `full`).
 
@@ -637,7 +637,7 @@ Entities return their description, dimensions, and relationships. Glossary terms
 
 ### `makna_list_related`
 
-> List objects related to one object: the inputs of a metric, metrics built from it, metrics on the same entity, the business terms that explain it, and its replacement if deprecated. Use it to find a nearby metric when the first one is not quite what the user asked for.
+> List objects related to one object: the inputs of a metric, metrics built from it, metrics on the same entity, the business terms that explain it, and its replacement if deprecated. Use it to find a nearby metric when the first one is not quite what the user asked for. Returns up to 20 related objects with one-line descriptions. An empty list means nothing is related: go back to makna_search.
 
 Input: `id`, `relation` (optional filter). Output: `{"related": [{"id", "label", "kind", "relation", "description"}]}`, at most 20.
 
@@ -658,7 +658,7 @@ Errors: `{"error": {"code": "DIMENSION_NOT_AVAILABLE", "message": "...", "detail
 
 ### `makna_run_query` (registered only when `MAKNA_RUN_ENABLED` is true and the token has `can_run`)
 
-> Compile a structured request and run it on the query engine with your own engine credentials. Same input as makna_compile_query. Returns the rows (at most `limit`), the SQL that ran, and the explanation. Use this when the user wants the number itself.
+> Compile a structured request and run it on the query engine with your own engine credentials. Same input as makna_compile_query. Returns the rows (at most `limit`), the SQL that ran, and the explanation. Use this when the user wants the number itself. Errors are the same as for makna_compile_query, plus engine errors; an empty result means the data has no rows for that request, not that the metric is wrong.
 
 Output adds `rows` (list of lists), `row_count`, and `truncated`.
 
@@ -678,8 +678,8 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V15) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
 | `/review` | Queue of proposals in review: object, author, reason, difference, validation result, reference issues. Approve and Reject ask for a reason. Buttons are shown only to users who may approve that object. | WEB-3 |
 | `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; the SQL and explanation; and, if running is enabled and engine credentials are in the session, the first 100 rows. | WEB-4 |
-| `/audit`, `/logs/tool-calls` | Filterable tables. | GOV-1, GOV-2 |
-| `/admin/users`, `/admin/tokens`, `/admin/catalog` | Users and roles; tokens; sync runs and the reference-issue report; buttons to run a sync and an index sync. | WEB-5, SEM-4 |
+| `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19). | GOV-1, GOV-2 |
+| `/admin/users`, `/admin/tokens`, `/admin/catalog` | Users and roles; tokens (both built in WP-16); sync runs and the reference-issue report, with buttons to run a sync and an index sync (built in WP-19). | WEB-5, SEM-4 |
 | `/login`, `/logout`, `/account` | Sign-in; own tokens; engine credentials for this session. | WEB-5 |
 
 Engine credentials entered on `/account` are kept in server memory for the session (lost on restart), never in the cookie and never in the database.
@@ -717,7 +717,7 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | SEM-1 | 5.1, `semantic/schema/` | WP-03 |
 | SEM-2 | 5.1 common fields | WP-03, WP-04 |
 | SEM-3 | 5.2, 10 | WP-03, WP-18 |
-| SEM-4 | 5.3 reference issues R01 to R04, 6.4 `reference_issue` | WP-06 |
+| SEM-4 | 5.3 reference issues R01 to R04, 6.4 `reference_issue`, 13 `/admin/catalog` | WP-06, WP-19 |
 | SEM-5 | Not in MVP. DR-1 names Apache Ossie as the target. | — |
 | SRC-1 | 8.2 | WP-07 |
 | SRC-2 | 8.2 (`simple` configuration, synonyms in `names`), 8.1 (multilingual model) | WP-07 |
@@ -739,7 +739,7 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | WEB-5 (basic) | 11 | WP-12, WP-16 |
 | WEB-6, WEB-7 | Not in MVP. | — |
 | GOV-1 | 10, 14 | WP-18 |
-| GOV-2 | 14 | WP-12 |
+| GOV-2 | 14, 13 `/logs/tool-calls` | WP-12, WP-19 |
 | GOV-3, GOV-4 | Not in MVP. 8.3 and 14 record the data GOV-3 needs. | — |
 | EVL-1 | `docs/EVALS.md` 2 | WP-14 |
 | EVL-2 | `docs/EVALS.md` 3 | WP-15 |
