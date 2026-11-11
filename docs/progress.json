@@ -43,7 +43,18 @@
         "D-12",
         "D-13",
         "D-14",
-        "D-15"
+        "D-15",
+        "D-16",
+        "D-17",
+        "D-18",
+        "D-19",
+        "D-20",
+        "D-21",
+        "D-22",
+        "D-23",
+        "D-24",
+        "D-25",
+        "D-26"
       ]
     }
   },
@@ -173,7 +184,8 @@
       "title": "Compiler: model snapshot, join graph, request planning",
       "milestone": "M1",
       "requirements": [
-        "QRY-1"
+        "QRY-1",
+        "SEM-1"
       ],
       "depends_on": [
         "WP-03",
@@ -212,11 +224,11 @@
     },
     {
       "id": "WP-11",
-      "title": "Trino connector and metrics on the real engine",
+      "title": "PostgreSQL engine connector and metrics on the target database",
       "milestone": "M1",
       "requirements": [
         "CON-4",
-        "QRY-4"
+        "QRY-1"
       ],
       "depends_on": [
         "WP-05",
@@ -230,7 +242,6 @@
       "title": "Service layer, permissions, tool-call log",
       "milestone": "M1",
       "requirements": [
-        "QRY-4",
         "GOV-2"
       ],
       "depends_on": [
@@ -242,16 +253,15 @@
     },
     {
       "id": "WP-12B",
-      "title": "Users, tokens, stored engine credentials",
+      "title": "Users and tokens",
       "milestone": "M1",
       "requirements": [
-        "WEB-5",
-        "QRY-4"
+        "WEB-5"
       ],
       "depends_on": [
         "WP-12"
       ],
-      "suggested_model": "Sonnet 5.5",
+      "suggested_model": "Haiku 5.5",
       "status": "not_started"
     },
     {

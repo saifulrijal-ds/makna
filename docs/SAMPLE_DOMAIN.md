@@ -220,7 +220,7 @@ For each disbursed contract and each month end `E` from the disbursement month u
 
 There are 23 approved metrics, plus one draft and one deprecated metric that exist to test governance rules. "Time" is the official date of the metric. "Branch" says which branch link is pinned (see `docs/ARCHITECTURE.md` section 7.3).
 
-Each metric needs synonyms in English and Indonesian, at least two example questions, an owner team, and a caveat where one applies. The seven metrics marked with a star are already written in `semantic/schema/examples/lending/metrics/`; copy them unchanged. The entity files in `semantic/schema/examples/lending/entities/` are a starting point: copy them and add the missing relationships (for example `contract.application`), dimensions, and measures listed in this document.
+Each metric needs synonyms in English and Indonesian, at least two example questions, at least one example request (a question with the structured request that answers it, D-18), an owner team, and a caveat where one applies. Example requests must not repeat a golden question or its expected request (`docs/EVALS.md` section 2). The seven metrics marked with a star are already written in `semantic/schema/examples/lending/metrics/`; copy them unchanged. The entity files in `semantic/schema/examples/lending/entities/` are a starting point: copy them and add the missing relationships (for example `contract.application`), dimensions, and measures listed in this document.
 
 ### Origination (owner team `sales-performance`)
 
@@ -245,7 +245,7 @@ Each metric needs synonyms in English and Indonesian, at least two example quest
 | 12 | `npf_ratio` ★ | ratio | Share of outstanding principal that is more than 90 days past due. | `npf_outstanding_principal / outstanding_principal` | snapshot date | servicing |
 | 13 | `par30_outstanding_principal` | simple | Principal owed on contracts more than 30 days past due. | sum of `outstanding_principal` where `days_past_due > 30` | snapshot date | servicing |
 | 14 | `par30_ratio` | ratio | Share of outstanding principal that is more than 30 days past due ("portfolio at risk"). | `par30_outstanding_principal / outstanding_principal` | snapshot date | servicing |
-| 15 | `restructured_outstanding_principal` | simple | Principal owed on contracts that have been restructured. | `contract_snapshot.outstanding_principal` with the metric filter `contract.is_restructured = true` (a filter across a join) | snapshot date | servicing |
+| 15 | `restructured_outstanding_principal` | simple | Principal owed on contracts that have been restructured. | `contract_snapshot.outstanding_principal` with the metric filter `{rule: contract.restructured}` (a rule across a join) | snapshot date | servicing |
 | 16 | `restructured_ratio` | ratio | Share of outstanding principal on restructured contracts. | `restructured_outstanding_principal / outstanding_principal` | snapshot date | servicing |
 
 ### Collection (owner team `collection`)
@@ -266,6 +266,16 @@ Each metric needs synonyms in English and Indonesian, at least two example quest
 |---|---|---|
 | `write_off_amount` | draft, file `write_off_amount.draft.yaml`, `drafted_by: ai:sample-assistant` | A draft with no approved version. Sum of `outstanding_principal` at the last snapshot of contracts that became `written_off`. Must be visible to curators, ranked below approved results, hidden from agents by default, and refused by the compiler. |
 | `npl_ratio` | deprecated, `replaced_by: metric:npf_ratio`, synonyms include "NPL" and "kredit macet" | An old ratio based on contract counts. Must be hidden from search by default and must not outrank `npf_ratio`. |
+
+### Rules (D-17)
+
+Conditions that several measures or metrics share are written once, as named rules on an entity:
+
+| Rule | Condition | Used by |
+|---|---|---|
+| `contract_snapshot.non_performing` ★ | `days_past_due > 90` | `npf_outstanding_principal` (and through it `npf_ratio`) |
+| `contract_snapshot.past_due_30` | `days_past_due > 30` | `par30_outstanding_principal` (and `par30_ratio`) |
+| `contract.restructured` | `is_restructured` | `restructured_outstanding_principal` (a metric filter across a join, and `restructured_ratio`) |
 
 ### Glossary terms
 
