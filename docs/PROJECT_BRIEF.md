@@ -25,7 +25,7 @@ A third consumer is not a person: **AI agents** reach the layer through an MCP s
 
 1. Connects to a data catalog and a query engine through pluggable connectors, and normalizes their metadata.
 2. Stores semantic definitions as versioned YAML files, with a database index for search and serving.
-3. Provides hybrid search (keyword, vector, and reranking) over metrics, entities, columns, and glossary terms.
+3. Provides hybrid search (keyword and vector; reranking in phase 2, D-23) over metrics, entities, columns, and glossary terms.
 4. Compiles a metric request (metric, dimensions, filters, time grain) into governed SQL for the engine.
 5. Exposes read-only tools to agents through an MCP server.
 6. Gives curators and business users a web app: search, browse, metric pages, an editor, a review queue, and a test bench.
