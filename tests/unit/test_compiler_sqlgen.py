@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import duckdb
@@ -14,6 +15,7 @@ from makna.compiler.plan import plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import build_tree, to_sql
 from makna.model.definitions import Entity, Filter, Metric, RuleRef, parse_definition
+from makna.model.request import ErrorCode, QueryError
 
 from .compiler_support import lending, request, tree_of
 from .definition_fixtures import SYN
@@ -468,3 +470,71 @@ def test_the_sample_model_keeps_its_rules_after_the_inline_copy_is_made() -> Non
         if m.name == "npf_outstanding_principal"
     )  # fmt: skip
     assert measure.rule == "non_performing"
+
+
+# --------------------------------------------------------------------------------------
+# NULL join keys (section 7.5: joins are LEFT JOINs, so a missing key is a NULL group)
+
+
+def small_contract_db() -> duckdb.DuckDBPyConnection:
+    """Three disbursed contracts: one in each of two branches and one with no booking branch."""
+    con = duckdb.connect()
+    con.execute("ATTACH ':memory:' AS lending")
+    con.execute("CREATE SCHEMA lending.core")
+    con.execute("USE lending.core")
+    con.execute("CREATE TABLE branches(branch_id INTEGER, region_name VARCHAR)")
+    con.execute("INSERT INTO branches VALUES (1, 'North'), (2, 'South')")
+    con.execute(
+        "CREATE TABLE contracts(contract_id INTEGER, booking_branch_id INTEGER, "
+        "principal_amount DECIMAL(18,2), disbursement_date DATE)"
+    )
+    con.execute(
+        "INSERT INTO contracts VALUES (1, 1, 100, DATE '2026-01-10'), "
+        "(2, 2, 200, DATE '2026-01-11'), (3, NULL, 400, DATE '2026-01-12')"
+    )
+    return con
+
+
+def test_every_join_is_a_left_join() -> None:
+    for metric in ("collection_rate", "npf_ratio", "restructured_outstanding_principal"):
+        tree = tree_of(lending(), metric, dimensions=["branch.region_name"])
+        joins = list(tree.find_all(exp.Join))
+        assert joins and {j.side for j in joins} == {"LEFT"}, metric
+
+
+def test_a_row_with_no_join_key_is_kept_under_a_null_group() -> None:
+    con = small_contract_db()
+    simple = run_tree(
+        con, tree_of(lending(), "disbursement_amount", dimensions=["branch.region_name"])
+    )
+    assert simple == [("North", 100), ("South", 200), (None, 400)]
+    ratio = run_tree(
+        con, tree_of(lending(), "average_ticket_size", dimensions=["branch.region_name"])
+    )
+    assert [(r[0], float(r[-1])) for r in ratio] == [
+        ("North", 100.0),
+        ("South", 200.0),
+        (None, 400.0),
+    ]
+
+
+# --------------------------------------------------------------------------------------
+# Defence in depth: a plan built without `plan_request` cannot smuggle in a non-finite number
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+@pytest.mark.parametrize("op", [">", "in"])
+def test_generation_refuses_a_non_finite_number_in_a_hand_built_plan(value: float, op: str) -> None:
+    model = lending()
+    plan = plan_request(
+        model,
+        request(
+            "disbursement_amount",
+            filters=[{"dimension": "contract.annual_rate_pct", "op": ">", "value": 1}],
+        ),
+    )
+    (flt,) = plan.filters
+    bad = replace(flt, op=op, value=(1.0, value) if op == "in" else value)
+    with pytest.raises(QueryError) as info:
+        build_tree(model, replace(plan, filters=(bad,)))
+    assert info.value.code == ErrorCode.INVALID_FILTER
