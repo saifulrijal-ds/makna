@@ -20,3 +20,61 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -m unit
+
+  integration:
+    name: Integration tests (PostgreSQL with pgvector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Keep this tag equal to the one in deploy/docker-compose.yml.
+        image: pgvector/pgvector:0.8.0-pg17
+        env:
+          # Throwaway password of this job's own database container; it holds no real data.
+          POSTGRES_PASSWORD: makna_dev_postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      MAKNA_TEST_DATABASE_URL: postgresql://postgres:makna_dev_postgres@localhost:5432/postgres
+      # A missing database must fail this job, never skip every test.
+      MAKNA_REQUIRE_TEST_DATABASE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run pytest -m integration
+
+  stack:
+    name: Development stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Generate a throwaway application secret
+        run: |
+          key=$(openssl rand -hex 32)
+          echo "::add-mask::$key"
+          echo "MAKNA_SECRET_KEY=$key" >> "$GITHUB_ENV"
+      - name: Start the stack (acceptance 1)
+        run: docker compose -f deploy/docker-compose.yml up -d --wait --wait-timeout 300
+      - name: Check row counts, a second init, roles and ports (acceptance 2, 4, 6)
+        run: uv run python -m deploy.check_stack
+      - name: Show service logs
+        if: failure()
+        run: docker compose -f deploy/docker-compose.yml logs --no-color
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v

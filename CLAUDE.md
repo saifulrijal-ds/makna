@@ -49,12 +49,14 @@ Setup and checks (uv, Python 3.12 or newer):
 
 - Install: `uv sync`
 - Unit tests (the tier to run locally): `uv run pytest -m unit`
-- Integration tests (need PostgreSQL with pgvector in `MAKNA_TEST_DATABASE_URL`): `uv run pytest -m integration`
+- Integration tests (need PostgreSQL with pgvector in `MAKNA_TEST_DATABASE_URL`, a role that may create databases and the `vector` extension; each test uses its own scratch database): `uv run pytest -m integration`
 - Engine tests (need the generated sample data in PostgreSQL): `uv run pytest -m engine`
+- Start the stack (needs Docker; `MAKNA_SECRET_KEY` has no default): `export MAKNA_SECRET_KEY=$(openssl rand -hex 32); docker compose -f deploy/docker-compose.yml up -d --wait`; check it with `uv run python -m deploy.check_stack`; stop with `docker compose -f deploy/docker-compose.yml down -v`. Details, roles and ports in `deploy/README.md`. For the integration tier against the stack: `MAKNA_TEST_DATABASE_URL=postgresql://postgres:makna_dev_postgres@127.0.0.1:5432/postgres`.
+- Migrations (from the repository root, with `MAKNA_DATABASE_URL` set): `uv run alembic upgrade head`, `uv run alembic downgrade base`.
 - Lint: `uv run ruff check .`; format check: `uv run ruff format --check .` (apply with `uv run ruff format .`)
 - Types: `uv run mypy` (strict for `makna.model` and `makna.compiler`)
 - CLI: `uv run makna --help`
 - Sample data: `uv run python -m data.generator --out data/generated --seed 20261111 --scale 1.0` (git-ignored output; `--scale 0.05` for a quick set)
 - Settings: copy the names in `deploy/.env.example` into your environment; non-secret settings are in `config/makna.toml`.
 
-`spikes/` and `docs/` are not linted or type-checked. To be added by later work packages: start the stack (WP-05) and run evals (WP-15).
+`spikes/` and `docs/` are not linted or type-checked. To be added by later work packages: run evals (WP-15).

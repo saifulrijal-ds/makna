@@ -27,6 +27,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     check.add_argument("directory", type=Path, help="the definitions directory")
+    serve = commands.add_parser(
+        "serve",
+        help="run the Makna application (health check on /healthz)",
+        description=(
+            "Run the Makna application. Needs MAKNA_DATABASE_URL and MAKNA_SECRET_KEY "
+            "in the environment."
+        ),
+    )
+    serve.add_argument("--host", default="127.0.0.1", help="address to listen on")
+    serve.add_argument("--port", type=int, default=8000, help="port to listen on")
     return parser
 
 
@@ -44,10 +54,26 @@ def _validate(directory: Path) -> int:
     return 0
 
 
+def _serve(host: str, port: int) -> int:
+    import uvicorn
+
+    from makna.config import ConfigError, load_settings
+
+    try:
+        load_settings()
+    except ConfigError as error:
+        print(f"makna serve: {error}", file=sys.stderr)
+        return 2
+    uvicorn.run("makna.app:create_app", factory=True, host=host, port=port)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "validate":
         return _validate(args.directory)
+    if args.command == "serve":
+        return _serve(args.host, args.port)
     return 0
 
 
