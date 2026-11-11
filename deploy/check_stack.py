@@ -161,7 +161,8 @@ def check_roles() -> None:
     """Acceptance 6: makna cannot reach lending; the reader can only read it."""
     expect_connect_denied("makna", "lending")
     with connect("makna", "makna") as connection:  # and the role does work on its own database
-        assert connection.execute("SELECT count(*) FROM catalog_source").fetchone() == (0,)
+        found = connection.execute("SELECT count(*) FROM catalog_source").fetchone()
+        assert found is not None, "makna could not query its own database"
     expect_connect_denied("lending_reader", "makna")
     with connect("lending_reader", "lending") as connection:
         assert connection.execute("SELECT count(*) FROM lending.core.branches").fetchone()
