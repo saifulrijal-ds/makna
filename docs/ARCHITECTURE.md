@@ -88,9 +88,10 @@ flowchart LR
 | Services | `makna.services` | The use cases: `search`, `get_definition`, `list_related`, `compile_query`, proposal and approval actions, user and token management, audit and tool-call logging. Applies access rules. | |
 | MCP server | `makna.mcp` | Four read-only tools over `makna.services`. | No logic of its own. |
 | Web app | `makna.web` | Routes, templates, static files. | No logic of its own beyond form handling. |
+| Application | `makna.app` | The composition root: `create_app()` builds the one FastAPI application that `makna serve` runs, and mounts the web routes and the MCP server. | No logic of its own. |
 | CLI | `makna.cli` | `makna` command: validate, sync, index, serve, user and token management, freshness. | |
 
-**Dependency rule.** `model` depends on nothing. `compiler`, `definitions`, `catalog`, `engine`, `search`, and `index` depend on `model` (and `index`/`search` on the database). `resolve` depends on `search`. `services` depends on all of them. `mcp` and `web` depend on `services` only (plus `model` and `config`). `cli` may also import `definitions`, `catalog`, `index`, `search`, and `engine`, because operator commands (`validate`, `catalog sync`, `index build`, `search`, `catalog compare`) are built before the service layer exists; commands that act for a user or an agent (`serve`, user and token management, `resolve`) go through `services`, and `makna mcp` is only an HTTP bridge (section 12). A test in WP-01 enforces this with an import check.
+**Dependency rule.** `model` depends on nothing. `compiler`, `definitions`, `catalog`, `engine`, `search`, and `index` depend on `model` (and `index`/`search` on the database). `resolve` depends on `search`. `services` depends on all of them. `mcp` and `web` depend on `services` only (plus `model` and `config`). `app` is the composition root and the only module that imports `web` and `mcp` (and `services`, `model`, `config`). `cli` may also import `definitions`, `catalog`, `index`, `search`, `engine`, and `app` (so that `serve` starts the application without importing `web` or `mcp`), because operator commands (`validate`, `catalog sync`, `index build`, `search`, `catalog compare`) are built before the service layer exists; commands that act for a user or an agent (user and token management, `resolve`) go through `services`, and `makna mcp` is only an HTTP bridge (section 12). A test in WP-01 enforces this with an import check.
 
 ## 3. Repository layout
 
@@ -103,7 +104,8 @@ data/generator/             the seeded synthetic data generator
 data/catalog/               lending.catalog.yaml, the file-based catalog export
 data/generated/             generator output (not committed)
 evals/                      golden set, reference SQL, runners
-deploy/                     docker-compose.yml, container files
+deploy/                     docker-compose.yml, container files, the init runner (deploy/init.py), PostgreSQL role setup
+alembic.ini                 points Alembic at the migrations in src/makna/index/migrations
 tests/                      unit/ (DuckDB in-process), integration/ (needs PostgreSQL), engine/ (needs the sample data in PostgreSQL)
 spikes/                     design-session experiments, not product code
 docs/                       this pack, plus docs/notes/
@@ -516,7 +518,7 @@ When a question is ambiguous, Makna **returns the options** and never picks sile
 | Service | Image | Role |
 |---|---|---|
 | `postgres` | `pgvector/pgvector` for PostgreSQL 17 | Two databases with separate roles: `makna` (the application, role `makna`) and `lending` (the sample data and the target engine, owned by a loader role). The `makna` role cannot connect to `lending`. A read-only role reads `lending`: Makna's freshness check and catalog comparison use it through `MAKNA_ENGINE_URL`, and so do the engine tests and evals. Its port is published on `127.0.0.1` only. |
-| `init` | the Makna image | Runs once: generate data if missing, load it into `lending`, run migrations, copy `semantic/definitions/` into a new git repository in a volume, sync the catalog from `data/catalog/lending.catalog.yaml`, build the index, create four demo users (one per role). Each step is added by the work package that builds the feature (see `docs/PLAN.md`). |
+| `init` | the Makna image | Runs once (`python -m deploy.init`, an ordered list of idempotent steps kept outside the installed package because it uses the sample-data code in `data/`; a second run changes nothing): generate data if missing, load it into `lending`, run migrations, copy `semantic/definitions/` into a new git repository in a volume, sync the catalog from `data/catalog/lending.catalog.yaml`, build the index, create four demo users (one per role). Each step is added by the work package that builds the feature (see `docs/PLAN.md`). |
 | `app` | the Makna image | `makna serve`: web app on `/`, MCP on `/mcp`, health on `/healthz`, one port (8000). |
 
 The requirement lists "API, MCP server, web app" separately; in the MVP they are three interfaces of one process. They can be split into separate processes later without code changes because they share only the service layer.
