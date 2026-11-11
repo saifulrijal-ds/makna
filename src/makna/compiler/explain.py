@@ -89,9 +89,12 @@ def _value(value: Scalar | tuple[Scalar, ...] | None) -> str:
 
 
 def _named(model: Model, ref: str) -> str:
-    """A dimension as a reader names it, with its reference: `Region (branch.region_name)`."""
+    """A dimension as a reader names it, with its reference: `Region (branch.region_name)`.
+    A rule has no dimension and is named by its reference."""
     found = model.dimension(ref)
-    return f"{found[1].label or _words(found[1].name)} ({ref})" if found is not None else ref
+    if found is None:  # not a dimension, so a rule of the metric definition
+        return f"rule {ref}"
+    return f"{found[1].label or _words(found[1].name)} ({ref})"
 
 
 def _sentence(text: str) -> str:
@@ -203,23 +206,30 @@ def _request_filter_sentences(plan: QueryPlan) -> list[str]:
 
 
 def _join_sentences(model: Model, plan: QueryPlan) -> list[str]:
-    """One sentence for each entity a dimension or filter reads, and each distinct way its
-    inputs reach it. Dimensions and filters on an input's own table need no join."""
-    uses: dict[str, list[str]] = {}
+    """One sentence for each entity that a dimension, a request filter, or a rule or filter of
+    the metric definition reads, and each distinct way its inputs reach it. Things on an input's
+    own table need no join."""
+    requested: dict[str, list[str]] = {}
     for dimension in plan.dimensions:
-        uses.setdefault(dimension.entity, []).append(dimension.ref)
+        requested.setdefault(dimension.entity, []).append(dimension.ref)
     for each in plan.filters:
-        uses.setdefault(each.entity, []).append(each.ref)
-    found: list[str] = []
-    for entity, refs in uses.items():
-        routes: dict[tuple[JoinStep, ...], list[str]] = {}
-        for item in plan.inputs:
-            path = next((p.steps for p in item.paths if p.entity == entity), None)
-            if path:
-                routes.setdefault(path, []).append(item.metric)
-        for steps, metrics in routes.items():
-            found.append(_route(model, entity, list(dict.fromkeys(refs)), steps, metrics))
-    return found
+        requested.setdefault(each.entity, []).append(each.ref)
+    groups: dict[tuple[str, tuple[JoinStep, ...]], tuple[list[str], list[str]]] = {}
+    for item in plan.inputs:
+        defined: dict[str, list[str]] = {}
+        for definition in item.definition_filters:
+            defined.setdefault(definition.entity, []).append(definition.ref)
+        for entity_path in item.paths:
+            refs = requested.get(entity_path.entity, []) + defined.get(entity_path.entity, [])
+            if not entity_path.steps or not refs:
+                continue
+            seen, who = groups.setdefault((entity_path.entity, entity_path.steps), ([], []))
+            seen.extend(refs)
+            who.append(item.metric)
+    return [
+        _route(model, entity, list(dict.fromkeys(refs)), steps, metrics)
+        for (entity, steps), (refs, metrics) in groups.items()
+    ]
 
 
 def _route(
@@ -232,10 +242,11 @@ def _route(
     why = f" ({_sentence(last[1].description).rstrip('.')})" if last is not None else ""
     shown = [_named(model, ref) for ref in refs]
     verb = "comes" if len(shown) == 1 else "come"
-    return _sentence(
+    text = (
         f"{_list(shown)} {verb} from {_entity_label(model, entity)}: for {who}, rows are joined "
         f"{names} through {chain}{why}"
     )
+    return _sentence(text[0].upper() + text[1:])
 
 
 # --------------------------------------------------------------------------------------

@@ -397,14 +397,15 @@ GROUP BY <the same key expressions>
 Then:
 
 - **Simple metric**: the input subquery is the query.
-- **Ratio or derived metric**: put each input in a CTE; `UNION ALL` the CTEs, each selecting the key columns, its own value, and NULL for the other inputs; `GROUP BY` the key columns taking `MAX` of each input (wrapped in `COALESCE(..., 0)` for `sum` and `count` inputs); then compute the metric in the outer query. A ratio is `CAST(numerator AS DOUBLE) / NULLIF(denominator, 0)`.
+- **Ratio or derived metric**: put each input in a CTE; `UNION ALL` the CTEs, each selecting the key columns, its own value, and NULL for the other inputs; `GROUP BY` the key columns taking `MAX` of each input (wrapped in `COALESCE(..., 0)` for `sum`, `count`, and `count_distinct` inputs); then compute the metric in the outer query. A ratio is `CAST(numerator AS DOUBLE) / NULLIF(denominator, 0)`.
 
 This "aggregate separately, then combine" shape is the core correctness rule. Inputs are never joined row to row. The spike shows the naive join giving a collection rate of 1.0006 where the correct value is 0.9411. `UNION ALL` plus `GROUP BY` is used instead of `FULL OUTER JOIN` because grouping treats NULL keys as equal, needs no null-safe join syntax, and extends to any number of inputs.
 
 Details settled in WP-09:
 
 - **Aliases.** Tables are aliased `t0` (the measure's table), `t1`, `t2`, ... in the order the joins are needed. An alias belongs to a join *path prefix*, not to a relationship name, so two dimensions that reach the same entity through different routes get separate joins.
-- **Combining.** The `COALESCE(..., 0)` wrapper applies to `sum`, `count`, and `count_distinct` inputs; `avg`, `min`, and `max` inputs stay NULL when a group has no rows for them. Inputs of a ratio or derived metric that are themselves ratio or derived metrics are computed from the combined leaf columns, so nesting works.
+- **Combining.** As above, the `COALESCE(..., 0)` wrapper applies to `sum`, `count`, and `count_distinct` inputs; `avg`, `min`, and `max` inputs stay NULL when a group has no rows for them. Inputs of a ratio or derived metric that are themselves ratio or derived metrics are computed from the combined leaf columns, so nesting works.
+- **Missing keys.** Every join is a `LEFT JOIN`, as stated above; a row whose join key is NULL is kept under a NULL dimension value, for simple and for ratio metrics (tested on a hand-built table with one NULL key).
 - **Time filters** on a time-typed dimension are written as `CAST('<value>' AS DATE)` (a date-only value) or `CAST(... AS TIMESTAMP)`. Rows are ordered by the key columns with NULL keys last.
 - **Division.** The ratio casts its numerator to `DOUBLE PRECISION`; a derived metric's `a / b` is printed by sqlglot with a floating-point numerator for `postgres`, so integer inputs do not truncate (a test pins this).
 - **`metric.id`** in the response is `metric:<name>`.

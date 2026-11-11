@@ -107,3 +107,23 @@ def test_the_explanation_is_a_pure_function_of_the_plan() -> None:
     model = lending()
     plan = plan_request(model, request("collection_rate", **COLLECTION_BY_REGION))
     assert explain(model, plan) == explain(model, plan)
+
+
+def test_join_sentences_start_with_a_capital_letter() -> None:
+    response = compile_request(lending(), request("collection_rate", **COLLECTION_BY_REGION))
+    joins = [t for t in response.explanation if " are joined " in t or "rows are joined" in t]
+    assert joins and all(t[0].isupper() for t in joins), joins
+    assert all(t[0].isupper() for t in response.explanation)
+
+
+def test_a_rule_of_the_definition_on_another_entity_gets_a_join_sentence() -> None:
+    response = compile_request(lending(), request("restructured_outstanding_principal"))
+    joins = [t for t in response.explanation if "rows are joined" in t]
+    assert len(joins) == 1
+    assert joins[0].startswith("Rule contract.restructured comes from Financing Contract")
+    assert "contract_snapshot > contract through contract_snapshot.contract" in joins[0]
+    # It follows the definition-filter sentence and precedes nothing else.
+    filter_at, join_at = positions(
+        response.explanation, "the rule contract.restructured holds", "rows are joined"
+    )
+    assert filter_at < join_at
