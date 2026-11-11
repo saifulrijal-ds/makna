@@ -103,6 +103,11 @@ def _collect_values(env: Mapping[str, str], config_path: Path | str | None) -> d
         embedding = dict(values.get("embedding") or {})
         embedding["fastembed"] = {**(embedding.get("fastembed") or {}), "cache_dir": cache_dir}
         values["embedding"] = embedding
+    allow = env.get(ENV_PREFIX + "EMBEDDING_ALLOW_DOWNLOAD")
+    if allow:
+        embedding = dict(values.get("embedding") or {})
+        embedding["fastembed"] = {**(embedding.get("fastembed") or {}), "allow_download": allow}
+        values["embedding"] = embedding
     return values
 
 

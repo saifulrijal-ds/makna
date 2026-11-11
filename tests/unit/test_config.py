@@ -145,3 +145,13 @@ def test_a_bad_search_setting_is_reported(tmp_path: Path) -> None:
     config.write_text("[search]\nw_keyword = -1\n")
     with pytest.raises(ConfigError, match="search.w_keyword"):
         load_search_runtime({}, config)
+
+
+@pytest.mark.parametrize(("value", "expected"), [("1", True), ("true", True), ("false", False)])
+def test_allow_download_can_be_set_from_the_environment(
+    value: str, expected: bool, tmp_path: Path
+) -> None:
+    config = tmp_path / "makna.toml"
+    config.write_text("[embedding.fastembed]\nallow_download = false\n")
+    runtime = load_search_runtime({"MAKNA_EMBEDDING_ALLOW_DOWNLOAD": value}, config)
+    assert runtime.embedding.fastembed.allow_download is expected

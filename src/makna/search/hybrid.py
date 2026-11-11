@@ -8,16 +8,16 @@ and fuses the two ranks:
 
 Which documents are visible depends on the caller's role (SRC-3): agents and viewers see
 approved documents; curators, approvers, and admins also see drafts and proposals in review;
-deprecated documents appear only when the caller asks. A catalog column whose derived
-sensitivity is `personal` is shown only to curators and above, so search is not a map of where
-raw personal data lives. Permissions beyond this filter belong to the service layer (WP-12).
+deprecated documents appear only when the caller asks. A catalog column is shown to viewers and
+agents only when its catalog row exists and its derived sensitivity is not `personal` (a missing
+row means hidden); curators and above see all, so search is not a map of where raw personal data
+lives. Permissions beyond this filter belong to the service layer (WP-12).
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal
 
 from sqlalchemy import Connection, Engine, text
 
@@ -26,7 +26,6 @@ from makna.search import confidence as confidence_module
 from makna.search.confidence import Confidence, Vocabulary, build_vocabulary, matched_terms
 from makna.search.query import process
 
-Role = Literal["viewer", "agent", "curator", "approver", "admin"]
 ROLES: tuple[str, ...] = ("viewer", "agent", "curator", "approver", "admin")
 CURATOR_ROLES = frozenset({"curator", "approver", "admin"})
 DEFAULT_KINDS = tuple(kind for kind in DOCUMENT_KINDS if kind != "column")
@@ -46,10 +45,11 @@ cand AS (
   WHERE d.status = ANY(:statuses)
     AND d.kind = ANY(:kinds)
     AND (CAST(:domain AS text) IS NULL OR d.domain = CAST(:domain AS text))
-    AND (NOT :hide_personal OR d.kind <> 'column' OR NOT EXISTS (
+    AND (NOT :hide_personal OR d.kind <> 'column' OR EXISTS (
           SELECT 1
           FROM catalog_column cc JOIN catalog_dataset ds ON ds.id = cc.dataset_id
-          WHERE cc.derived_sensitivity = 'personal'
+          WHERE cc.derived_sensitivity IS DISTINCT FROM 'personal'
+            AND ds.removed_at IS NULL
             AND d.object_id = 'column:' || ds.engine_fqn || '.' || cc.name))
 ),
 kw AS (

@@ -563,8 +563,6 @@ def build(
     engine: Engine,
     provider: EmbeddingProvider,
     objects: Sequence[DefinitionObject],
-    *,
-    include_catalog: bool = True,
 ) -> IndexResult:
     """Rebuild the semantic index from `objects` and the catalog tables.
 
@@ -579,8 +577,7 @@ def build(
     rows = [semantic_row(obj, lookup) for obj in objects]
     result = IndexResult()
     with engine.begin() as connection:
-        if include_catalog:
-            wanted.extend(catalog_documents(connection, _claimed_terms(objects)))
+        wanted.extend(catalog_documents(connection, _claimed_terms(objects)))
         force = _model_changed(connection, provider)
         result.reembedded_everything = force
         _sync_documents(

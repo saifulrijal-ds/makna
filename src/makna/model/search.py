@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 DOCUMENT_KINDS = ("metric", "entity", "dimension", "rule", "glossary_term", "domain", "column")
-DOCUMENT_STATUSES = ("approved", "deprecated", "draft", "in_review")
 
 
 class EmbeddingProvider(Protocol):

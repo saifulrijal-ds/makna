@@ -19,7 +19,7 @@ from makna.model.definitions import Metric, parse_definition
 from makna.model.objects import DefinitionObject
 from makna.search.embedding import HashProvider
 
-from ..catalog_support import DEFINITIONS, export_data
+from ..catalog_support import DEFINITIONS, export_data, make_term
 
 
 def kinds(engine: Engine) -> Counter[str]:
@@ -187,3 +187,26 @@ def test_removing_a_dimension_removes_its_document(fresh_indexed_engine: Engine)
             )
         ).all()
     assert ids == []
+
+
+def test_a_catalog_term_claimed_by_a_makna_term_has_no_document_of_its_own(
+    fresh_indexed_engine: Engine,
+) -> None:
+    def term_ids() -> set[str]:
+        with fresh_indexed_engine.connect() as connection:
+            return set(
+                connection.execute(
+                    select(search_document.c.object_id).where(
+                        search_document.c.kind == "glossary_term"
+                    )
+                ).scalars()
+            )
+
+    assert "catalog_term:glossary.npf" in term_ids()
+    claimer = DefinitionObject(official=make_term("npf_claim", catalog_term="glossary.npf"))
+    result = indexer.build(fresh_indexed_engine, HashProvider(), [*sample_objects(), claimer])
+    ids = term_ids()
+    assert "catalog_term:glossary.npf" not in ids
+    assert "glossary_term:npf_claim" in ids
+    assert len(ids) == 8 + 1 + 7  # Makna terms, the claimer, the catalog terms left over
+    assert result.documents_removed == 1 and result.documents_added == 1

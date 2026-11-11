@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from makna.model.search import ConfidenceSettings
-from makna.search.query import word_matches
+from makna.search.query import word_matches, words
 from makna.search.terms import is_time_word
 
 Band = Literal["high", "medium", "low"]
@@ -56,8 +56,6 @@ class Vocabulary:
 
 
 def tokens_of(text: str) -> set[str]:
-    from makna.search.query import words
-
     return set(words(text))
 
 

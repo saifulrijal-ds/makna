@@ -89,6 +89,47 @@ def test_a_draft_ranks_below_an_approved_metric_that_matches_equally(
     assert (first.vector_rank, second.vector_rank) == (2, 1)
 
 
+def test_promoting_a_draft_makes_it_findable_by_agents(fresh_indexed_engine: Engine) -> None:
+    """Same text, only the status changes: `index_object` must still rewrite the document."""
+    indexer.index_object(fresh_indexed_engine, HashProvider(), twin("gamma_promo", "draft"))
+    search = searcher(fresh_indexed_engine)
+    assert "metric:gamma_promo" not in search.search("kalibrasi gamma", role="agent").ids
+    result = indexer.index_object(
+        fresh_indexed_engine, HashProvider(), twin("gamma_promo", "approved")
+    )
+    assert result.documents_changed == 1
+    with fresh_indexed_engine.connect() as connection:
+        status = connection.execute(
+            text("SELECT status FROM search_document WHERE object_id = 'metric:gamma_promo'")
+        ).scalar_one()
+    assert status == "approved"
+    assert "metric:gamma_promo" in search.search("kalibrasi gamma", role="agent").ids
+
+
+def test_a_column_without_a_catalog_row_is_hidden_from_viewers_and_agents(
+    fresh_indexed_engine: Engine,
+) -> None:
+    """Fail closed: the document outlives its column until the next build."""
+    column = "column:lending.core.customers.city"
+    with fresh_indexed_engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM catalog_column WHERE name = 'city' AND dataset_id IN "
+                "(SELECT id FROM catalog_dataset WHERE engine_fqn = 'lending.core.customers')"
+            )
+        )
+    search = searcher(fresh_indexed_engine)
+    for role in ("viewer", "agent"):
+        assert (
+            column not in search.search("customer city", role=role, kinds=["column"], limit=10).ids
+        )
+    assert column in search.search("customer city", role="curator", kinds=["column"], limit=10).ids
+    assert (
+        "column:lending.core.customers.province"
+        in search.search("customer province", role="agent", kinds=["column"], limit=10).ids
+    )
+
+
 def flat_settings(**weights: float) -> SearchSettings:
     kinds = ["metric", "entity", "dimension", "rule", "glossary_term", "domain", "column"]
     statuses = ["approved", "deprecated", "draft", "in_review"]
