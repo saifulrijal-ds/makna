@@ -16,19 +16,22 @@ WORKDIR /app
 
 # Dependencies first (cached while pyproject.toml and uv.lock do not change).
 COPY pyproject.toml uv.lock README.md ./
-COPY src ./src
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-dev --no-install-project
 
 # The default embedding model is downloaded once, here, into a fixed directory of the image,
 # so that the running stack never needs the network (NFR-3, ARCHITECTURE section 10). The model
 # and the directory must equal embedding.fastembed in config/makna.toml (a test checks that).
-# This layer sits before `COPY config`, so a change to the settings does not fetch it again.
+# This layer sits before `COPY src` and `COPY config`, so editing the code or the settings does
+# not fetch it again.
 ARG MAKNA_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 ENV MAKNA_EMBEDDING_CACHE_DIR=/opt/makna/models
-RUN python -c "import os; from makna.model.search import FastembedSettings; from makna.search.embedding import download_model; print('model ready:', download_model(FastembedSettings(model='$MAKNA_EMBEDDING_MODEL', cache_dir=os.environ['MAKNA_EMBEDDING_CACHE_DIR'])))"
+RUN python -c "import os; from fastembed import TextEmbedding; TextEmbedding(model_name='$MAKNA_EMBEDDING_MODEL', cache_dir=os.environ['MAKNA_EMBEDDING_CACHE_DIR']); print('model ready')"
 # From here on nothing may reach the network for a model: fastembed and the Hugging Face client
 # both stay offline.
 ENV HF_HUB_OFFLINE=1
+
+COPY src ./src
+RUN uv sync --locked --no-dev
 
 COPY config ./config
 COPY data ./data

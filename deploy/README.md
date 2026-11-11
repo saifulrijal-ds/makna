@@ -64,7 +64,7 @@ because it uses the sample-data code in `data/`, which the installed product nev
 
 ## The embedding model and the offline check
 
-The image downloads the default model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, about 0.22 GB, Apache-2.0) when it is built, into `/opt/makna/models`, and sets `HF_HUB_OFFLINE=1`; at run time the provider reads only those files and never tries the network (NFR-3). The model name and directory in the `Dockerfile` must equal `[embedding.fastembed]` in `config/makna.toml` (a test checks it). A site without internet access needs the model files in that directory; a build argument for an internal mirror is not built yet.
+The image downloads the default model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, about 0.22 GB, Apache-2.0) when it is built, into `/opt/makna/models`, and sets `HF_HUB_OFFLINE=1`; at run time the provider reads only those files and never tries the network (NFR-3). The model name and directory in the `Dockerfile` must equal `[embedding.fastembed]` in `config/makna.toml` (a test checks it). Outside Docker, `MAKNA_EMBEDDING_ALLOW_DOWNLOAD=true` lets the provider download the model into `cache_dir` once (or use `MAKNA_EMBEDDING_PROVIDER=hash`, which is for tests only). A site without internet access needs the model files in that directory; a build argument for an internal mirror is not built yet.
 
 Two search checks run in the CI `stack` job (and can be run by hand):
 

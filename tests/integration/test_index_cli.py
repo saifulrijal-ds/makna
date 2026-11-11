@@ -139,3 +139,15 @@ def test_changing_the_provider_embeds_everything_again(
     result = indexer.build(database, HashProvider(64), objects)
     assert result.reembedded_everything
     assert result.documents_changed == result.documents_embedded == count(database)
+
+
+def test_build_refuses_a_directory_with_no_definitions_and_leaves_the_index(
+    database: Engine, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    run(capsys, "index", "build", "--definitions", str(DEFINITIONS))
+    built = count(database)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    code, _, err = run(capsys, "index", "build", "--definitions", str(empty))
+    assert code == 1 and "no definition objects" in err
+    assert count(database) == built

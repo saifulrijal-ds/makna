@@ -128,12 +128,17 @@ def build_index_step(context: Context) -> str:
     if loaded.load_issues:
         problems = "; ".join(i.format("") for i in loaded.load_issues[:3])
         raise InitError(f"definition files cannot be read, so nothing was indexed: {problems}")
+    objects = definition_objects(loaded)
+    if not objects:
+        raise InitError(
+            f"{context.definitions_dir} holds no definition objects; nothing was indexed"
+        )
     runtime = load_search_runtime()
     key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
     provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
     engine = make_engine(context.database_url)
     try:
-        result = indexer.build(engine, provider, definition_objects(loaded))
+        result = indexer.build(engine, provider, objects)
     finally:
         engine.dispose()
     if result.total_changes == 0:

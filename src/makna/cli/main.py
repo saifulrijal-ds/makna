@@ -248,8 +248,17 @@ def _index_build(definitions: Path | None) -> int:
             file=sys.stderr,
         )
         return 1
+    objects = definition_objects(loaded)
+    if not objects:
+        print(
+            f"makna index build: {directory} holds no definition objects; not indexing, "
+            "so that the index is not emptied by a wrong directory",
+            file=sys.stderr,
+        )
+        engine.dispose()
+        return 1
     try:
-        result = indexer.build(engine, provider, definition_objects(loaded))
+        result = indexer.build(engine, provider, objects)
     except (EmbeddingError, indexer.IndexerError, SQLAlchemyError) as error:
         print(f"makna index build: {error}", file=sys.stderr)
         return 1

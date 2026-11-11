@@ -38,14 +38,18 @@ def test_the_image_downloads_the_model_the_settings_name_into_the_directory_they
     assert cache.group(1) == fastembed.cache_dir
 
 
-def test_the_download_comes_before_the_offline_switch_and_the_settings() -> None:
-    download = DOCKERFILE.index("download_model(")
+def test_the_model_layer_comes_before_the_source_and_the_settings() -> None:
+    """Editing `src` or `config` must not fetch the 0.22 GB model again."""
+    deps = DOCKERFILE.index("uv sync --locked --no-dev --no-install-project")
+    download = DOCKERFILE.index("TextEmbedding(model_name=")
     offline = DOCKERFILE.index("ENV HF_HUB_OFFLINE=1")
+    source = DOCKERFILE.index("COPY src ./src")
     config = DOCKERFILE.index("COPY config ./config")
     user = DOCKERFILE.index("USER makna")
-    assert download < offline < config < user
+    assert deps < download < offline < source < config < user
     assert "chown -R makna /opt/makna/models" in DOCKERFILE
-    assert "uv sync --locked --no-dev" in DOCKERFILE.split("download_model(")[0]
+    assert DOCKERFILE.index("RUN uv sync --locked --no-dev\n") > source
+    assert "COPY pyproject.toml uv.lock" in DOCKERFILE[:deps]
 
 
 def test_the_offline_override_makes_the_network_internal_and_publishes_nothing() -> None:

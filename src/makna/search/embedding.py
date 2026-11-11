@@ -35,7 +35,6 @@ __all__ = [
     "HashProvider",
     "OllamaProvider",
     "OpenAICompatibleProvider",
-    "download_model",
     "make_provider",
 ]
 
@@ -131,15 +130,6 @@ class FastembedProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return self._embed([text])[0]
-
-
-def download_model(settings: FastembedSettings | None = None) -> str:
-    """Fetch the model into `cache_dir` (the Docker build runs this once). Returns the model id."""
-    from fastembed import TextEmbedding
-
-    chosen = settings or FastembedSettings()
-    TextEmbedding(model_name=chosen.model, cache_dir=chosen.cache_dir)
-    return chosen.model
 
 
 class _HttpProvider:

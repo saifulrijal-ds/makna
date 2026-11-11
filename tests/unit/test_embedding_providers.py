@@ -23,7 +23,6 @@ from makna.model.search import (
     OllamaSettings,
     OpenAICompatibleSettings,
 )
-from makna.search import embedding
 from makna.search.embedding import (
     EmbeddingError,
     FastembedProvider,
@@ -198,14 +197,6 @@ def test_fastembed_loads_the_model_once(fastembed_stub: type[FakeTextEmbedding])
 def test_fastembed_downloads_only_when_asked(fastembed_stub: type[FakeTextEmbedding]) -> None:
     FastembedProvider(FastembedSettings(allow_download=True)).embed_query("npf")
     assert fastembed_stub.instances[0].kwargs["local_files_only"] is False
-
-
-def test_download_model_is_the_one_call_that_may_use_the_network(
-    fastembed_stub: type[FakeTextEmbedding],
-) -> None:
-    assert embedding.download_model(FastembedSettings(cache_dir="/m")).startswith("sentence")
-    assert "local_files_only" not in fastembed_stub.instances[0].kwargs
-    assert fastembed_stub.instances[0].kwargs["cache_dir"] == "/m"
 
 
 def test_fastembed_explains_a_missing_model(monkeypatch: pytest.MonkeyPatch) -> None:
