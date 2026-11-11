@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: days_past_due
+label: Days Past Due (DPD)
+description: >-
+  The number of days since the oldest unpaid installment of a contract fell due. It is zero when nothing is overdue. It is measured at each month end and drives the past-due bands and collectibility classes.
+domain: lending
+owner: {team: credit-risk}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [DPD, days overdue, delinquency days, arrears days]
+  id: [hari keterlambatan, tunggakan, hari tunggakan, umur tunggakan]
+version: 1
+related: [entity:contract_snapshot, metric:npf_ratio, metric:par30_ratio]

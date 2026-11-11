@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: outstanding
+label: Outstanding Principal
+description: >-
+  The principal a customer still owes at a point in time. It is a balance, so it is read at one month end and never added up across months. Fully repaid contracts have nothing outstanding and leave the portfolio.
+domain: lending
+owner: {team: credit-risk}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [OS, outstanding balance, remaining principal, receivables]
+  id: [baki debet, sisa pokok, saldo pokok, outstanding pokok]
+version: 1
+related: [metric:outstanding_principal, metric:active_contract_count, entity:contract_snapshot]

@@ -1,0 +1,30 @@
+apiVersion: makna/v1
+kind: metric
+name: promise_to_pay_count
+label: Promise to Pay Count
+description: >-
+  Number of collection activities that ended with the customer promising to
+  pay, counted on the date of the activity.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [promises to pay, PTP count, payment promises]
+  id: [jumlah janji bayar, janji bayar, jumlah PTP]
+version: 1
+type: simple
+measure: collection_action.promise_to_pay_actions
+join_paths:
+  branch: [collection_action.contract, contract.servicing_branch]
+format: {kind: count, unit: actions, decimals: 0}
+default_grain: month
+example_questions:
+  - How many promises to pay did collectors get last month?
+  - Berapa janji bayar yang diperoleh per jenis aksi?
+example_requests:
+  - question: "Janji bayar yang diperoleh pada kuartal kedua 2026 menurut jenis aksi"
+    request: {dimensions: [collection_action.action_type], time_start: "2026-04-01", time_end: "2026-07-01"}
+caveats: >-
+  A promise is not a payment: it does not say whether the customer paid
+  afterwards. Counts activities, not customers. Reported by servicing branch.

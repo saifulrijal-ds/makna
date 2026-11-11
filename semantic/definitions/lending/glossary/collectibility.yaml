@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: collectibility
+label: Collectibility
+description: >-
+  The asset quality class of a contract, from 1 (current) to 5 (loss), derived from days past due at a month end. Classes 3, 4, and 5 are non-performing. The bands are 0 to 10 days, 11 to 90, 91 to 120, 121 to 180, and over 180.
+domain: lending
+owner: {team: credit-risk}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [collectability, asset quality class, credit quality class, loan classification]
+  id: [kolektibilitas, kol, kualitas kredit, kualitas aset]
+version: 1
+related: [entity:contract_snapshot, metric:npf_ratio, metric:npf_outstanding_principal]

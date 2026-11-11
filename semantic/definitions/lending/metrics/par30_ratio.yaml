@@ -1,0 +1,31 @@
+apiVersion: makna/v1
+kind: metric
+name: par30_ratio
+label: PAR 30 Ratio
+description: >-
+  Share of outstanding principal that is more than 30 days past due at a month
+  end, also called portfolio at risk (PAR 30).
+domain: lending
+owner: {team: credit-risk, contact: credit-risk@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [PAR 30, portfolio at risk, PAR30 ratio, delinquency rate]
+  id: [rasio PAR 30, rasio tunggakan di atas 30 hari, persentase kredit lewat 30 hari]
+version: 1
+type: ratio
+numerator: par30_outstanding_principal
+denominator: outstanding_principal
+format: {kind: percent, decimals: 2}
+time_grains: [month, quarter, year]
+default_grain: month
+example_questions:
+  - What is our PAR 30 at the end of the quarter?
+  - Berapa rasio PAR 30 per cabang bulan lalu?
+example_requests:
+  - question: "Rasio PAR 30 per wilayah, kuartal demi kuartal sejak awal 2025"
+    request: {dimensions: [branch.region_name], grain: quarter, time_start: "2025-01-01", time_end: "2026-07-01"}
+caveats: >-
+  Gross ratio based on principal. It is always at least as high as the NPF
+  ratio, because it includes everything more than 30 days past due. Reported by
+  servicing branch.

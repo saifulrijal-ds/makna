@@ -1,0 +1,29 @@
+apiVersion: makna/v1
+kind: metric
+name: disbursed_contract_count
+label: Disbursed Contract Count
+description: >-
+  Number of contracts whose funds were released in a period, counted on the
+  disbursement date. Contracts that were signed and then cancelled are not
+  counted.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [contracts disbursed, number of new contracts, booked contracts, new loans]
+  id: [jumlah kontrak dicairkan, jumlah kontrak baru, jumlah pencairan kontrak]
+version: 1
+type: simple
+measure: contract.disbursed_contracts
+join_paths:
+  branch: [contract.booking_branch]
+format: {kind: count, unit: contracts, decimals: 0}
+default_grain: month
+example_questions:
+  - How many new contracts did we book last month?
+  - Berapa jumlah kontrak yang dicairkan per produk tahun lalu?
+example_requests:
+  - question: "Number of contracts disbursed in 2025, by product category"
+    request: {dimensions: [product.product_category], time_start: "2025-01-01", time_end: "2026-01-01"}
+caveats: Uses the disbursement date, not the signing date. Reported by booking branch.

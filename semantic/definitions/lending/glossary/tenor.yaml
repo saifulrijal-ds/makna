@@ -1,0 +1,15 @@
+apiVersion: makna/v1
+kind: glossary_term
+name: tenor
+label: Tenor
+description: >-
+  The length of a financing contract, as the number of monthly installments agreed at signing. The usual tenors are 12, 18, 24, 36, and 48 months. A later restructuring does not change the tenor recorded at signing.
+domain: lending
+owner: {team: sales-performance}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [loan term, contract term, term in months, financing period]
+  id: [tenor, jangka waktu, lama angsuran, masa pembiayaan]
+version: 1
+related: [entity:contract]

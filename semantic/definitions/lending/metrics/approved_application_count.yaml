@@ -1,0 +1,28 @@
+apiVersion: makna/v1
+kind: metric
+name: approved_application_count
+label: Approved Application Count
+description: >-
+  Number of applications approved in a period, counted on the decision date.
+  An approved application does not always become a contract.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [approved applications, applications approved, approvals]
+  id: [jumlah pengajuan disetujui, pengajuan disetujui, jumlah persetujuan kredit]
+version: 1
+type: simple
+measure: application.approved_applications
+join_paths:
+  branch: [application.branch]
+format: {kind: count, unit: applications, decimals: 0}
+default_grain: month
+example_questions:
+  - How many applications were approved in March 2026?
+  - Berapa pengajuan yang disetujui per wilayah bulan lalu?
+example_requests:
+  - question: "Approved applications in March 2026 by region"
+    request: {dimensions: [branch.region_name], time_start: "2026-03-01", time_end: "2026-04-01"}
+caveats: Uses the decision date, not the submission date. Reported by the branch that received the application.
