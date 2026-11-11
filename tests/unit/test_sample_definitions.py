@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import sqlglot
+import yaml
 from sqlglot import exp
 
 from data.generator import TABLES, get_table
@@ -25,6 +26,7 @@ from makna.model.definitions import (
     Entity,
     Filter,
     GlossaryTerm,
+    MaskTruncateDate,
     Measure,
     Metric,
     Relationship,
@@ -32,7 +34,7 @@ from makna.model.definitions import (
     RuleRef,
 )
 
-from .generator_support import ROOT, _cells, doc_relationships
+from .generator_support import ROOT, connect, doc_relationships, scalar, table_cells
 
 DEFINITIONS = ROOT / "semantic" / "definitions"
 EXAMPLES = ROOT / "semantic" / "schema" / "examples" / "lending"
@@ -123,7 +125,7 @@ def doc_metrics() -> tuple[DocMetric, ...]:
             team = ""
         if not team or not re.match(r"\| \d+ \|", line):
             continue
-        cells = _cells(line)
+        cells = table_cells(line)
         name_cell = cells[1]
         out.append(
             DocMetric(
@@ -149,7 +151,7 @@ def doc_rules() -> list[tuple[str, str, str]]:
         elif line.startswith("### "):
             in_rules = False
         if in_rules and line.startswith("| `"):
-            cells = _cells(line)
+            cells = table_cells(line)
             entity, rule = cells[0].split("`")[1].split(".")
             out.append((entity, rule, cells[1].strip("`")))
     return out
@@ -169,7 +171,7 @@ def doc_governance_fixtures() -> dict[str, str]:
         elif line.startswith("### "):
             in_table = False
         if in_table and line.startswith("| `"):
-            cells = _cells(line)
+            cells = table_cells(line)
             out[cells[0].strip("`")] = cells[1]
     return out
 
@@ -453,7 +455,7 @@ def test_each_personal_column_is_read_by_a_personal_dimension() -> None:
             assert not columns_of(dimension.expr or dimension.name) & set(PERSONAL_COLUMNS)
 
 
-def test_only_birth_date_is_masked_and_only_by_truncating_to_a_year_or_coarser() -> None:
+def test_only_birth_date_is_masked_and_only_by_truncating_to_a_year() -> None:
     customer = loaded().entities["customer"]
     for dimension in customer.dimensions:
         if dimension.sensitivity != "personal":
@@ -461,13 +463,14 @@ def test_only_birth_date_is_masked_and_only_by_truncating_to_a_year_or_coarser()
             continue
         column = next(iter(columns_of(dimension.expr or dimension.name)))
         if column == "birth_date":
-            assert dimension.masking is not None
-            assert dimension.masking.method == "truncate_date"
+            # the only allowed mask is a date truncated to a year (a month would be finer)
+            assert isinstance(dimension.masking, MaskTruncateDate)
+            assert dimension.masking.grain == "year"
         else:
             assert dimension.masking is None, dimension.name
     # the example dimension keeps the year grain
     year = next(d for d in customer.dimensions if d.name == "birth_year")
-    assert year.masking is not None and year.masking.method == "truncate_date"
+    assert isinstance(year.masking, MaskTruncateDate)
 
 
 def test_personal_dimensions_list_no_values() -> None:
@@ -513,6 +516,9 @@ def test_the_rules_of_the_document_exist_with_the_stated_condition() -> None:
         ("contract_snapshot", "past_due_30"),
         ("contract", "restructured"),
     }
+    # the draft write-off metric adds a fourth rule that the document does not list
+    declared = {(e.name, r.name) for e in loaded().entities.values() for r in e.rules or []}
+    assert declared == {(e, r) for e, r, _ in rules} | {("contract_snapshot", "write_off_position")}
     for entity_name, rule_name, expected in rules:
         entity = loaded().entities[entity_name]
         rule = next(r for r in entity.rules or [] if r.name == rule_name)
@@ -549,7 +555,7 @@ def test_no_measure_or_metric_filter_repeats_a_condition_that_a_rule_names() -> 
         for entity in loaded().entities.values()
         for rule in entity.rules or []
     ]
-    assert len(rule_trees) == 3
+    assert len(rule_trees) == 4
     for entity in loaded().entities.values():
         for measure in entity.measures or []:
             if measure.filter is None:
@@ -716,9 +722,246 @@ def test_the_documented_indonesian_synonyms_are_present() -> None:
         "disbursement": {"pencairan"},
         "restructuring": {"restrukturisasi"},
         "outstanding": {"baki debet", "sisa pokok"},
-        "portfolio_at_risk": set(),
     }
     for name, words in expected.items():
         assert words <= set(loaded().glossary[name].synonyms["id"]), name
     assert "DPD" in loaded().glossary["days_past_due"].synonyms["en"]
     assert "PAR" in loaded().glossary["portfolio_at_risk"].synonyms["en"]
+
+
+# --------------------------------------------------------------------------------------
+# What each simple metric's measure computes (SAMPLE_DOMAIN section 5, "Built from")
+
+# (metric, measure, agg, expr, row filter, rule). Each row restates the "Built from" cell of the
+# metric's row in SAMPLE_DOMAIN section 5. A filter on a legacy table uses its physical column
+# (for example `sts_putusan` is the dimension `decision_status`).
+MEASURE_TABLE: list[tuple[str, str, str, str | None, str | None, str | None]] = [
+    # 1 count of `application` rows
+    ("application_count", "application.submitted_applications", "count", None, None, None),
+    # 2 count of `application` where `decision_status IN ('approved','rejected')`
+    (
+        "decided_application_count",
+        "application.decided_applications",
+        "count",
+        None,
+        "sts_putusan IN ('approved','rejected')",
+        None,
+    ),
+    # 3 count of `application` where `decision_status = 'approved'`
+    (
+        "approved_application_count",
+        "application.approved_applications",
+        "count",
+        None,
+        "sts_putusan = 'approved'",
+        None,
+    ),
+    # 5 sum of `principal_amount` where `disbursement_date` is not null (cancelled excluded, Q2)
+    (
+        "disbursement_amount",
+        "contract.disbursed_principal",
+        "sum",
+        "principal_amount",
+        "disbursement_date IS NOT NULL",
+        None,
+    ),
+    # 6 count of `contract` where `disbursement_date` is not null
+    (
+        "disbursed_contract_count",
+        "contract.disbursed_contracts",
+        "count",
+        None,
+        "disbursement_date IS NOT NULL",
+        None,
+    ),
+    # 8 count of `customer` rows
+    ("new_customer_count", "customer.new_customers", "count", None, None, None),
+    # 9 sum of `outstanding_principal`
+    (
+        "outstanding_principal",
+        "contract_snapshot.outstanding_principal",
+        "sum",
+        "outstanding_principal",
+        None,
+        None,
+    ),
+    # 10 count of `contract_snapshot` rows
+    ("active_contract_count", "contract_snapshot.active_contracts", "count", None, None, None),
+    # 11 sum of `outstanding_principal` where `days_past_due > 90` (rule non_performing, D-17)
+    (
+        "npf_outstanding_principal",
+        "contract_snapshot.npf_outstanding_principal",
+        "sum",
+        "outstanding_principal",
+        None,
+        "non_performing",
+    ),
+    # 13 sum of `outstanding_principal` where `days_past_due > 30` (rule past_due_30, D-17)
+    (
+        "par30_outstanding_principal",
+        "contract_snapshot.par30_outstanding_principal",
+        "sum",
+        "outstanding_principal",
+        None,
+        "past_due_30",
+    ),
+    # 15 `contract_snapshot.outstanding_principal` with the metric filter
+    #    {rule: contract.restructured}
+    (
+        "restructured_outstanding_principal",
+        "contract_snapshot.outstanding_principal",
+        "sum",
+        "outstanding_principal",
+        None,
+        None,
+    ),
+    # 17 sum of `installment_amount` where `is_current` (replaced rows excluded, Q4)
+    ("due_amount", "installment.due_amount", "sum", "installment_amount", "is_current", None),
+    # 18 sum of `principal_paid + interest_paid` where not reversed (Q6)
+    (
+        "collected_amount",
+        "payment.collected_amount",
+        "sum",
+        "principal_paid + interest_paid",
+        "NOT is_reversed",
+        None,
+    ),
+    # 20 sum of `penalty_paid` where not reversed (Q6)
+    ("penalty_income", "payment.penalty_received", "sum", "penalty_paid", "NOT is_reversed", None),
+    # 21 count of `collection_action` rows
+    ("collection_action_count", "collection_action.collection_actions", "count", None, None, None),
+    # 22 count of `collection_action` where `outcome = 'promise_to_pay'`
+    (
+        "promise_to_pay_count",
+        "collection_action.promise_to_pay_actions",
+        "count",
+        None,
+        "hasil = 'promise_to_pay'",
+        None,
+    ),
+]
+
+
+def normalised(sql: str | None) -> str | None:
+    return None if sql is None else condition(sql).sql(dialect="postgres")
+
+
+def test_the_table_covers_the_16_simple_metrics() -> None:
+    simple = {r.name for r in doc_metrics() if r.type == "simple"}
+    assert len(MEASURE_TABLE) == 16
+    assert {row[0] for row in MEASURE_TABLE} == simple
+
+
+@pytest.mark.parametrize(
+    ("metric_name", "measure_ref", "agg", "expr", "flt", "rule"), MEASURE_TABLE
+)
+def test_each_simple_metric_computes_what_its_row_says(
+    metric_name: str,
+    measure_ref: str,
+    agg: str,
+    expr: str | None,
+    flt: str | None,
+    rule: str | None,
+) -> None:
+    metric = approved_metrics()[metric_name]
+    assert metric.measure == measure_ref
+    entity_name, measure_name = measure_ref.split(".")
+    measure = next(
+        m for m in loaded().entities[entity_name].measures or [] if m.name == measure_name
+    )
+    assert measure.agg == agg
+    assert normalised(measure.expr) == normalised(expr)
+    assert normalised(measure.filter) == normalised(flt)
+    assert measure.rule == rule
+    # metric-level filters: only restructured_outstanding_principal has one, a rule reference
+    if metric_name == "restructured_outstanding_principal":
+        assert metric.filters == [RuleRef(rule="contract.restructured")]
+    else:
+        assert not metric.filters
+
+
+# --------------------------------------------------------------------------------------
+# Golden questions must not leak from the definitions (docs/EVALS.md section 2.3)
+
+
+def _plain(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def golden_questions() -> list[str]:
+    out = []
+    for line in (ROOT / "docs" / "EVALS.md").read_text(encoding="utf-8").splitlines():
+        if re.match(r"\| G\d+ \|", line):
+            out.append(table_cells(line)[1])
+        elif m := re.match(r'\s*question: "(.+)"\s*(#.*)?$', line):
+            out.append(m.group(1))
+    return out
+
+
+def definition_questions() -> list[str]:
+    out: list[str] = []
+    for base in (ROOT / "semantic" / "definitions", ROOT / "semantic" / "schema" / "examples"):
+        for path in sorted(base.rglob("*.yaml")):
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if data.get("kind") != "metric":
+                continue
+            out += data.get("example_questions", [])
+            out += [e["question"] for e in data.get("example_requests", [])]
+    return out
+
+
+def test_golden_questions_are_parsed() -> None:
+    questions = golden_questions()
+    assert len(questions) >= 20
+    assert "How much did we disburse in June 2026?" in questions
+    assert len(definition_questions()) > 80
+
+
+def test_no_golden_question_equals_an_example_question() -> None:
+    examples = {_plain(q) for q in definition_questions()}
+    clashes = [q for q in golden_questions() if _plain(q) in examples]
+    assert clashes == []
+
+
+# --------------------------------------------------------------------------------------
+# The draft write-off metric selects exactly the write-off row (Q8)
+
+
+def test_the_draft_write_off_metric_uses_the_write_off_rule() -> None:
+    draft = loaded().draft_metrics["write_off_amount"]
+    assert draft.measure == "contract_snapshot.written_off_outstanding_principal"
+    assert not draft.filters
+    assert draft.time_grains == ["month"]
+    measure = next(
+        m
+        for m in loaded().entities["contract_snapshot"].measures or []
+        if m.name == "written_off_outstanding_principal"
+    )
+    assert measure.rule == "write_off_position"
+    assert measure.semi_additive == "last"
+
+
+def test_the_write_off_rule_selects_exactly_one_row_per_written_off_contract(
+    data_small: Path,
+) -> None:
+    rule = next(
+        r
+        for r in loaded().entities["contract_snapshot"].rules or []
+        if r.name == "write_off_position"
+    )
+    # Q8: a contract more than 210 days past due at a month end is written off at that month end
+    assert condition(rule.expr) == condition("days_past_due > 210")
+    con = connect(data_small)
+    on_rule = f"""SELECT count(*) FROM contract_monthly_snapshots WHERE {rule.expr}"""
+    # the write-off row: the contract's status is written_off and the row is at its closing date
+    write_off_rows = """SELECT count(*) FROM contract_monthly_snapshots s
+        JOIN contracts c USING (contract_id)
+        WHERE c.contract_status = 'written_off' AND s.snapshot_date = c.closed_date"""
+    both = f"""SELECT count(*) FROM contract_monthly_snapshots s
+        JOIN contracts c USING (contract_id)
+        WHERE c.contract_status = 'written_off' AND s.snapshot_date = c.closed_date
+        AND s.{rule.expr}"""
+    written_off = "SELECT count(*) FROM contracts WHERE contract_status = 'written_off'"
+    assert scalar(con, written_off) > 0
+    assert scalar(con, on_rule) == scalar(con, write_off_rows) == scalar(con, both)
+    assert scalar(con, write_off_rows) == scalar(con, written_off)
