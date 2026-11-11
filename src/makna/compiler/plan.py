@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime
 import difflib
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -651,7 +652,7 @@ def _type_fits(dimension_type: str, value: object) -> bool:
     if isinstance(value, bool):
         return False
     if dimension_type == "numeric":
-        return isinstance(value, (int, float))
+        return isinstance(value, (int, float)) and math.isfinite(value)
     if dimension_type == "time":
         if not isinstance(value, str):
             return False

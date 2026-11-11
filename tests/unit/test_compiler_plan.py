@@ -613,3 +613,18 @@ def test_an_issue_on_an_entity_a_path_passes_through_refuses() -> None:
     error = failure(model, request("collected_amount", dimensions=["customer.customer_segment"]))
     assert error.code == ErrorCode.BROKEN_REFERENCE
     assert error.details["issues"][0]["object"] == "entity:contract"
+
+
+# ---- WP-09: a number that is not finite never reaches SQL generation ----------------------
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_filter_value_that_is_not_a_finite_number_is_an_invalid_filter(value: float) -> None:
+    error = failure(
+        lending(),
+        request(
+            "disbursement_amount",
+            filters=[{"dimension": "contract.annual_rate_pct", "op": ">", "value": value}],
+        ),
+    )
+    assert error.code == ErrorCode.INVALID_FILTER
