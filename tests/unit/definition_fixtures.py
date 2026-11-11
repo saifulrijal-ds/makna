@@ -533,6 +533,20 @@ def v18_rule_reads_personal_column(files: Files) -> None:
     ]
 
 
+# --- V20 ---------------------------------------------------------------------------------
+
+
+def v20_time_copy_of_a_masked_column(files: Files) -> None:
+    _entity(files, "customer")["dimensions"].append(
+        _dim("birth_copy", "time", expr="birth_date", sensitivity="internal")
+    )
+
+
+def v20_categorical_copy_inside_a_function(files: Files) -> None:
+    dims = _entity(files, "customer")["dimensions"]
+    dims.append(_dim("shouted_email", "categorical", expr="UPPER(email)", sensitivity="internal"))
+
+
 # (rule, fixture name) -> mutation. Each must make the validator report exactly that code.
 FIXTURES: dict[str, list[Mutation]] = {
     "V01": [v01_metric_without_id_synonym, v01_unknown_key],
@@ -606,4 +620,5 @@ FIXTURES: dict[str, list[Mutation]] = {
         v18_metric_rule_does_not_exist,
         v18_rule_reads_personal_column,
     ],
+    "V20": [v20_time_copy_of_a_masked_column, v20_categorical_copy_inside_a_function],
 }

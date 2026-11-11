@@ -29,8 +29,8 @@ def test_the_base_repository_is_valid(tmp_path: Path) -> None:
     assert [i.format() for i in validate(load_definitions(root))] == []
 
 
-def test_every_rule_from_v01_to_v18_has_a_fixture() -> None:
-    assert sorted(fx.FIXTURES) == [f"V{n:02d}" for n in range(1, 19)]
+def test_every_rule_from_v01_to_v18_and_v20_has_a_fixture() -> None:
+    assert sorted(fx.FIXTURES) == [f"V{n:02d}" for n in (*range(1, 19), 20)]
 
 
 CASES = [

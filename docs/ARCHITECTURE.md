@@ -210,6 +210,7 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V17 | A personal dimension has no `values` (they would be returned by `get_definition` and indexed for search). |
 | V18 | A measure's `rule` names a rule on the same entity; a metric's `{rule: entity.rule}` names a rule on an entity reachable from its measure; a rule's `expr` reads no column of a personal dimension. |
 | V19 | Every example request plans and compiles with no error (checked with the compiler: `makna validate` once WP-08 exists, and at submit and approve). |
+| V20 | A dimension that is not personal reads no column of a personal dimension on the same entity (a copy would bypass masking and refusals). |
 
 Reference issues (`makna.catalog.references`):
 

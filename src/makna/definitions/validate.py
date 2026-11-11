@@ -1,4 +1,4 @@
-"""Definition errors V01 to V18 (ARCHITECTURE section 5.3).
+"""Definition errors V01 to V18 and V20 (ARCHITECTURE section 5.3).
 
 `validate` takes a `DefinitionSet` and returns every problem as an `Issue`. V01 problems are
 found while loading; a file that failed V01 is left out of the other checks, so one broken
@@ -291,6 +291,21 @@ class _Checker:
                         i,
                         "values",
                     )
+        for i, dim in enumerate(e.dimensions):
+            if _is_personal(e, dim):
+                continue
+            copied = sorted(
+                _columns(dim.expr if dim.expr is not None else dim.name) & personal_columns
+            )
+            if copied:
+                self.add(
+                    "V20",
+                    f"dimension {dim.name} is not personal but reads personal column "
+                    f"{', '.join(copied)}, which would bypass masking",
+                    "dimensions",
+                    i,
+                    "expr" if dim.expr is not None else "name",
+                )
         for i, rule in enumerate(e.rules or []):
             self.check_expression(rule.expr, f"rule {rule.name}", "rules", i, "expr")
             overlap = sorted(_columns(rule.expr) & personal_columns)
