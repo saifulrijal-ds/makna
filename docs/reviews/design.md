@@ -372,8 +372,8 @@ The owner asked for the High and Medium findings to be fixed. None of the Low fi
 | R-13 dependency edges | Partly changed: WP-18 now depends on WP-12B. Still open: WP-18 acceptance 2 uses the MCP tools without depending on WP-13, and the WP-14 freeze command is built in WP-15. Fix these when WP-14 and WP-18 start. |
 | R-14 catalog documents labelled approved | Partly addressed: personal columns are hidden from agents (R-3). A separate `catalog` status is still open. |
 | R-15 spike claims overstated | DR-5 was reworded as part of R-4. DR-12 ("implements all of it") is unchanged. |
-| R-16 schema does not enforce SEM-2 synonyms and similar | Open. Needs the owner to decide whether synonyms are mandatory (SEM-2 says so; ARCH 5.1 says optional). |
-| R-17 brief says reranking is MVP, requirements say P2 | Open. **Owner decision.** |
+| R-16 schema does not enforce SEM-2 synonyms and similar | Partly closed by D-19: the schema now requires `en` and `id` synonyms on metrics, entities, and glossary terms. The "no SQL in descriptions" rule, the `deprecated` clause for all kinds, `related` resolution, and `one_to_one` are still open. |
+| R-17 brief says reranking is MVP, requirements say P2 | Closed by D-23: phase 2; the brief is corrected. |
 | R-18 who may reject (ARCH 10 versus 11) | Open. One-line fix in WP-18. |
 | R-19 criteria that cannot be checked meaningfully | Open. |
 | R-20 the "syariah" synonym misleads the resolver on G09 | Open. WP-04 or WP-20 should fix it. |
@@ -385,6 +385,21 @@ The owner asked for the High and Medium findings to be fixed. None of the Low fi
 - **Search spike:** `output.txt` was regenerated after the new example questions. Only two keyword scores and the latency line changed; recall and MRR did not.
 - All 39 MVP requirement IDs have a work package. `PLAN.md`, `progress.json` (28 packages) and ARCH section 16 agree. The dependency graph has no unknown or forward edges.
 - The original `plan_check.py` probe does not recognise the new `B` and `C` package suffixes, so it reports false differences on the new plan.
+
+## 5. Owner decisions after the review (D-16 to D-26)
+
+The owner compared the design with an adopter's catalog requirements and decided D-16 to D-26 (`docs/DECISIONS.md`). They change these findings:
+
+- **R-3 (High).** The fix above (encrypted engine credentials stored with tokens) is superseded by D-21: Makna compiles only and runs no caller's query. It therefore holds no engine credentials for callers, and the run tool, the run permission, and the credential storage are removed. The part of the fix that hides personal `column` documents from agents and viewers stays. The residual risk is stated in ARCH 7.6 and in `docs/notes/makna-guarantees-cover-only-the-sql-it-compiles.md`: an agent that has its own engine access can run SQL Makna never saw, so engine access control must protect personal data.
+- **R-12 (Medium).** The open GOV-2 question is decided by D-24: "personal data removed where it can be detected".
+- **R-16, R-17 (Low).** See the table above.
+- **Trino (D-22).** PostgreSQL is now the MVP target engine and DuckDB the unit-test engine. The five compiler spike cases pass on a real PostgreSQL 16 server and on DuckDB (`spikes/compiler/run_on_postgres.py`, `output_postgres.txt`).
+- **New design content.** Named rules (D-17, V18), example requests (D-18, V19), and governance-team approval of loosened sensitivity (D-20). The examples, the schema, and the compiler spike were updated, and all 7 example requests compile and return rows.
+
+After these changes:
+- **Schema:** all 16 example files pass.
+- **Spikes:** both pass.
+- **Coverage:** all 38 MVP requirement IDs (QRY-4 is dropped) have a work package.
 
 ## Appendix A. Requirement to architecture to work package
 
