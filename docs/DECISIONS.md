@@ -35,6 +35,7 @@ These are settled. Do not reopen them without new information.
 | D-25 | A materialization registry (which physical columns hold a metric pre-computed at which grain) is phase 2. The compiler always computes from base tables at the requested grain, which avoids averaging pre-computed ratios. | 2026-11-11 |
 | D-26 | No language model runs inside Makna in the MVP: no built-in chat assistant and no LLM gateway. Agents stay read-only, so there is no feedback or write tool for them (D-4). Any MCP client, including an adopter's own catalog assistant, can use Makna's tools. | 2026-11-11 |
 | D-27 | The PostgreSQL driver is `psycopg` (version 3), as `docs/ARCHITECTURE.md` section 6.3 says. The owner approved its LGPL-3.0 licence (`CLAUDE.md` asks for approval of non-permissive licences). Makna uses the library unmodified as an ordinary dependency. | 2026-11-11 |
+| D-28 | The default embedding provider `fastembed` (Apache-2.0, DR-9) brings two runtime dependencies with the weak-copyleft MPL-2.0 licence: `tqdm` ("MPL-2.0 AND MIT") and `certifi` (MPL-2.0, also reached through `httpx` and `requests`). The owner approved them (`CLAUDE.md` asks for approval of non-permissive licences). Makna uses both unmodified as ordinary dependencies. | 2026-11-11 |
 
 ## Proposed defaults (the design session may change these with a written reason)
 
