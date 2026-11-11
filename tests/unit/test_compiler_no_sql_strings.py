@@ -77,6 +77,93 @@ def violations(source: str, name: str = "<source>") -> list[str]:
     return found
 
 
+# --------------------------------------------------------------------------------------
+# The strict rule for the modules that build SQL: no string formatting at all, except in the
+# few helpers below. Each returns an identifier that is passed to sqlglot (`exp.to_identifier`,
+# `exp.table_`) or a plain message for a QueryError, never a piece of SQL.
+
+STRICT_MODULES = ("sqlgen.py", "compile.py")
+ALLOWED_HELPERS: dict[tuple[str, str], str] = {
+    ("sqlgen.py", "_failed"): "error message for a QueryError",
+    ("sqlgen.py", "_refused"): "error message for a QueryError",
+    ("sqlgen.py", "_alias"): "table alias text, becomes a quoted identifier node",
+    ("sqlgen.py", "_cte"): "CTE name text, becomes a quoted identifier node",
+    ("compile.py", "_metric_id"): "the `metric:<name>` reference of the response, not SQL",
+}
+
+
+def _is_text(node: ast.AST) -> bool:
+    return literal_text(node) is not None
+
+
+def strict_violations(source: str, name: str) -> list[str]:
+    """Every f-string, `%`/`+` with a string operand, `.format`, and string `.join` in `source`
+    that is not inside one of the allowed helpers."""
+    found: list[str] = []
+
+    def visit(node: ast.AST, function: str | None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        how = None
+        if isinstance(node, ast.JoinedStr):
+            how = "an f-string"
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)):
+            if _is_text(node.left) or _is_text(node.right):
+                how = "% or + with a string operand"
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "format" and _is_text(node.func.value):
+                how = ".format"
+            elif node.func.attr == "join" and _is_text(node.func.value):
+                how = "str.join"
+        if how and (name, function or "") not in ALLOWED_HELPERS:
+            found.append(f"{name}:{getattr(node, 'lineno', '?')} in {function}: {how}")
+        for child in ast.iter_child_nodes(node):
+            visit(child, function)
+
+    visit(ast.parse(source), None)
+    return found
+
+
+@pytest.mark.parametrize("name", STRICT_MODULES)
+def test_the_modules_that_build_sql_use_no_string_formatting_outside_the_allowed_helpers(
+    name: str,
+) -> None:
+    assert strict_violations((PACKAGE / name).read_text(encoding="utf-8"), name) == []
+
+
+def test_every_allowed_helper_exists_and_has_a_reason() -> None:
+    for (name, function), reason in ALLOWED_HELPERS.items():
+        tree = ast.parse((PACKAGE / name).read_text(encoding="utf-8"))
+        assert function in {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        assert reason
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        'def q(a):\n    return f"SUM({a})"\n',
+        'def q(g, c):\n    return f"date_trunc(\'{g}\', {c})"\n',
+        'def q(c, v):\n    return f"{c} = \'{v}\'"\n',
+        'def q(a, b):\n    return f"({a}) and ({b})"\n',
+        'def q(cols):\n    return ", ".join(cols)\n',
+        'def q(a, b):\n    return a + "." + b\n',
+        'def q(a):\n    return "x(%s)" % a\n',
+        'def q(a):\n    return "x({})".format(a)\n',
+        'def _alias(a):\n    return f"SUM({a})"\n',
+    ],
+    ids=["call", "call with quotes", "equals", "and", "join", "concat", "percent", "format",
+         "allowed name in the wrong module"],
+)  # fmt: skip
+def test_the_strict_scan_catches_what_the_keyword_scan_misses(bad: str) -> None:
+    module = "other.py" if "_alias" in bad else "sqlgen.py"
+    assert strict_violations(bad, module), f"the strict scan missed: {bad}"
+
+
+def test_the_strict_scan_allows_the_named_helpers_only() -> None:
+    assert strict_violations('def _alias(n):\n    return f"t{n}"\n', "sqlgen.py") == []
+    assert strict_violations('def other(n):\n    return f"t{n}"\n', "sqlgen.py")
+
+
 @pytest.mark.parametrize("path", sorted(PACKAGE.glob("*.py")), ids=lambda p: p.name)
 def test_no_function_builds_sql_with_string_formatting(path: Path) -> None:
     assert violations(path.read_text(encoding="utf-8"), path.name) == []

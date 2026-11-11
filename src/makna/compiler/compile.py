@@ -12,6 +12,11 @@ from makna.compiler.sqlgen import Dialect, build_tree, to_sql
 from makna.model.request import CompileResponse, MetricRef, QueryRequest
 
 
+def _metric_id(name: str) -> str:
+    """The `metric:<name>` reference of section 12; an identifier, not SQL."""
+    return f"metric:{name}"
+
+
 def compile_plan(model: Model, plan: QueryPlan, dialect: Dialect = "postgres") -> CompileResponse:
     """The SQL for a plan, printed for `dialect`, with its columns and explanation."""
     explanation = explain(model, plan)
@@ -21,7 +26,7 @@ def compile_plan(model: Model, plan: QueryPlan, dialect: Dialect = "postgres") -
         columns=plan.columns,
         explanation=explanation.sentences,
         warnings=explanation.warnings,
-        metric=MetricRef(id=f"metric:{plan.metric}", version=plan.version),
+        metric=MetricRef(id=_metric_id(plan.metric), version=plan.version),
     )
 
 

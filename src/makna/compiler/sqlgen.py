@@ -116,6 +116,24 @@ def _failed(what: str, sql: str, detail: str) -> QueryError:
     )
 
 
+def _refused(code: ErrorCode, subject: object, text: str) -> QueryError:
+    return QueryError(code, f"{subject!r} {text}")
+
+
+def _alias(index: int) -> str:
+    """A table alias such as `t3`; it only ever goes into a quoted identifier node."""
+    return f"t{index}"
+
+
+def _cte(metric: str) -> str:
+    """The name of an input's CTE, `m_<metric>`; it only ever goes into an identifier node."""
+    return f"m_{metric}"
+
+
+def _cte_identifier(metric: str) -> exp.Identifier:
+    return _ident(_cte(metric))
+
+
 @lru_cache(maxsize=1024)
 def _parsed(sql: str) -> exp.Expr:
     return sqlglot.parse_one(sql, into=exp.Condition)
@@ -141,7 +159,7 @@ def _literal(value: Scalar, dimension: Dimension) -> exp.Expr:
         return exp.Boolean(this=value)
     if isinstance(value, (int, float)):
         if isinstance(value, float) and not math.isfinite(value):
-            raise QueryError(ErrorCode.INVALID_FILTER, f"{value!r} is not a usable number.")
+            raise _refused(ErrorCode.INVALID_FILTER, value, "is not a usable number.")
         return exp.Literal.number(value)
     if dimension.type == "time":
         kind = "date" if _is_date(value) else "timestamp"
@@ -180,7 +198,7 @@ def _condition(
     if op in ("is_null", "is_not_null") and value is None:
         empty = exp.Is(this=column, expression=exp.Null())
         return exp.Not(this=empty) if op == "is_not_null" else empty
-    raise QueryError(ErrorCode.INVALID_FILTER, f"Filter operator {op!r} does not fit its value.")
+    raise _refused(ErrorCode.INVALID_FILTER, op, "is not a filter operator that fits its value.")
 
 
 # --------------------------------------------------------------------------------------
@@ -210,18 +228,10 @@ class _Joins:
         step = prefix[-1]
         found = model.relationship(step.name)
         if found is None:  # planning resolved the path, so only a changed model gets here
-            raise QueryError(
-                ErrorCode.BROKEN_REFERENCE,
-                f"The join step {step.name} does not exist.",
-                {
-                    "issues": [
-                        {"code": "UNRESOLVED", "object": step.name, "message": "no such step"}
-                    ]
-                },
-            )
+            raise _failed("join step", step.name, "no such relationship")
         _, relationship = found
         left = self.by_prefix[prefix[:-1]]
-        alias = f"t{len(self.by_prefix)}"
+        alias = _alias(len(self.by_prefix))
         on = exp.and_(
             *[
                 exp.EQ(
@@ -295,7 +305,7 @@ def _aggregate(item: InputPlan) -> exp.Expr:
 
 def _required(argument: exp.Expr | None, item: InputPlan) -> exp.Expr:
     if argument is None:  # the definition model requires expr unless agg is count
-        raise _failed("measure", item.measure.name, f"{item.measure.agg} needs an expression")
+        raise _failed("measure", item.measure.name, "its aggregate needs an expression")
     return argument
 
 
@@ -354,7 +364,7 @@ def _combine(
         part = exp.select(
             *[_name(k) for k in keys],
             *[_name(n) if n == name else exp.alias_(exp.Null(), n, quoted=True) for n in names],
-        ).from_(exp.table_(f"m_{name}"))
+        ).from_(exp.table_(_cte(name), quoted=True))
         union = part if union is None else exp.union(union, part, distinct=False)
     assert union is not None
 
@@ -362,19 +372,17 @@ def _combine(
     combined = exp.select(
         *[_name(k) for k in keys],
         *[exp.alias_(_merge(n, aggregates[n]), n, quoted=True) for n in names],
-    ).from_(exp.table_("unioned"))
+    ).from_(exp.table_("unioned", quoted=True))
     if keys:
         combined = combined.group_by(*[_name(k) for k in keys])
 
     final = exp.select(
         *key_columns,
         *[_shown(nodes, name) for name in [*root.inputs, root.name]],
-    ).from_(exp.table_("combined"))
+    ).from_(exp.table_("combined", quoted=True))
     for name in names:
-        final = final.with_(exp.to_identifier(f"m_{name}"), as_=leaves[name])
-    return final.with_(exp.to_identifier("unioned"), as_=union).with_(
-        exp.to_identifier("combined"), as_=combined
-    )
+        final = final.with_(_cte_identifier(name), as_=leaves[name])
+    return final.with_(_ident("unioned"), as_=union).with_(_ident("combined"), as_=combined)
 
 
 def _shown(nodes: dict[str, MetricNode], name: str) -> exp.Expr:
