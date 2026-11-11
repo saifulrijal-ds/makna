@@ -104,23 +104,43 @@ def check_second_init_changes_nothing() -> None:
     assert before == after, f"state changed:\nbefore={before}\nafter={after}"
 
 
-def expect_denied(role: str, database: str, statement: str | None = None) -> str:
+INSUFFICIENT_PRIVILEGE = "42501"
+
+
+def expect_connect_denied(role: str, database: str) -> None:
+    """The server answered and refused with SQLSTATE 42501; an unreachable server is a failure."""
     try:
-        with connect(role, database) as connection:
-            if statement is not None:
-                connection.execute(statement)
+        connect(role, database).close()
     except psycopg.Error as error:
-        return str(error).strip()
-    raise AssertionError(f"{role} on {database} was allowed: {statement or 'connect'}")
+        assert error.sqlstate == INSUFFICIENT_PRIVILEGE, (
+            f"{role} -> {database}: expected SQLSTATE {INSUFFICIENT_PRIVILEGE}, "
+            f"got {error.sqlstate}: {error}"
+        )
+        return
+    raise AssertionError(f"{role} could connect to {database}")
+
+
+def expect_privilege_denied(role: str, database: str, statement: str) -> None:
+    """Run `statement` with read-only mode off, so only privileges can stop it (42501)."""
+    with connect(role, database) as connection:  # a failure to connect propagates: not "denied"
+        connection.execute("SET default_transaction_read_only = off")
+        try:
+            connection.execute(statement)
+        except psycopg.Error as error:
+            assert error.sqlstate == INSUFFICIENT_PRIVILEGE, (
+                f"{role}: {statement!r}: expected SQLSTATE {INSUFFICIENT_PRIVILEGE}, "
+                f"got {error.sqlstate}: {error}"
+            )
+            return
+    raise AssertionError(f"{role} was allowed: {statement}")
 
 
 def check_roles() -> None:
     """Acceptance 6: makna cannot reach lending; the reader can only read it."""
-    message = expect_denied("makna", "lending")
-    assert "permission denied" in message.lower() or "not allowed" in message.lower(), message
+    expect_connect_denied("makna", "lending")
     with connect("makna", "makna") as connection:  # and the role does work on its own database
         assert connection.execute("SELECT count(*) FROM catalog_source").fetchone() == (0,)
-    expect_denied("lending_reader", "makna")
+    expect_connect_denied("lending_reader", "makna")
     with connect("lending_reader", "lending") as connection:
         assert connection.execute("SELECT count(*) FROM lending.core.branches").fetchone()
     for statement in (
@@ -129,19 +149,11 @@ def check_roles() -> None:
         "DELETE FROM lending.core.branches",
         "TRUNCATE lending.core.branches",
         "DROP TABLE lending.core.branches",
+        "ALTER TABLE lending.core.branches ADD COLUMN scratch integer",
         "CREATE TABLE lending.core.scratch (a integer)",
         "CREATE TABLE public.scratch (a integer)",
     ):
-        expect_denied("lending_reader", "lending", statement)
-    # Even a session that switches read-only mode off cannot write.
-    with connect("lending_reader", "lending") as connection:
-        connection.execute("SET default_transaction_read_only = off")
-        try:
-            connection.execute("DELETE FROM lending.core.branches")
-        except psycopg.errors.InsufficientPrivilege:
-            pass
-        else:
-            raise AssertionError("reader deleted rows")
+        expect_privilege_denied("lending_reader", "lending", statement)
 
 
 def check_published_ports() -> None:
