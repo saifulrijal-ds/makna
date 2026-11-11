@@ -1,0 +1,3 @@
+`docker compose up -d --wait` succeeds with a one-shot service that exits 0, when the long-running service depends on it with `service_completed_successfully`.
+
+Checked on 2026-11-11 with Docker Compose in a local session (`init` exited 0, `app` became healthy, `up --wait` returned 0). Two traps in the same stack, from the image's documented behaviour and the stats views, not separately tested: the PostgreSQL image's temporary first-start server listens on the socket only, so a healthcheck must use `pg_isready -h 127.0.0.1` or it reports healthy before the role-setup scripts have finished; and `pg_stat_user_tables.n_live_tup` drifts under autovacuum, so use `n_tup_ins/upd/del` to prove that a re-run wrote nothing.
