@@ -91,7 +91,7 @@ flowchart LR
 | Application | `makna.app` | The composition root: `create_app()` builds the one FastAPI application that `makna serve` runs, and mounts the web routes and the MCP server. | No logic of its own. |
 | CLI | `makna.cli` | `makna` command: validate, sync, index, serve, user and token management, freshness. | |
 
-**Dependency rule.** `model` depends on nothing. `compiler`, `definitions`, `catalog`, `engine`, `search`, and `index` depend on `model` (and `index`/`search` on the database); `catalog` also uses `index` for the catalog tables it writes (`makna.index.tables`, `makna.index.db`), and imports neither `definitions`, `compiler`, nor `services`. `resolve` depends on `search`. `services` depends on all of them. `mcp` and `web` depend on `services` only (plus `model` and `config`). `app` is the composition root and the only module that imports `web` and `mcp` (and `services`, `model`, `config`). `cli` may also import `definitions`, `catalog`, `index`, `search`, `engine`, and `app` (so that `serve` starts the application without importing `web` or `mcp`), because operator commands (`validate`, `catalog sync`, `index build`, `search`, `catalog compare`) are built before the service layer exists; commands that act for a user or an agent (user and token management, `resolve`) go through `services`, and `makna mcp` is only an HTTP bridge (section 12). A test in WP-01 enforces this with an import check.
+**Dependency rule.** `model` depends on nothing. `compiler`, `definitions`, `catalog`, `engine`, `search`, and `index` depend on `model` (and `index`/`search` on the database); `catalog` also uses `index` for the catalog tables it writes (`makna.index.tables`, `makna.index.db`), and imports neither `definitions`, `compiler`, nor `services`. `resolve` depends on `search`. `services` depends on all of them. `mcp` and `web` depend on `services` only (plus `model` and `config`). `app` is the composition root and the only module that imports `web` and `mcp` (and `services`, `model`, `config`). `cli` may also import `definitions`, `catalog`, `index`, `search`, `engine`, and `app` (so that `serve` starts the application without importing `web` or `mcp`), because operator commands (`validate`, `catalog sync`, `index build`, `search`, `catalog compare`) are built before the service layer exists; commands that act for a user or an agent (user and token management, `resolve`) go through `services`; `makna validate` also runs V19 through `makna.services.examples`, a module of the service layer because it needs both `definitions` and `compiler`, which may not import each; and `makna mcp` is only an HTTP bridge (section 12). A test in WP-01 enforces this with an import check.
 
 ## 3. Repository layout
 
@@ -211,7 +211,7 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V16 | A measure's `time_dimension` is not a personal dimension (a time range would filter on raw personal dates, and freshness would show one). |
 | V17 | A personal dimension has no `values` (they would be returned by `get_definition` and indexed for search). |
 | V18 | A measure's `rule` names a rule on the same entity; a metric's `{rule: entity.rule}` names a rule on an entity reachable from its measure; a rule's `expr` reads no column of a personal dimension. |
-| V19 | Every example request plans and compiles with no error (checked with the compiler: `makna validate` once WP-08 exists, and at submit and approve). |
+| V19 | Every example request plans and compiles with no error (checked with the compiler by `makna.services.examples`, which `makna validate` runs, and at submit and approve). Until SQL generation exists (WP-09) the check is that the request plans; it does not need the metric to be approved yet. |
 | V20 | A dimension that is not personal reads no column of a personal dimension on the same entity (a copy would bypass masking and refusals). |
 
 Reference issues (`makna.catalog.references`):
@@ -374,6 +374,7 @@ In the sample domain, `contract` reaches `branch` by `contract.booking_branch` a
 - For a **simple metric**: every dimension of the measure's entity and of every entity reachable by rule 7.3.
 - For a **ratio or derived metric**: a dimension `E.d` is available only if every input can reach `E` **and every input's path enters `E` through the same final relationship**. This prevents dividing a number by booking branch by a number by servicing branch.
 - A personal dimension without a masking rule is listed as unavailable with the reason, so agents do not try it.
+- "The same final relationship" compares relationship names: two inputs from different tables (for example `payment.contract` and `installment.contract`) enter `contract` through different relationships, so a ratio of them does not offer `contract` dimensions until one input pins a chain that ends in the same relationship (for example `join_paths: {contract: [payment.installment, installment.contract]}` on the payment input). An entity that one input reads itself (`installment` for a ratio with a metric measured on installments) cannot be aligned by a pin. Entities left out because of an ambiguous path or inconsistent inputs are recorded with the reason, and the reason is the warning for curators.
 
 ### 7.5 SQL generation
 
@@ -428,7 +429,7 @@ Compilation fails with one structured error. Each error has a code, a message th
 |---|---|---|
 | `UNKNOWN_METRIC` | No such metric. | up to 3 close names |
 | `NOT_APPROVED` | The metric (or an input) is a draft or in review. | status |
-| `DEPRECATED` | The metric is deprecated. | reason, `replaced_by` |
+| `DEPRECATED` | The metric is deprecated. | reason, `replaced_by` (as stored, for example `metric:npf_ratio`) |
 | `BROKEN_REFERENCE` | An open reference issue affects the metric. | the issues |
 | `UNKNOWN_DIMENSION` | The dimension does not exist. | available dimensions |
 | `DIMENSION_NOT_AVAILABLE` | It exists but this metric cannot be grouped or filtered by it. | reason, available dimensions |
@@ -437,7 +438,7 @@ Compilation fails with one structured error. Each error has a code, a message th
 | `INVALID_FILTER` | Operator or value does not fit the dimension. | expected type, allowed values |
 | `INVALID_TIME_RANGE` | Not ISO dates, or start is not before end. | |
 | `PERSONAL_DATA_REFUSED` | Section 7.6. | the dimension, and whether a masked form exists |
-| `LIMIT_EXCEEDED` | Limit above 10000. | |
+| `LIMIT_EXCEEDED` | Limit above 10000 (or below 1). | the limit and the maximum |
 
 
 ### 7.8 Explanation (QRY-3)
