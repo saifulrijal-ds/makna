@@ -40,6 +40,7 @@ ALLOWED_MAKNA: dict[str, frozenset[str] | None] = {
     # The composition root mounts the interfaces; it is the only module that may import both.
     "app": frozenset({"services", "web", "mcp", "model", "config"}),
     "compiler": frozenset({"model"}),
+    "catalog": frozenset({"model", "index"}),
     "model": frozenset(),
 }
 FORBIDDEN_THIRD_PARTY: dict[str, frozenset[str]] = {"compiler": DB_NETWORK_LIBRARIES}
@@ -147,6 +148,9 @@ def test_every_package_of_the_architecture_exists() -> None:
         ("compiler/net.py", "import socket\n", "socket"),
         ("compiler/x.py", "from makna.search import hybrid\n", "makna.search"),
         ("model/x.py", "from makna.config import Settings\n", "makna.config"),
+        ("catalog/x.py", "from makna.definitions import loader\n", "makna.definitions"),
+        ("catalog/x.py", "from makna.compiler import plan\n", "makna.compiler"),
+        ("catalog/x.py", "from makna.services import search\n", "makna.services"),
     ],
 )
 def test_a_deliberately_bad_module_is_caught(
@@ -167,4 +171,5 @@ def test_allowed_imports_pass(tmp_path: Path) -> None:
     _write(tmp_path, "cli/b.py", "from makna.app import create_app\n")
     _write(tmp_path, "app.py", "from makna.web import w\nfrom makna.mcp import m\n")
     _write(tmp_path, "compiler/a.py", "import sqlglot\nfrom makna.model import m\n")
+    _write(tmp_path, "catalog/a.py", "from makna.model import m\nfrom makna.index import tables\n")
     assert check_dependency_rule(tmp_path) == []

@@ -3,7 +3,8 @@
     uv run python -m deploy.check_stack
 
 Proves WP-05 acceptance 2 (row counts), 4 (a second `init` changes nothing) and 6 (roles and
-the published port). Passwords default to the development values of docker-compose.yml.
+the published port), and that `init` synced the sample catalog with no open reference issue
+(WP-06). Passwords default to the development values of docker-compose.yml.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 
@@ -66,6 +68,21 @@ def check_row_counts() -> None:
             assert found is not None and found[0] == rows, f"{name}: {found} != {rows}"
 
 
+def check_catalog_synced() -> None:
+    """WP-06: `init` synced the sample export, and the sample definitions have no open issue."""
+    with connect("makna", "makna") as connection:
+        datasets = connection.execute(
+            "SELECT count(*) FROM catalog_dataset WHERE removed_at IS NULL"
+        ).fetchone()
+        columns = connection.execute("SELECT count(*) FROM catalog_column").fetchone()
+        issues = connection.execute(
+            "SELECT count(*) FROM reference_issue WHERE closed_at IS NULL"
+        ).fetchone()
+    assert datasets is not None and datasets[0] == len(TABLES), datasets
+    assert columns is not None and columns[0] == sum(len(t.columns) for t in TABLES), columns
+    assert issues is not None and issues[0] == 0, f"{issues} open reference issues"
+
+
 def snapshot() -> dict[str, object]:
     """Everything a second `init` run could change: rows, load markers, tuple counters."""
     state: dict[str, object] = {}
@@ -95,7 +112,7 @@ def check_second_init_changes_nothing() -> None:
         f"init exited {result.returncode}:\n{result.stdout}{result.stderr}"
     )
     output = result.stdout + result.stderr
-    for step in ("generate-sample-data", "load-lending", "migrate"):
+    for step in ("generate-sample-data", "load-lending", "migrate", "sync-catalog"):
         assert f"init: {step}: unchanged" in output, (
             f"step {step} did not report unchanged:\n{output}"
         )
@@ -145,7 +162,8 @@ def check_roles() -> None:
     """Acceptance 6: makna cannot reach lending; the reader can only read it."""
     expect_connect_denied("makna", "lending")
     with connect("makna", "makna") as connection:  # and the role does work on its own database
-        assert connection.execute("SELECT count(*) FROM catalog_source").fetchone() == (0,)
+        found = connection.execute("SELECT count(*) FROM catalog_source").fetchone()
+        assert found is not None, "makna could not query its own database"
     expect_connect_denied("lending_reader", "makna")
     with connect("lending_reader", "lending") as connection:
         assert connection.execute("SELECT count(*) FROM lending.core.branches").fetchone()
@@ -180,6 +198,7 @@ CHECKS: list[Callable[[], None]] = [
     check_row_counts,
     check_roles,
     check_published_ports,
+    check_catalog_synced,
     check_second_init_changes_nothing,
 ]
 
@@ -191,7 +210,11 @@ def main() -> int:
             check()
         except Exception as error:
             failed += 1
-            print(f"FAIL {check.__name__}: {error}")
+            where = traceback.extract_tb(error.__traceback__)[-1]
+            print(
+                f"FAIL {check.__name__}: {type(error).__name__}: {error!r}"
+                f" (at {where.filename}:{where.lineno}: {where.line})"
+            )
         else:
             print(f"ok   {check.__name__}")
     return 1 if failed else 0

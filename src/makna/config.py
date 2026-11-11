@@ -125,3 +125,16 @@ def load_settings(
             name = ENV_PREFIX + where.upper() if where in _ENV_FIELDS else where
             problems.append(f"{name}: {item['msg']}")
         raise ConfigError("Invalid settings: " + "; ".join(problems)) from error
+
+
+def load_tag_map(config_path: Path | str | None = None) -> dict[str, str]:
+    """The catalog-tag to sensitivity mapping (`[sensitivity.tag_map]`) without the secrets.
+
+    Operator commands that only need the mapping (`makna catalog sync`) use this, so they do not
+    require `MAKNA_SECRET_KEY`. A missing config file means the default mapping.
+    """
+    values = _read_toml(Path(config_path or DEFAULT_CONFIG_PATH))
+    try:
+        return dict(SensitivitySettings.model_validate(values.get("sensitivity", {})).tag_map)
+    except ValidationError as error:
+        raise ConfigError(f"Invalid settings: sensitivity: {error}") from error

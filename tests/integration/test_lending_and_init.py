@@ -94,10 +94,19 @@ def test_init_twice_changes_nothing(
     first = io.StringIO()
     assert run_steps(STEPS, context, first) == 0
     assert "generated" in first.getvalue()
+    assert "init: sync-catalog: synced (datasets +9" in first.getvalue()
     second = io.StringIO()
     assert run_steps(STEPS, context, second) == 0
     assert second.getvalue().splitlines() == [
         "init: generate-sample-data: unchanged (all nine files present)",
         "init: load-lending: unchanged",
         "init: migrate: unchanged",
+        "init: sync-catalog: unchanged",
     ]
+    # The second run wrote no `sync_run` row and opened no reference issue.
+    with psycopg.connect(plain(empty_database)) as connection:
+        runs = connection.execute("SELECT count(*) FROM sync_run").fetchone()
+        open_issues = connection.execute(
+            "SELECT count(*) FROM reference_issue WHERE closed_at IS NULL"
+        ).fetchone()
+    assert runs == (1,) and open_issues == (0,)

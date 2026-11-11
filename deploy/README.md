@@ -53,6 +53,7 @@ It stops at the first failing step and exits 1. Every step is idempotent: a seco
 1. `generate-sample-data`: writes the nine Parquet files to `data/generated` (a volume) if any is missing.
 2. `load-lending`: creates `lending.core` tables from `data/generator/spec.py` and loads the files (`data/lending_loader.py`). A table is reloaded only when its file changed (its load marker is the file's SHA-256, kept as the table comment).
 3. `migrate`: `alembic upgrade head` on the `makna` database.
+4. `sync-catalog`: syncs `data/catalog/lending.catalog.yaml` into the catalog tables and runs the reference check against `semantic/definitions`. When the file has not changed it writes nothing (no `sync_run` row), so a second run prints `unchanged`.
 
 Existing Parquet files are kept whatever `--seed` or `--scale` is passed (a file that cannot be read is regenerated); to change the data, delete the `generated` volume and the `pgdata` volume (`down -v`).
 
