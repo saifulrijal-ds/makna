@@ -32,6 +32,6 @@ one of them a draft and one deprecated) and runs 28 queries in both languages,
 
 **What is not proven.**
 
-- **Semantic quality.** The embedding in this spike is a stand-in (hashed character trigrams) because model downloads were blocked in the design environment. It tests the pgvector path and tolerance to typos, not meaning. Whether the default model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) handles Indonesian finance vocabulary well must be measured in WP-07 and WP-16.
+- **Semantic quality.** The embedding in this spike is a stand-in (hashed character trigrams) because model downloads were blocked in the design environment. It tests the pgvector path and tolerance to typos, not meaning. Whether the default model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) handles Indonesian finance vocabulary well must be measured in WP-07 and WP-15.
 - Embedding latency on CPU with the real model.
 - `pg_trgm` was not available in the embedded server and is not part of the design.

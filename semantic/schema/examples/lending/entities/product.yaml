@@ -18,6 +18,7 @@ dimensions:
   - name: product_name
     type: categorical
     description: Commercial name of the product.
+    synonyms: {en: [product], id: [produk]}
   - name: product_category
     type: categorical
     description: Product group by collateral type.

@@ -20,7 +20,7 @@ dimensions:
   - name: branch_name
     type: categorical
     description: Name of the branch office.
-    synonyms: {id: [nama cabang]}
+    synonyms: {en: [branch], id: [cabang, nama cabang]}
   - name: area_name
     type: categorical
     description: Area the branch belongs to. An area groups several branches.
@@ -28,6 +28,12 @@ dimensions:
     type: categorical
     description: Region the branch belongs to. A region groups several areas.
     synonyms: {en: [region], id: [wilayah, regional]}
+    values:
+      - {value: Jawa Barat}
+      - {value: Jawa Tengah}
+      - {value: Jawa Timur}
+      - {value: Sumatera}
+      - {value: Kalimantan Sulawesi}
   - name: province
     type: categorical
     description: Province where the branch office is located.
