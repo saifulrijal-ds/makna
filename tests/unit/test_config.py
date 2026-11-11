@@ -74,3 +74,20 @@ def test_invalid_toml_names_the_file(tmp_path: Path) -> None:
 def test_the_committed_config_file_loads() -> None:
     settings = load_settings(GOOD_ENV, ROOT / "config" / "makna.toml")
     assert settings.sensitivity.tag_map["PII.Sensitive"] == "personal"
+
+
+def test_defaults_follow_the_architecture(tmp_path: Path) -> None:
+    settings = load_settings(GOOD_ENV, tmp_path / "none.toml")
+    assert settings.embedding_provider == "fastembed"
+    assert settings.allow_self_approval is False
+
+
+def test_self_approval_can_be_turned_on(tmp_path: Path) -> None:
+    env = {**GOOD_ENV, "MAKNA_ALLOW_SELF_APPROVAL": "true"}
+    assert load_settings(env, tmp_path / "none.toml").allow_self_approval is True
+
+
+def test_unknown_embedding_provider_names_the_variable(tmp_path: Path) -> None:
+    env = {**GOOD_ENV, "MAKNA_EMBEDDING_PROVIDER": "local"}
+    with pytest.raises(ConfigError, match="MAKNA_EMBEDDING_PROVIDER"):
+        load_settings(env, tmp_path / "none.toml")

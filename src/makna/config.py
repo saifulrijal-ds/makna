@@ -9,7 +9,7 @@ from __future__ import annotations
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
@@ -18,6 +18,8 @@ DEFAULT_CONFIG_PATH = Path("config/makna.toml")
 
 # Environment variables that must be set. Field name -> variable name is ENV_PREFIX + upper().
 REQUIRED_VARIABLES = ("MAKNA_DATABASE_URL", "MAKNA_SECRET_KEY")
+
+EmbeddingProvider = Literal["fastembed", "ollama", "openai_compatible", "hash"]
 
 
 class ConfigError(Exception):
@@ -58,8 +60,10 @@ class Settings(BaseModel):
     secret_key: SecretStr
     definitions_repo: str | None = None
     engine_url: SecretStr | None = None
-    embedding_provider: str = "local"
+    embedding_provider: EmbeddingProvider = "fastembed"
     openmetadata_token: SecretStr | None = None
+    # Two-person approval is on unless this is true (D-11).
+    allow_self_approval: bool = False
 
     # From config/makna.toml.
     dialect: str = "postgres"
@@ -75,6 +79,7 @@ _ENV_FIELDS = (
     "engine_url",
     "embedding_provider",
     "openmetadata_token",
+    "allow_self_approval",
 )
 
 

@@ -37,7 +37,7 @@ flowchart LR
   subgraph Makna["Makna application (one Python process)"]
     WEB[Web app<br/>FastAPI + Jinja + HTMX]
     MCP[MCP server<br/>Streamable HTTP and stdio]
-    SVC[Service layer<br/>search, definitions, compile, run,<br/>lifecycle, access control, logging]
+    SVC[Service layer<br/>search, definitions, compile,<br/>lifecycle, access control, logging]
     SEARCH[Search<br/>query processing, fusion, confidence]
     EMB[Embedding provider<br/>local model by default]
     COMP[Compiler<br/>plan, SQL, governance, explanation]
