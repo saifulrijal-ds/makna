@@ -1,0 +1,14 @@
+apiVersion: makna/v1
+kind: domain
+name: lending
+label: Consumer Lending
+description: >-
+  Everything about financing contracts for individual customers: applications,
+  disbursement, the outstanding portfolio, repayment, and collection.
+owner: {team: data-governance, contact: data-governance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [financing, loans]
+  id: [pembiayaan, kredit konsumen]
+version: 1

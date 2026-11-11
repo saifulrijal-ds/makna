@@ -1,0 +1,48 @@
+corpus: 58 documents; pgvector 0.6.2; 16.2
+
+leg            recall@1  recall@3  MRR
+keyword only       0.88      0.96   0.91
+vector only*       0.71      0.96   0.83
+hybrid (RRF)       0.75      1.00   0.87
+* stand-in trigram vectors, not a language model
+
+hybrid misses (expected not in top 3):
+
+status rules:
+  'kredit macet' -> [('metric:npf_ratio', 'approved'), ('metric:npf_outstanding_principal', 'approved'), ('glossary_term:npf', 'approved')]
+  'write off hapus buku' (web default, drafts shown) -> [('metric:write_off_amount', 'draft'), ('metric:application_count', 'approved')]
+  same query, approved only (agent default) -> [('metric:application_count', 'approved'), ('metric:approval_rate', 'approved')]
+
+no-match signal: IDF-weighted coverage of the query by the best of the top 3 hits' names and synonyms
+  query                                          top hit                                   kw   cos cover
+  What is our NPF?                               metric:npf_outstanding_principal        4.40  0.41  1.00  
+  berapa rasio kredit macet bulan lalu           metric:npf_ratio                        7.00  0.50  0.45  
+  non performing financing ratio by region       metric:npf_ratio                        9.20  0.72  0.72  
+  nominal pembiayaan bermasalah                  metric:npf_outstanding_principal        4.00  0.50  1.00  
+  total pencairan per wilayah tahun ini          metric:disbursement_amount              2.60  0.36  0.23  
+  how much did we disburse last month            metric:disbursed_contract_count         4.00  0.39  0.57  
+  realisasi pembiayaan Q1                        metric:disbursement_amount              2.20  0.39  0.51  
+  sisa pokok per cabang                          metric:outstanding_principal            4.60  0.49  0.70  
+  outstanding by dpd bucket                      metric:npf_outstanding_principal        4.80  0.57  0.30  
+  baki debet akhir bulan                         metric:outstanding_principal            2.00  0.37  0.50  
+  collection rate by region last quarter         metric:collection_rate                  8.80  0.65  0.41  
+  tingkat penagihan cabang bulan ini             metric:collection_rate                  4.80  0.48  0.47  
+  berapa tagihan yang jatuh tempo bulan depan    metric:due_amount                       4.00  0.47  0.53  
+  cash collected in May by payment channel       metric:collected_amount                 5.40  0.63  0.38  
+  approval rate per product                      metric:approval_rate                    7.00  0.73  0.70  
+  tingkat persetujuan aplikasi                   metric:application_count                2.20  0.53  0.65  
+  berapa nasabah baru bulan ini                  metric:new_customer_count               4.00  0.50  0.63  
+  jumlah kontrak aktif                           metric:active_contract_count            3.00  0.53  1.00  
+  average ticket size for car backed financing   metric:average_ticket_size             10.40  0.64  0.49  
+  pendapatan denda keterlambatan                 metric:penalty_income                   5.00  0.69  1.00  
+  rasio janji bayar collector                    metric:promise_to_pay_rate              5.00  0.52  0.66  
+  PAR30 trend                                    metric:par30_ratio                      2.00  0.45  0.43  
+  disbursment amout by region                    metric:collection_rate                  3.80  0.55  0.28  
+  apa itu kolektibilitas                         metric:collection_rate                  1.00  0.70  1.00  
+  employee attrition rate                        metric:approval_rate                    3.20  0.37  0.23  (no answer expected)
+  berapa harga saham kita hari ini               metric:par30_ratio                      1.00  0.22  0.28  (no answer expected)
+  website conversion funnel                      metric:collection_rate                  0.00  0.32  0.00  (no answer expected)
+  net promoter score                             metric:promise_to_pay_rate              0.00  0.37  0.00  (no answer expected)
+  coverage, answerable: min 0.23, median 0.55; no-answer: max 0.28
+
+latency over 300 searches incl. stand-in embedding: p50 0.4 ms, p95 0.7 ms

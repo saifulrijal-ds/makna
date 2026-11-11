@@ -1,0 +1,1110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://makna.dev/schema/v1/makna.schema.json",
+  "title": "Makna semantic definition (v1)",
+  "description": "One YAML file holds exactly one semantic object. The `kind` field selects the shape. Cross-file rules (references resolve, expressions parse, join paths exist) are checked by the semantic validator, not by this schema. See docs/ARCHITECTURE.md section 5.",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "makna/v1"
+    },
+    "kind": {
+      "enum": [
+        "domain",
+        "entity",
+        "metric",
+        "glossary_term"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "domain"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/domain"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "entity"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "metric"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/metric"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "glossary_term"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/glossary_term"
+      }
+    }
+  ],
+  "$defs": {
+    "name": {
+      "description": "Stable identifier. Lowercase snake_case. Unique per kind across the whole definitions repository.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+    },
+    "qualifiedRef": {
+      "description": "A reference of the form entity.part, for example contract.disbursed_principal or branch.region_name.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,62}\\.[a-z][a-z0-9_]{1,62}$"
+    },
+    "status": {
+      "description": "Lifecycle state. Official files (<name>.yaml) hold approved or deprecated. Proposal files (<name>.draft.yaml) hold draft or in_review.",
+      "enum": [
+        "draft",
+        "in_review",
+        "approved",
+        "deprecated"
+      ]
+    },
+    "sensitivity": {
+      "description": "public: may leave the company. internal: any employee. confidential: restricted business data. personal: personal data about an individual; never returned raw.",
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "personal"
+      ]
+    },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "team"
+      ],
+      "properties": {
+        "team": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Owning team identifier. Members of this team with the curator role may approve changes to the object."
+        },
+        "contact": {
+          "type": "string",
+          "description": "A person or mailbox to ask about this object."
+        }
+      }
+    },
+    "synonyms": {
+      "description": "Other words people use for this object, keyed by ISO 639-1 language code. Indexed for search.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z]{2}$": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "deprecation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replaced_by": {
+          "type": "string",
+          "description": "kind:name of the replacement, for example metric:npf_ratio."
+        }
+      }
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "label",
+        "description",
+        "owner",
+        "status",
+        "sensitivity"
+      ],
+      "properties": {
+        "apiVersion": true,
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "description": {
+          "$ref": "#/$defs/description"
+        },
+        "owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/sensitivity"
+        },
+        "synonyms": {
+          "$ref": "#/$defs/synonyms"
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/deprecation"
+        },
+        "kind": {
+          "const": "domain"
+        }
+      }
+    },
+    "glossary_term": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "label",
+        "description",
+        "domain",
+        "owner",
+        "status",
+        "sensitivity"
+      ],
+      "properties": {
+        "apiVersion": true,
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "description": {
+          "$ref": "#/$defs/description"
+        },
+        "domain": {
+          "$ref": "#/$defs/name"
+        },
+        "owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/sensitivity"
+        },
+        "synonyms": {
+          "$ref": "#/$defs/synonyms"
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/deprecation"
+        },
+        "kind": {
+          "const": "glossary_term"
+        },
+        "related": {
+          "description": "Objects this term explains, as kind:name (for example metric:npf_ratio).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(domain|entity|metric|glossary_term):[a-z][a-z0-9_]{1,62}$"
+          },
+          "uniqueItems": true
+        },
+        "catalog_term": {
+          "type": "string",
+          "description": "Identifier of the matching glossary term in the data catalog, if one exists."
+        }
+      }
+    },
+    "masking": {
+      "description": "How a sensitive dimension is transformed before it may appear in a result. A personal dimension without a masking rule can never be selected or filtered.",
+      "type": "object",
+      "required": [
+        "method"
+      ],
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "redact"
+            }
+          },
+          "required": [
+            "method"
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "partial"
+            },
+            "keep_last": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          },
+          "required": [
+            "method",
+            "keep_last"
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "truncate_date"
+            },
+            "grain": {
+              "enum": [
+                "month",
+                "quarter",
+                "year"
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "grain"
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "bucket"
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "method",
+            "width"
+          ]
+        }
+      ]
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "label": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "categorical",
+            "time",
+            "boolean",
+            "numeric"
+          ]
+        },
+        "expr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Scalar SQL expression (Trino syntax) over columns of this entity's source table. Defaults to the dimension name. No subqueries, no aggregates."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10
+        },
+        "synonyms": {
+          "$ref": "#/$defs/synonyms"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/sensitivity",
+          "description": "Defaults to the entity's sensitivity. The effective level is the stricter of this value and the level derived from catalog tags on the referenced columns."
+        },
+        "masking": {
+          "$ref": "#/$defs/masking"
+        },
+        "values": {
+          "description": "Allowed values of a categorical dimension, so people and agents can write filters without querying.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "measure": {
+      "description": "An aggregation over rows of one entity. Measures are building blocks; people and agents ask for metrics.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "agg",
+        "description",
+        "time_dimension"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "agg": {
+          "enum": [
+            "sum",
+            "count",
+            "count_distinct",
+            "avg",
+            "min",
+            "max"
+          ]
+        },
+        "expr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Scalar SQL expression (Trino syntax) over columns of this entity's source table. Required unless agg is count, where it defaults to counting rows."
+        },
+        "filter": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Boolean SQL expression over columns of this entity's source table. Rows that do not match are excluded before aggregation."
+        },
+        "time_dimension": {
+          "$ref": "#/$defs/name",
+          "description": "The time dimension of this entity that is the official date for this measure. Time ranges and grains in a request apply to it."
+        },
+        "semi_additive": {
+          "enum": [
+            "last"
+          ],
+          "description": "Set to last for balances taken at snapshot dates (for example outstanding principal). The value must not be summed over time: within each requested period only the latest snapshot date is used."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10
+        }
+      },
+      "if": {
+        "properties": {
+          "agg": {
+            "const": "count"
+          }
+        }
+      },
+      "else": {
+        "required": [
+          "expr"
+        ]
+      }
+    },
+    "relationship": {
+      "description": "An approved join from this entity (many side) to another entity (one side). The compiler joins only along relationships.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "to",
+        "keys",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "to": {
+          "$ref": "#/$defs/name",
+          "description": "Target entity. Its side of the join must be unique on the `to` key columns."
+        },
+        "type": {
+          "enum": [
+            "many_to_one",
+            "one_to_one"
+          ],
+          "default": "many_to_one"
+        },
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "Column of this entity's source table."
+              },
+              "to": {
+                "type": "string",
+                "description": "Column of the target entity's source table."
+              }
+            }
+          }
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "label",
+        "description",
+        "domain",
+        "owner",
+        "status",
+        "sensitivity",
+        "source",
+        "primary_key",
+        "dimensions"
+      ],
+      "properties": {
+        "apiVersion": true,
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "description": {
+          "$ref": "#/$defs/description"
+        },
+        "domain": {
+          "$ref": "#/$defs/name"
+        },
+        "owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/sensitivity"
+        },
+        "synonyms": {
+          "$ref": "#/$defs/synonyms"
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/deprecation"
+        },
+        "kind": {
+          "const": "entity"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "table"
+          ],
+          "properties": {
+            "table": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+              "description": "Physical table as the query engine names it: catalog.schema.table. Must exist in the synced catalog metadata (SEM-4)."
+            }
+          }
+        },
+        "primary_key": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Columns that identify one row."
+        },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dimension"
+          }
+        },
+        "measures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/measure"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relationship"
+          }
+        }
+      }
+    },
+    "filter": {
+      "description": "A structured filter on a dimension. Values are data, never SQL.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dimension",
+        "op"
+      ],
+      "properties": {
+        "dimension": {
+          "$ref": "#/$defs/qualifiedRef"
+        },
+        "op": {
+          "enum": [
+            "=",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<=",
+            "in",
+            "not_in",
+            "is_null",
+            "is_not_null"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "in",
+                  "not_in"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "array"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "=",
+                  "!=",
+                  ">",
+                  ">=",
+                  "<",
+                  "<="
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "is_null",
+                  "is_not_null"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "label",
+        "description",
+        "domain",
+        "owner",
+        "status",
+        "sensitivity",
+        "type",
+        "format"
+      ],
+      "properties": {
+        "apiVersion": true,
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "description": {
+          "$ref": "#/$defs/description"
+        },
+        "domain": {
+          "$ref": "#/$defs/name"
+        },
+        "owner": {
+          "$ref": "#/$defs/owner"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "sensitivity": {
+          "$ref": "#/$defs/sensitivity"
+        },
+        "synonyms": {
+          "$ref": "#/$defs/synonyms"
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/deprecation"
+        },
+        "kind": {
+          "const": "metric"
+        },
+        "type": {
+          "enum": [
+            "simple",
+            "ratio",
+            "derived"
+          ]
+        },
+        "measure": {
+          "$ref": "#/$defs/qualifiedRef",
+          "description": "simple only: entity.measure."
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/filter"
+          },
+          "description": "simple only: filters that are part of the definition. Dimensions may live on joined entities."
+        },
+        "join_paths": {
+          "description": "simple only: the approved path from the measure's entity to another entity, as a chain of entity.relationship steps. Required when more than one shortest path exists; may also override the shortest path.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{1,62}$": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/qualifiedRef"
+              }
+            }
+          }
+        },
+        "numerator": {
+          "$ref": "#/$defs/name",
+          "description": "ratio only: name of a metric."
+        },
+        "denominator": {
+          "$ref": "#/$defs/name",
+          "description": "ratio only: name of a metric. A zero denominator yields NULL."
+        },
+        "expr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "derived only: arithmetic over the metrics named in `inputs` (+, -, *, /, parentheses, numbers, NULLIF, COALESCE)."
+        },
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/name"
+          },
+          "uniqueItems": true,
+          "description": "derived only: metric names used in `expr`."
+        },
+        "format": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "currency",
+                "number",
+                "count",
+                "percent"
+              ]
+            },
+            "unit": {
+              "type": "string",
+              "description": "For example IDR, contracts, days."
+            },
+            "decimals": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 6
+            }
+          }
+        },
+        "time_grains": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Grains a request may use. Defaults to all five."
+        },
+        "default_grain": {
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year"
+          ]
+        },
+        "example_questions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 5
+          },
+          "description": "Questions this metric answers, in any language. Shown on the metric page and indexed for search."
+        },
+        "caveats": {
+          "type": "string",
+          "description": "What a reader must know to avoid misusing the number."
+        },
+        "drafted_by": {
+          "type": "string",
+          "description": "Who or what wrote the first draft (for example ai:assistant-name). Informational; approval is always by a person."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "simple"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "measure"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "numerator"
+                  ]
+                },
+                {
+                  "required": [
+                    "denominator"
+                  ]
+                },
+                {
+                  "required": [
+                    "expr"
+                  ]
+                },
+                {
+                  "required": [
+                    "inputs"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ratio"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "numerator",
+              "denominator"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "measure"
+                  ]
+                },
+                {
+                  "required": [
+                    "filters"
+                  ]
+                },
+                {
+                  "required": [
+                    "join_paths"
+                  ]
+                },
+                {
+                  "required": [
+                    "expr"
+                  ]
+                },
+                {
+                  "required": [
+                    "inputs"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "derived"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "expr",
+              "inputs"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "measure"
+                  ]
+                },
+                {
+                  "required": [
+                    "filters"
+                  ]
+                },
+                {
+                  "required": [
+                    "join_paths"
+                  ]
+                },
+                {
+                  "required": [
+                    "numerator"
+                  ]
+                },
+                {
+                  "required": [
+                    "denominator"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "deprecated"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "deprecation"
+            ]
+          }
+        }
+      ]
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name shown to people."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 20,
+      "description": "Plain-language meaning, written for a business reader. No SQL."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Set by the platform. Incremented each time a change to this object is approved."
+    }
+  }
+}

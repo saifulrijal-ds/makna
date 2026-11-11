@@ -1,0 +1,28 @@
+# Example 1 of 3: a simple metric.
+apiVersion: makna/v1
+kind: metric
+name: disbursement_amount
+label: Disbursement Amount
+description: >-
+  Total principal released to customers in a period, counted on the date the
+  funds were released. Contracts that were signed and then cancelled before
+  disbursement are not included.
+domain: lending
+owner: {team: sales-performance, contact: sales-performance@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [disbursement, booking amount, new financing, sales volume]
+  id: [pencairan, jumlah pencairan, realisasi pembiayaan, booking]
+version: 1
+type: simple
+measure: contract.disbursed_principal
+join_paths:
+  branch: [contract.booking_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+default_grain: month
+example_questions:
+  - How much did we disburse last month?
+  - Berapa total pencairan per wilayah tahun ini?
+  - Disbursement by product category in Q1 2026
+caveats: Uses the disbursement date, not the signing date. Reported by booking branch.

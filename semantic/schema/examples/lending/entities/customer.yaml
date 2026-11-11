@@ -1,0 +1,66 @@
+apiVersion: makna/v1
+kind: entity
+name: customer
+label: Customer
+description: >-
+  An individual who has applied for or holds a financing contract. This entity
+  holds personal data; personal fields are masked or unavailable in results.
+domain: lending
+owner: {team: data-governance}
+status: approved
+sensitivity: confidential
+synonyms:
+  en: [borrower, debtor]
+  id: [nasabah, konsumen, debitur]
+version: 1
+source: {table: lending.core.customers}
+primary_key: [customer_id]
+dimensions:
+  - name: customer_segment
+    type: categorical
+    description: Marketing segment assigned at registration.
+    sensitivity: internal
+    values: [{value: mass}, {value: emerging_affluent}, {value: affluent}]
+  - name: occupation_group
+    type: categorical
+    description: Broad occupation group declared by the customer.
+    sensitivity: internal
+  - name: province
+    type: categorical
+    description: Province of the customer's home address.
+    sensitivity: internal
+  - name: registered_date
+    type: time
+    expr: CAST(registered_at AS DATE)
+    description: Date the customer record was first created.
+    sensitivity: internal
+  - name: birth_year
+    type: time
+    expr: birth_date
+    description: Customer's date of birth, available only as a year.
+    sensitivity: personal
+    masking: {method: truncate_date, grain: year}
+  - name: phone_number
+    type: categorical
+    description: Customer's mobile phone number. Only the last four digits are ever shown.
+    sensitivity: personal
+    masking: {method: partial, keep_last: 4}
+  - name: full_name
+    type: categorical
+    description: Customer's full legal name. Never available in results.
+    sensitivity: personal
+  - name: national_id
+    type: categorical
+    description: National identity number (NIK). Never available in results.
+    sensitivity: personal
+    synonyms: {id: [NIK, nomor KTP]}
+measures:
+  - name: new_customers
+    agg: count
+    time_dimension: registered_date
+    description: Number of customer records created.
+relationships:
+  - name: home_branch
+    to: branch
+    keys: [{from: home_branch_id, to: branch_id}]
+    description: The branch where the customer first registered. Not the branch of any particular contract.

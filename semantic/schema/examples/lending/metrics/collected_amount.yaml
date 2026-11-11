@@ -1,0 +1,24 @@
+apiVersion: makna/v1
+kind: metric
+name: collected_amount
+label: Amount Collected
+description: >-
+  Principal and interest received from customers in a period, counted on the
+  date the payment was booked. Penalties and reversed payments are excluded.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [collections, repayments received, cash collected]
+  id: [penerimaan angsuran, jumlah tertagih, realisasi penagihan, setoran]
+version: 1
+type: simple
+measure: payment.collected_amount
+join_paths:
+  branch: [payment.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+default_grain: month
+example_questions:
+  - How much did we collect in May 2026 by payment channel?
+caveats: Uses the posting date, not the date the customer paid.

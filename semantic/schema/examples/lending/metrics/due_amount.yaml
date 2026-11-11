@@ -1,0 +1,24 @@
+apiVersion: makna/v1
+kind: metric
+name: due_amount
+label: Amount Due
+description: >-
+  Installments (principal plus interest) that fall due in a period under the
+  current repayment schedule. Schedule rows replaced by a restructuring are
+  not counted.
+domain: lending
+owner: {team: collection, contact: collection@example.com}
+status: approved
+sensitivity: internal
+synonyms:
+  en: [installments due, billing, scheduled repayment]
+  id: [tagihan, angsuran jatuh tempo, jumlah tagihan]
+version: 1
+type: simple
+measure: installment.due_amount
+join_paths:
+  branch: [installment.contract, contract.servicing_branch]
+format: {kind: currency, unit: IDR, decimals: 0}
+default_grain: month
+example_questions:
+  - How much falls due next month?
