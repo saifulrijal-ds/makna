@@ -68,14 +68,15 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 
 ### WP-02 Synthetic data generator
 
-- **Read**: `docs/SAMPLE_DOMAIN.md` sections 2 to 4.
-- **Build**: `data/generator/` with a command `uv run python -m data.generator --out data/generated --seed 20261111 --scale 1.0` that writes one Parquet file per table, and a table specification module (names, columns, types, descriptions, personal flags) that WP-05 and WP-06 reuse.
+- **Read**: `docs/SAMPLE_DOMAIN.md` sections 2 to 4 and 6.1.
+- **Build**: `data/generator/` with a command `uv run python -m data.generator --out data/generated --seed 20261111 --scale 1.0` that writes one Parquet file per table, and a table specification module (names, columns, types, true meanings, catalog descriptions, personal flags) that WP-05 and WP-06 reuse. Column names are exactly those of section 3, including the abbreviated, mixed-language names of `loan_applications` and `collection_actions` (Q11).
 - **Acceptance**
   1. Two runs with the same seed give byte-identical files (compare SHA-256); a different seed gives different files.
   2. All nine tables exist with exactly the columns and types in section 3. Row counts at scale 1.0 are within 25% of the targets in section 2.
   3. Every check in the "Check on the generated data" column of section 4 (Q1 to Q10) is a passing test.
   4. Referential integrity: every foreign key in section 3.10 resolves; every primary key is unique.
   5. `--scale 0.05` finishes in under 20 seconds (used by tests).
+  6. The table specification's catalog descriptions equal section 6.1 exactly: a test walks the table of section 6.1, and asserts that every object not listed there has a non-empty English description (D-14).
 
 ### WP-03 Definition models, loader, validator
 
@@ -91,7 +92,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-04 Sample definitions for the lending domain
 
 - **Read**: `docs/SAMPLE_DOMAIN.md` sections 3 and 5; the example files.
-- **Build**: `semantic/definitions/lending/`: the domain file, 9 entity files, 23 approved metric files, `write_off_amount.draft.yaml`, the deprecated `npl_ratio.yaml`, and at least 8 glossary terms. Copy the seven starred example metrics unchanged; extend the example entities.
+- **Build**: `semantic/definitions/lending/`: the domain file, 9 entity files (the `application` and `collection_action` entities read the abbreviated physical columns of `docs/SAMPLE_DOMAIN.md` sections 3.4 and 3.8 but give every dimension a clean English name, a full description, and synonyms), 23 approved metric files, `write_off_amount.draft.yaml`, the deprecated `npl_ratio.yaml`, and at least 8 glossary terms. Copy the seven starred example metrics unchanged; extend the example entities.
 - **Acceptance**
   1. `makna validate semantic/definitions` exits 0.
   2. A test asserts the exact set of 23 approved metric names in section 5, their types, and (for simple metrics) their measure's entity and time dimension as listed in the tables.
@@ -116,7 +117,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-06 Catalog model, file connector, sync, reference check
 
 - **Read**: `docs/ARCHITECTURE.md` sections 5.3 (reference issues), 6.1, 6.2, 6.4, 7.6 (tag mapping).
-- **Build**: `makna.model.catalog`; `makna.catalog.base`; `makna.catalog.file` (format `makna-catalog/v1`); `data/catalog/lending.catalog.yaml` generated from the WP-02 table specification, with the `PII.Sensitive` tag on the five personal columns and the glossary terms; `makna.catalog.sync` (full sync into the catalog tables, `sync_run` summary); `makna.catalog.references` (R01 to R04, writing `reference_issue`); CLI `makna catalog sync` and `makna catalog issues`.
+- **Build**: `makna.model.catalog`; `makna.catalog.base`; `makna.catalog.file` (format `makna-catalog/v1`); `data/catalog/lending.catalog.yaml` generated from the WP-02 table specification, with the catalog descriptions of `docs/SAMPLE_DOMAIN.md` section 6.1 (deliberately poor in places, D-14), the `PII.Sensitive` tag on the five personal columns, and the glossary terms; `makna.catalog.sync` (full sync into the catalog tables, `sync_run` summary); `makna.catalog.references` (R01 to R04, writing `reference_issue`); CLI `makna catalog sync` and `makna catalog issues`.
 - **Acceptance**
   1. Syncing the sample export creates 9 datasets and the exact column count of `docs/SAMPLE_DOMAIN.md` section 3; a second sync reports zero changes in `sync_run.summary`.
   2. After removing a column from a copy of the export and syncing, `sync_run.summary` counts one removed column, and a reference issue R02 is open for each definition part that reads it; restoring the column and syncing closes the issue (`closed_at` set).
@@ -124,6 +125,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   4. A column tagged `PII.Sensitive` gets `derived_sensitivity = personal`; a dimension declared `internal` that reads it gets issue R03.
   5. An export file that does not match the format is rejected with an error naming the field.
   6. With the sample definitions and the sample export, there are zero open reference issues.
+  7. Q11: the committed export carries the section 6.1 descriptions exactly (empty, vague, and Indonesian ones included), and regenerating it from the table specification gives a byte-identical file.
 
 ### WP-07 Indexer and hybrid search
 

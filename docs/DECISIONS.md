@@ -1,6 +1,6 @@
 # Decisions and Open Questions
 
-Status: DRAFT for review (2026-11-11).
+Status: reviewed (2026-11-11). The independent review is `docs/reviews/design.md`; decisions D-10 to D-15 and the revisions marked "Revised after review" came out of it.
 
 ## Decided by the project owner
 
@@ -17,6 +17,12 @@ These are settled. Do not reopen them without new information.
 | D-7 | Trino is the reference query engine. | 2026-11-11 |
 | D-8 | Python is the primary language across the whole platform: backend, connectors, query compiler, MCP server, evals, data generation, and the web app's server side. JavaScript or TypeScript is allowed only for browser-side pieces that Python cannot provide (for example a code editor widget or a diagram), kept small and without a separate frontend build where possible. Reason: the owner and the teams most likely to adopt and maintain the platform work in Python. | 2026-11-11 |
 | D-9 | The project is named Makna. The repository is `makna`, the Python distribution name is `makna-sl`, and the import package is `makna`. Publishing to PyPI is not decided yet, so do not set up publishing. | 2026-11-11 |
+| D-10 | Metric definitions: git stays the source of truth (D-6, DR-4). Publishing approved metrics back to a data catalog (for example as OpenMetadata Metric entities) comes after the MVP. Until then the catalog is read-only to Makna. | 2026-11-11 |
+| D-11 | Approval is two-person by default: the author of a change cannot approve it (rule in `docs/ARCHITECTURE.md` section 11). `MAKNA_ALLOW_SELF_APPROVAL=true` turns this off for single-user installs. The default is `false`, including in the dev stack. | 2026-11-11 |
+| D-12 | The ninth sample table, `contract_monthly_snapshots`, is accepted as part of DAT-1 (`docs/SAMPLE_DOMAIN.md` section 3.9). | 2026-11-11 |
+| D-13 | The EVL-4 agent comparison uses Gemini through a Google AI Studio API key with a limited rate. The harness gets a Gemini adapter behind its provider-neutral interface, a configurable rate limiter, resumable runs, and a quick mode (20 questions, 1 run per arm) that runs before the full run. The key comes from the environment variable `GEMINI_API_KEY` and is never committed. The owner provides it when WP-22B is reached. Details in `docs/EVALS.md` section 5.5. | 2026-11-11 |
+| D-14 | Part of the synthetic catalog metadata is deliberately poor: some tables with missing or vague descriptions, abbreviated column names, and mixed Indonesian and English naming, so that search and agent evals reflect real catalogs rather than tidy ones. Specified in `docs/SAMPLE_DOMAIN.md` section 6 (quirk Q11); built in WP-02 and WP-06. | 2026-11-11 |
+| D-15 | Coding sessions may not have Docker. Agents test locally on DuckDB (unit tier) and treat Trino results as proven only when the CI stack job on GitHub Actions passes. Rules in `docs/PLAN.md` ("How to use this plan") and `CLAUDE.md`. | 2026-11-11 |
 
 ## Proposed defaults (the design session may change these with a written reason)
 

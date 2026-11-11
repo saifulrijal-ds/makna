@@ -148,7 +148,7 @@ The same language model, the same system prompt apart from the tool section, the
 | Tools | The five Makna MCP tools, with running enabled. | `list_tables()`, `describe_table(name)` (columns, types, and the catalog's column descriptions), `run_sql(sql)` on the same Trino, limited to 1000 rows. |
 | Knows the business definitions | Through Makna only. | No. It has what a catalog gives: table and column descriptions. |
 
-Arm R gets column descriptions on purpose. The comparison is "semantic layer versus a well-described schema", which is the honest baseline: an agent with bare column names would be a straw man.
+Arm R gets the catalog's table and column descriptions on purpose: an agent with bare column names would be a straw man. Those descriptions are the realistic catalog of `docs/SAMPLE_DOMAIN.md` section 6.1 (D-14): most are good, some are missing, vague, abbreviated, or in Indonesian, and two tables have abbreviated mixed-language column names. The comparison is therefore "semantic layer versus a typical catalog", not versus an unrealistically tidy one.
 
 The harness (`evals/agent/`) is a plain tool-calling loop written against one provider-neutral interface, with at most 12 tool calls per question. The model and provider are configuration. Each question is run **3 times per arm**.
 

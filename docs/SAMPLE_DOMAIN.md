@@ -20,6 +20,8 @@ A financing company lends to individuals through branch offices. A customer subm
 
 Types are Trino types. "PII" marks personal data. The catalog export (WP-06) carries the tag `PII.Sensitive` on these columns.
 
+The "Meaning" column is the true meaning, for the generator and for people writing definitions. It is **not** what the catalog says: the catalog's descriptions are specified separately in section 6, and some are deliberately missing or vague (D-14). Two tables, `loan_applications` and `collection_actions`, come from older source systems and have abbreviated column names that mix Indonesian and English (quirk Q11). The semantic model gives them clean names: for example the dimension `application.decision_status` reads the column `sts_putusan`.
+
 ### 3.1 `branches` (one row per branch)
 
 | Column | Type | Meaning |
@@ -64,20 +66,22 @@ Types are Trino types. "PII" marks personal data. The catalog export (WP-06) car
 
 ### 3.4 `loan_applications` (one row per application)
 
+Abbreviated, mixed-language column names (Q11). The semantic name each column should get is in brackets.
+
 | Column | Type | Meaning |
 |---|---|---|
-| `application_id` | integer | Primary key. |
-| `customer_id` | integer | References `customers`. |
-| `product_id` | integer | References `products`. |
-| `branch_id` | integer | Branch that received the application. References `branches`. |
-| `channel` | varchar | `walk_in`, `agent`, `online`, `telesales`. |
-| `submitted_at` | timestamp | When the application was submitted. |
-| `decision_date` | date | Date of the credit decision. Null while in process. |
-| `decision_status` | varchar | `approved`, `rejected`, `cancelled` (customer withdrew before a decision), `in_process`. |
-| `requested_amount` | decimal(18,2) | Amount the customer asked for. |
-| `approved_amount` | decimal(18,2) | Amount approved. Null unless approved. Often lower than requested. |
-| `requested_tenor_months` | integer | Tenor the customer asked for. |
-| `risk_grade` | varchar | `A` to `E`, assigned at decision. Null while in process. |
+| `appl_id` | integer | Primary key. [`application_id`] |
+| `cust_id` | integer | References `customers`. [`customer_id`] |
+| `prod_id` | integer | References `products`. [`product_id`] |
+| `cab_id` | integer | Branch (*cabang*) that received the application. References `branches`. [`branch_id`] |
+| `saluran` | varchar | Channel (*saluran*): `walk_in`, `agent`, `online`, `telesales`. [`channel`] |
+| `tgl_pengajuan` | timestamp | When the application was submitted (*tanggal pengajuan*). [`submitted_at`] |
+| `tgl_putusan` | date | Date of the credit decision (*tanggal putusan*). Null while in process. [`decision_date`] |
+| `sts_putusan` | varchar | Decision status: `approved`, `rejected`, `cancelled` (customer withdrew before a decision), `in_process`. [`decision_status`] |
+| `req_amt` | decimal(18,2) | Amount the customer asked for. [`requested_amount`] |
+| `appr_amt` | decimal(18,2) | Amount approved. Null unless approved. Often lower than requested. [`approved_amount`] |
+| `req_tenor` | integer | Tenor in months the customer asked for. [`requested_tenor_months`] |
+| `grade_risiko` | varchar | Risk grade `A` to `E`, assigned at decision. Null while in process. [`risk_grade`] |
 
 ### 3.5 `contracts` (one row per contract)
 
@@ -135,20 +139,22 @@ Types are Trino types. "PII" marks personal data. The catalog export (WP-06) car
 
 ### 3.8 `collection_actions` (one row per collection activity)
 
+Abbreviated, mixed-language column names (Q11). The semantic name each column should get is in brackets.
+
 | Column | Type | Meaning |
 |---|---|---|
-| `action_id` | integer | Primary key. |
-| `contract_id` | integer | References `contracts`. |
-| `action_date` | date | Date of the activity. |
-| `action_type` | varchar | `reminder_message`, `phone_call`, `field_visit`, `warning_letter`. |
-| `collector_id` | integer | Staff identifier (a number only; no staff table). |
-| `outcome` | varchar | `promise_to_pay`, `paid`, `no_contact`, `refused`. |
-| `promise_date` | date | Date the customer promised to pay. Null unless the outcome is `promise_to_pay`. |
-| `promise_amount` | decimal(18,2) | Amount promised. Null unless the outcome is `promise_to_pay`. |
+| `act_id` | integer | Primary key. [`action_id`] |
+| `kontrak_id` | integer | References `contracts`. [`contract_id`] |
+| `tgl_aksi` | date | Date of the activity (*tanggal aksi*). [`action_date`] |
+| `jns_aksi` | varchar | Type of activity (*jenis aksi*): `reminder_message`, `phone_call`, `field_visit`, `warning_letter`. [`action_type`] |
+| `kolektor_id` | integer | Staff identifier (a number only; no staff table). [`collector_id`] |
+| `hasil` | varchar | Outcome (*hasil*): `promise_to_pay`, `paid`, `no_contact`, `refused`. [`outcome`] |
+| `tgl_janji` | date | Date the customer promised to pay (*tanggal janji*). Null unless the outcome is `promise_to_pay`. [`promise_date`] |
+| `nom_janji` | decimal(18,2) | Amount promised (*nominal janji*). Null unless the outcome is `promise_to_pay`. [`promise_amount`] |
 
 ### 3.9 `contract_monthly_snapshots` (one row per contract per month end)
 
-Not in the list in DAT-1, and added on purpose: balances and days past due "as of a date" cannot be derived from schedules and payments with a simple aggregation, and real lenders report them from month-end positions. The generator derives this table from the other tables, so it is consistent with them.
+Not in the list in DAT-1; added on purpose and accepted by the owner (D-12): balances and days past due "as of a date" cannot be derived from schedules and payments with a simple aggregation, and real lenders report them from month-end positions. The generator derives this table from the other tables, so it is consistent with them.
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -166,9 +172,9 @@ All are many-to-one from the first table to the second.
 | From | Column | To | Relationship name in the semantic model |
 |---|---|---|---|
 | `customers` | `home_branch_id` | `branches` | `customer.home_branch` |
-| `loan_applications` | `customer_id` | `customers` | `application.customer` |
-| `loan_applications` | `product_id` | `products` | `application.product` |
-| `loan_applications` | `branch_id` | `branches` | `application.branch` |
+| `loan_applications` | `cust_id` | `customers` | `application.customer` |
+| `loan_applications` | `prod_id` | `products` | `application.product` |
+| `loan_applications` | `cab_id` | `branches` | `application.branch` |
 | `contracts` | `application_id` | `loan_applications` | `contract.application` |
 | `contracts` | `customer_id` | `customers` | `contract.customer` |
 | `contracts` | `product_id` | `products` | `contract.product` |
@@ -177,7 +183,7 @@ All are many-to-one from the first table to the second.
 | `installment_schedules` | `contract_id` | `contracts` | `installment.contract` |
 | `payments` | `contract_id` | `contracts` | `payment.contract` |
 | `payments` | `schedule_id` | `installment_schedules` | `payment.installment` |
-| `collection_actions` | `contract_id` | `contracts` | `collection_action.contract` |
+| `collection_actions` | `kontrak_id` | `contracts` | `collection_action.contract` |
 | `contract_monthly_snapshots` | `contract_id` | `contracts` | `contract_snapshot.contract` |
 
 Entity names in the semantic model: `branch`, `product`, `customer`, `application`, `contract`, `installment`, `payment`, `collection_action`, `contract_snapshot`.
@@ -198,6 +204,7 @@ Each quirk is a way to get a wrong number from the raw tables. The generator mus
 | Q8 | **Written-off and closed contracts leave the book.** A contract more than 210 days past due at a month end is written off at that month end (`contract_status = written_off`, `closed_date` set) and has no later snapshot rows. Fully repaid contracts are `closed` and have no later snapshot rows. | The active portfolio is the set of snapshot rows, not the set of contracts. | No snapshot row has a `snapshot_date` after its contract's `closed_date`. |
 | Q9 | **Personal data.** `customers` has five personal columns (`full_name`, `national_id`, `phone_number`, `email`, `birth_date`). | They must be masked or refused (QRY-2). | Every `national_id` matches `^99\d{14}$`, every `phone_number` starts with `0899000`, every `email` ends with `@example.com`. |
 | Q10 | **Region is not province.** `branches.region_name` is a sales territory; `branches.province` and `customers.province` are administrative provinces. `Jawa Barat` is both a region and a province. | "In Jawa Barat" is ambiguous without a definition. | At least one region contains branches in more than one province. |
+| Q11 | **Poor catalog metadata** (D-14). Two tables have abbreviated, mixed Indonesian and English column names (sections 3.4 and 3.8). In the catalog export, some tables and columns have no description or a vague one, and some descriptions are in Indonesian (section 6). | Real catalogs look like this. Search over catalog columns and an agent reading the raw schema must cope with it; tidy metadata would flatter both arms of the agent comparison and the column search. | The generated catalog export matches section 6.1 exactly: the listed tables and columns have an empty or the listed vague or Indonesian description, and every other table and column has its English description. |
 
 ### How the snapshot table is derived
 
@@ -266,8 +273,35 @@ At least these eight, each with English and Indonesian synonyms and links to rel
 
 ### Dimensions that must exist
 
-Beyond those in the example entity files: on `application`: `submitted_date` (time, `CAST(submitted_at AS DATE)`), `decision_date` (time), `decision_status`, `channel`, `risk_grade`. On `collection_action`: `action_date` (time), `action_type`, `outcome`. On `customer`: `gender`, `income_band`, `city`; `email` as personal with no masking. On `branch`: `branch_code`, `is_active`. On `payment`: nothing more. On `contract`: `annual_rate_pct` (numeric), `closed_date` (time), `restructured_date` (time).
+Beyond those in the example entity files: on `application`: `submitted_date` (time, `CAST(tgl_pengajuan AS DATE)`), `decision_date` (time, column `tgl_putusan`), `decision_status` (`sts_putusan`), `channel` (`saluran`), `risk_grade` (`grade_risiko`). On `collection_action`: `action_date` (time, `tgl_aksi`), `action_type` (`jns_aksi`), `outcome` (`hasil`). Dimension names are always clean English; the YAML descriptions and synonyms are complete even where the catalog's are poor (that gap is what a semantic layer adds). On `customer`: `gender`, `income_band`, `city`; `email` as personal with no masking. On `branch`: `branch_code`, `is_active`. On `payment`: nothing more. On `contract`: `annual_rate_pct` (numeric), `closed_date` (time), `restructured_date` (time).
 
 ## 6. Catalog export
 
-WP-06 writes `data/catalog/lending.catalog.yaml`, the file-based catalog export (CON-3) for this domain: every table and column above with its type and description, owners, the `PII.Sensitive` tag on the five personal columns, and the glossary terms. The format is defined in `docs/ARCHITECTURE.md` section 6.2.
+WP-06 writes `data/catalog/lending.catalog.yaml`, the file-based catalog export (CON-3) for this domain: every table and column above with its type and catalog description, owners, the `PII.Sensitive` tag on the five personal columns, and the glossary terms. The format is defined in `docs/ARCHITECTURE.md` section 6.2. The export is generated from the WP-02 table specification, which holds two texts per table and column: the true meaning (section 3) and the catalog description (this section).
+
+### 6.1 Catalog description quality (Q11, D-14)
+
+By default a table's or column's catalog description is the English meaning from section 3, shortened to one sentence. The exceptions below are deliberate, so that search and the raw-schema arm of the agent comparison face a realistic catalog. They are fixed (not random), so tests and evals are reproducible.
+
+| Object | Catalog description |
+|---|---|
+| table `loan_applications` | `LOS extract` (vague) |
+| table `installment_schedules` | none (empty) |
+| table `collection_actions` | none (empty) |
+| table `contract_monthly_snapshots` | `Data bulanan kontrak` (Indonesian, vague: "monthly contract data") |
+| every column of `collection_actions` | none (empty) |
+| `loan_applications`: `saluran`, `req_amt`, `appr_amt`, `req_tenor`, `grade_risiko` | none (empty) |
+| `loan_applications`: `sts_putusan` | `Status` (vague) |
+| `loan_applications`: `tgl_pengajuan`, `tgl_putusan` | `Tanggal` (Indonesian, vague: "date") |
+| `installment_schedules`: `schedule_version`, `is_current`, `superseded_date`, `effective_from` | none (empty) |
+| `payments.posting_date` | `Tgl posting` (Indonesian, abbreviated) |
+| `payments.is_reversed` | `Flag` (vague) |
+| `contracts.servicing_branch_id` | `Cabang` (Indonesian, vague: "branch") |
+| `contracts.disbursement_date` | `Tanggal pencairan dana` (Indonesian: "date the funds were disbursed") |
+| `contract_monthly_snapshots.collectibility` | `Kol` (abbreviation) |
+| `contract_monthly_snapshots.days_past_due` | `DPD` (abbreviation) |
+| `customers.income_band` | `Range penghasilan per bulan` (mixed Indonesian and English: "monthly income range") |
+
+All four tables in this list still have owners, and the five personal columns of `customers` keep their English descriptions and their `PII.Sensitive` tag: poor descriptions must not weaken the sensitivity rules, which come from tags (`docs/ARCHITECTURE.md` section 7.6).
+
+The YAML definitions (WP-04) do not copy these defects: their descriptions and synonyms are complete. The difference between what the catalog says and what the definitions say is part of what the evals measure.
