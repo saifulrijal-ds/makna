@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from makna.definitions.issues import Issue
-from makna.model.definitions import AnyDefinition, parse_definition
+from makna.model.definitions import AnyDefinition, Entity, GlossaryTerm, parse_definition
 
 PROPOSAL_SUFFIX = ".draft.yaml"
 OFFICIAL_SUFFIX = ".yaml"
@@ -205,3 +205,20 @@ def load_definitions(root: Path | str) -> DefinitionSet:
         result.files.append(file)
         result.load_issues.extend(issues)
     return result
+
+
+def official_objects(root: Path | str) -> tuple[list[Entity], list[GlossaryTerm]]:
+    """Entities and glossary terms of the official files under `root` that pass the schema.
+
+    This is what the catalog reference check (R01 to R04) reads; proposal files are left out.
+    """
+    entities: list[Entity] = []
+    terms: list[GlossaryTerm] = []
+    for file in load_definitions(root).valid_files():
+        if file.is_proposal:
+            continue
+        if isinstance(file.definition, Entity):
+            entities.append(file.definition)
+        elif isinstance(file.definition, GlossaryTerm):
+            terms.append(file.definition)
+    return entities, terms

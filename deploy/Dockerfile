@@ -21,6 +21,7 @@ RUN uv sync --locked --no-dev
 
 COPY config ./config
 COPY data ./data
+COPY semantic ./semantic
 COPY deploy ./deploy
 
 # The app runs as a normal user; the generated sample data lives in a volume it can write.

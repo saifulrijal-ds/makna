@@ -50,3 +50,19 @@ def engine(empty_database: URL) -> Iterator[Engine]:
     engine = create_engine(empty_database)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture
+def migrated_url(empty_database: URL) -> URL:
+    """The scratch database after `alembic upgrade head`."""
+    from makna.index import migrate
+
+    migrate.upgrade(empty_database.render_as_string(hide_password=False))
+    return empty_database
+
+
+@pytest.fixture
+def migrated_engine(migrated_url: URL) -> Iterator[Engine]:
+    engine = create_engine(migrated_url)
+    yield engine
+    engine.dispose()

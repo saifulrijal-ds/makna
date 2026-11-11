@@ -13,7 +13,7 @@ from makna.catalog.file import FileConnector
 from makna.catalog.references import open_issues
 from makna.catalog.sync import sync_catalog
 from makna.config import ConfigError, load_tag_map
-from makna.definitions.loader import load_definitions
+from makna.definitions.loader import load_definitions, official_objects
 from makna.definitions.validate import validate
 from makna.index.db import database_url_from_env, make_engine
 from makna.model.definitions import Entity, GlossaryTerm
@@ -100,20 +100,6 @@ def _validate(directory: Path) -> int:
     return 0
 
 
-def _official_objects(directory: Path) -> tuple[list[Entity], list[GlossaryTerm]]:
-    """Entities and glossary terms of the official files that pass the schema (V01)."""
-    entities: list[Entity] = []
-    terms: list[GlossaryTerm] = []
-    for file in load_definitions(directory).valid_files():
-        if file.is_proposal:
-            continue
-        if isinstance(file.definition, Entity):
-            entities.append(file.definition)
-        elif isinstance(file.definition, GlossaryTerm):
-            terms.append(file.definition)
-    return entities, terms
-
-
 def _definitions_directory(given: Path | None) -> Path | None:
     if given is not None:
         return given
@@ -136,7 +122,7 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
             if not directory.is_dir():
                 print(f"makna catalog sync: {directory} is not a directory", file=sys.stderr)
                 return 2
-            entities, terms = _official_objects(directory)
+            entities, terms = official_objects(directory)
         else:
             print(
                 "makna catalog sync: no definitions directory, reference check skipped",

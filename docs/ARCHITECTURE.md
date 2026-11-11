@@ -273,6 +273,10 @@ glossary_terms:
   - {catalog_id: glossary.npf, name: NPF, definition: Financing more than 90 days past due., synonyms: [non-performing financing]}
 ```
 
+**Rules of the format (WP-06).** The file is read as a whole and rejected, with an error that names the field (for example `datasets[3].columns[2].data_type: ...`), if: `format` is not `makna-catalog/v1`; a key is unknown at any level; a required key (`source.name`, `datasets[].engine_fqn` and `name`, `columns[].name` and `data_type`, `glossary_terms[].catalog_id` and `name`) is missing; `engine_fqn` is not `catalog.schema.table`; `data_type` is not one of the normalized types of section 6.1; a type is wrong (a string where a boolean belongs); or an `engine_fqn`, a column name within a dataset, or a glossary `catalog_id` appears twice. Optional keys default to: `description` empty, `owners` and `tags` empty, `nullable` true, `is_primary_key` false. `ordinal` is the column position from 0; when left out, the position in the list is used (an export should write it, so that removing a column does not renumber the others). A glossary term may also carry `related_terms` and `tags`; the sync does not store them yet.
+
+The sync (`makna.catalog.sync`) writes only differences into the catalog tables and records them in `sync_run.summary` (`datasets`, `columns`, `glossary_terms`: `added`, `changed`, `removed`; `reference_issues`: `opened`, `closed`). A table missing from the file is marked `removed_at` and counts as absent for reference issue R01; a column missing from the file is deleted. `derived_sensitivity` is recomputed at every sync from the current tag map. For R04, `catalog_term` is matched against the `catalog_id` or the `name` of a catalog glossary term.
+
 ### 6.3 The engine interface (CON-4)
 
 Makna never runs a caller's query (D-21). It talks to the target engine only for its own needs: listing tables and columns (`makna catalog compare`) and the freshness check (section 13), both with one read-only service account from `MAKNA_ENGINE_URL`.
