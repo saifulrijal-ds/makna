@@ -328,6 +328,64 @@ Negative probes (`probe/schema_negative.py`) show what the schema does and does 
   - The resolver matches dimension synonyms before values, so "... untuk produk syariah ..." produces a `financing_scheme` grouping as well as the filter. The expected request is the filter only.
 - **Smallest fix:** remove "syariah" from the dimension's synonyms (keep it in the value description), or give `values` their own `synonyms` field and say so in 8.4.
 
+## 4. Resolution (applied on branch `design/architecture`, 2026-11-11)
+
+Sections 1 to 3 above are the reviewer's findings on commit `d38b5a2`, left as written. This section records what was done with them, together with the owner's decisions D-10 to D-15 (`docs/DECISIONS.md`).
+
+### High and Medium: all fixed
+
+| Finding | Fix | Where |
+|---|---|---|
+| R-1 commits bypass approval | Only application commits make a definition official. The application writes an intent row in `audit_event` before each commit, and trust comes from that table, not from trailers. Every other commit is indexed as a proposal in review, is never served as approved, and is approved or rejected in the app. | ARCH 10; DR-4; WP-18 acceptance 9 and 10; WP-19B acceptance 3 |
+| R-2 stdio MCP holds the database URL | `makna mcp` is a token-only stdio-to-HTTP bridge with no database settings. The `lending` database gets its own roles, which the application role cannot use. | ARCH 9, 12; DR-6, DR-11; WP-05 acceptance 6; WP-13 acceptance 7 |
+| R-3 agents hold engine credentials | Agents never hold engine credentials. A token with `can_run` carries its owner's engine credentials, stored encrypted (`MAKNA_CREDENTIALS_KEY`). Trino is bound to `127.0.0.1` in the dev stack. Personal `column` documents are hidden from agent and viewer search. | ARCH 4.2, 6.4, 9, 11, 12, 13; WP-07 acceptance 10; WP-12B |
+| R-4 masked dimensions single out people | `partial` masking is removed (schema, example, compiler spike). A minimum group size (default 10) applies whenever a personal dimension is selected. The exposure scan also catches 6-character fragments of personal numbers. | ARCH 7.6, 7.8, 12; DR-5; schema; `customer.yaml`; EVALS 5.3; WP-10 acceptance 7 |
+| R-5 confidence band rejects valid questions | Coverage is computed over content words only. Time, grain, and dimension words are left out, using a vocabulary shared with the resolver. G02 is now a WP-07 test case. | ARCH 8.3; WP-07 acceptance 6; WP-20 |
+| R-6 two-person rule gaps | No author of any commit on a proposal may approve it. Approval rights follow the official file's owner team, and a change of owner team needs an approver or admin. | ARCH 11; DR-6; WP-18 acceptance 4 |
+| R-7 CLI import rule | `makna.cli` may import the operator packages. `mcp` and `web` stay limited to `services`. | ARCH 2; WP-01 acceptance 3 |
+| R-8 WP-04 contradictions | The three example metrics get a second (Indonesian) example question, and the pin criterion applies to simple metrics. | examples; WP-04 acceptance 4 |
+| R-9 personal-data rule gaps | The final check accepts only `COUNT` and `COUNT(DISTINCT ...)`. New V16 (no personal official date) and V17 (no `values` on personal dimensions). The `keep_last` cap is moot now that `partial` is gone. | ARCH 5.3, 7.6; WP-03; WP-10 acceptance 5 |
+| R-10 packages too big | WP-12 is split into WP-12 and WP-12B, WP-19 into WP-19, WP-19B and WP-19C, and WP-22 into WP-22, WP-22B and WP-22C. | PLAN; `progress.json`; ARCH 16 |
+| R-11 EVL-4 skippable | WP-23 acceptance 7 needs the full-run gate result or the owner's written waiver. | PLAN WP-23 |
+| R-12 log redaction | Filter values on personal dimensions are never stored. A call refused with `PERSONAL_DATA_REFUSED` stores no free text. The tool-call log is visible to approvers and admins only. | ARCH 11, 14; WP-12 acceptance 6; WP-19C |
+
+**Where the fix differs from the reviewer's suggestion**
+
+- **R-1.** Trust is anchored in an intent row written before the commit, not in "trailers plus a matching `audit_event`". After a crash, a commit that has trailers but no intent row is otherwise indistinguishable from a forged one.
+- **R-3.** The reviewer suggested a Makna service user that impersonates the caller on Trino. I chose per-token stored, encrypted credentials instead:
+  - QRY-4 asks for execution "with the caller's credentials";
+  - it works on an engine without impersonation rules;
+  - the agent still holds only a Makna token.
+
+  Impersonation remains a reasonable later option. Stored credentials need an encryption library at build time (for example `cryptography`, which is permissively licensed; check this when adding it).
+- **R-4.** `truncate_date` may still mask to month or quarter, not only year. The minimum group size is what stops a fine mask from singling out a person.
+- **R-12.** Free-text names typed into a question cannot be detected reliably, so query text kept after redaction may still contain one. This is now stated in ARCH 14, and the log is restricted to approvers and admins. **Owner:** either accept this reading of GOV-2 ("with personal data removed") or reword GOV-2.
+
+I disagree with none of the High or Medium findings.
+
+### Low: left open
+
+The owner asked for the High and Medium findings to be fixed. None of the Low findings blocks the start of the build. Each one should be fixed in the package that touches it, or decided by the owner:
+
+| Finding | Status |
+|---|---|
+| R-13 dependency edges | Partly changed: WP-18 now depends on WP-12B. Still open: WP-18 acceptance 2 uses the MCP tools without depending on WP-13, and the WP-14 freeze command is built in WP-15. Fix these when WP-14 and WP-18 start. |
+| R-14 catalog documents labelled approved | Partly addressed: personal columns are hidden from agents (R-3). A separate `catalog` status is still open. |
+| R-15 spike claims overstated | DR-5 was reworded as part of R-4. DR-12 ("implements all of it") is unchanged. |
+| R-16 schema does not enforce SEM-2 synonyms and similar | Open. Needs the owner to decide whether synonyms are mandatory (SEM-2 says so; ARCH 5.1 says optional). |
+| R-17 brief says reranking is MVP, requirements say P2 | Open. **Owner decision.** |
+| R-18 who may reject (ARCH 10 versus 11) | Open. One-line fix in WP-18. |
+| R-19 criteria that cannot be checked meaningfully | Open. |
+| R-20 the "syariah" synonym misleads the resolver on G09 | Open. WP-04 or WP-20 should fix it. |
+
+### Rechecks after the fixes
+
+- All 16 example files still pass the JSON Schema (`design-probes/validate_examples.py`).
+- **Compiler spike:** all checks still pass. `output.txt` was regenerated: the masked-dimension case now uses birth year only, and the phone number is refused.
+- **Search spike:** `output.txt` was regenerated after the new example questions. Only two keyword scores and the latency line changed; recall and MRR did not.
+- All 39 MVP requirement IDs have a work package. `PLAN.md`, `progress.json` (28 packages) and ARCH section 16 agree. The dependency graph has no unknown or forward edges.
+- The original `plan_check.py` probe does not recognise the new `B` and `C` package suffixes, so it reports false differences on the new plan.
+
 ## Appendix A. Requirement to architecture to work package
 
 Built mechanically from `REQUIREMENTS.md` (51 IDs, 39 MVP including WEB-5 basic), `ARCHITECTURE.md` section 16, the `PLAN.md` table and `docs/progress.json`. The work-package sets agree across all three for every ID. The "Review note" column records where this review found the home weak.

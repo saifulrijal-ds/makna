@@ -107,7 +107,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   2. A test asserts the exact set of 23 approved metric names in section 5, their types, and (for simple metrics) their measure's entity and time dimension as listed in the tables.
   3. Every metric and every entity has at least one English and one Indonesian synonym; every metric has at least two example questions; every dimension and measure has a description.
   4. Every **simple** metric whose table row says "booking" or "servicing" pins `branch` to a path ending in `contract.booking_branch` or `contract.servicing_branch` respectively. Ratio and derived metrics cannot carry `join_paths` (schema); for them, every input pins the link their row names.
-  5. The five personal columns of `customers` are each read by a dimension with `sensitivity: personal`; `full_name`, `national_id`, and `email` have no masking rule.
+  5. The five personal columns of `customers` are each read by a dimension with `sensitivity: personal`; `full_name`, `national_id`, `phone_number`, and `email` have no masking rule; `birth_date` is masked only with `truncate_date` (there is no partial masking, review R-4).
   6. The files under `semantic/schema/examples/lending/metrics/` are identical to the files of the same name in `semantic/definitions/lending/metrics/`.
 
 ### WP-05 Development stack and database migrations
