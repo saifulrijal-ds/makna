@@ -9,15 +9,15 @@ Only the shape (field names and basic types) is checked here.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from makna.model.definitions import RequestBody, Scalar
+from makna.model.definitions import Filter, RequestBody, Scalar
 
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 10000
-FILTER_OPS = ("=", "!=", ">", ">=", "<", "<=", "in", "not_in", "is_null", "is_not_null")
+FILTER_OPS: tuple[str, ...] = get_args(Filter.model_fields["op"].annotation)
 
 
 class _Frozen(BaseModel):

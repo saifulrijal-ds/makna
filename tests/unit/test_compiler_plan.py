@@ -105,8 +105,8 @@ def test_a_ratio_whose_inputs_pin_the_same_link_offers_the_entity() -> None:
     assert "region.region_name" in refs(shop(), "revenue_per_order")
 
 
-def test_a_ratio_offers_an_entity_only_when_every_input_reaches_it() -> None:
-    # collected_amount reaches the contract; application metrics do not.
+def test_a_ratio_leaves_out_an_entity_that_one_input_reads_itself() -> None:
+    # due_amount is measured on installment, collected_amount reaches it through payment.
     model = lending()
     assert "branch.region_name" in refs(model, "collection_rate")
     assert "installment.due_date" not in refs(model, "collection_rate")  # inconsistent entry
@@ -555,3 +555,61 @@ def test_model_snapshots_of_the_same_objects_are_equal() -> None:
     a = Model.build(lending().entities.values(), lending().metrics.values())
     b = Model.build(lending().entities.values(), lending().metrics.values())
     assert a == b
+
+
+# --------------------------------------------------------------------------------------
+# Fix round 1
+
+
+def _excluded(model: Model, metric: str, entity: str) -> Any:
+    result = available_dimensions(model, model.metrics[metric])
+    return next(e for e in result.excluded if e.entity == entity)
+
+
+def test_an_input_that_reads_the_entity_itself_gets_no_advice_to_pin() -> None:
+    reason = _excluded(lending(), "collection_rate", "installment").reason
+    assert "reads installment itself" in reason
+    assert "no pin can" in reason and "pin such" not in reason and "pin one" not in reason
+
+
+def test_inputs_entering_by_different_relationships_get_conditional_pin_advice() -> None:
+    reason = _excluded(lending(), "collection_rate", "contract").reason
+    assert "payment.contract" in reason and "installment.contract" in reason
+    assert "if such a chain exists" in reason
+
+
+def _align_contract(model: Model) -> Model:
+    collected = model.metrics["collected_amount"]
+    pinned = collected.model_copy(
+        update={
+            "join_paths": {
+                **(collected.join_paths or {}),
+                "contract": ["payment.installment", "installment.contract"],
+            }
+        }
+    )
+    metrics = [pinned if m.name == "collected_amount" else m for m in model.metrics.values()]
+    return Model.build(model.entities.values(), metrics)
+
+
+def test_a_longer_pin_can_align_the_final_relationship() -> None:
+    assert "contract.contract_status" not in refs(lending(), "collection_rate")
+    assert "contract.contract_status" in refs(_align_contract(lending()), "collection_rate")
+
+
+def test_a_bad_pin_keeps_its_cause_in_the_exclusion() -> None:
+    def bad_pin(files: Files) -> None:
+        metric_doc(files, "revenue")["join_paths"] = {"region": ["order.nope"]}
+
+    reason = _excluded(shop(bad_pin), "revenue", "region")
+    assert reason.kind == "no_path"
+    assert "pinned join path" in reason.reason and "order.nope" in reason.reason
+
+
+def test_an_issue_on_an_entity_a_path_passes_through_refuses() -> None:
+    issue = ReferenceIssue("R02", "column contract_id is not in the table")
+    base = lending()
+    model = Model.build(base.entities.values(), base.metrics.values(), {"contract": [issue]})
+    error = failure(model, request("collected_amount", dimensions=["customer.customer_segment"]))
+    assert error.code == ErrorCode.BROKEN_REFERENCE
+    assert error.details["issues"][0]["object"] == "entity:contract"

@@ -20,10 +20,11 @@ import difflib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal, get_args
 
 from makna.compiler.graph import JoinPath, JoinStep, path_names, resolve_path
 from makna.compiler.snapshot import Model
-from makna.model.definitions import Dimension, Entity, Measure, Metric, RuleRef, Scalar
+from makna.model.definitions import Dimension, Entity, Grain, Measure, Metric, RuleRef, Scalar
 from makna.model.definitions import Filter as DefinitionFilter
 from makna.model.request import (
     FILTER_OPS,
@@ -35,7 +36,7 @@ from makna.model.request import (
     ResultColumn,
 )
 
-GRAINS = ("day", "week", "month", "quarter", "year")
+GRAINS: tuple[str, ...] = get_args(Grain)
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
 
@@ -69,6 +70,9 @@ class DimensionOption:
     paths: tuple[InputPath, ...]
 
 
+ExcludedKind = Literal["no_path", "ambiguous", "inconsistent"]
+
+
 @dataclass(frozen=True)
 class ExcludedEntity:
     """An entity whose dimensions the metric cannot offer, and why.
@@ -78,7 +82,7 @@ class ExcludedEntity:
     """
 
     entity: str
-    kind: str
+    kind: ExcludedKind
     reason: str
     candidate_paths: tuple[tuple[str, ...], ...] = ()
 
@@ -325,6 +329,9 @@ def _exclusion(entity: str, failures: list[tuple[Metric, QueryError]]) -> Exclud
                 "pin one in join_paths",
                 candidates,
             )
+    for leaf, error in failures:
+        if "pinned" in error.details:
+            return ExcludedEntity(entity, "no_path", f"{leaf.name}: {error.message}")
     names = ", ".join(leaf.name for leaf, _ in failures)
     return ExcludedEntity(entity, "no_path", f"no approved join path from {names} to {entity}")
 
@@ -333,12 +340,22 @@ def _inconsistent(entity: str, paths: list[InputPath]) -> ExcludedEntity:
     entries = ", ".join(
         f"{p.metric} via {p.steps[-1] if p.steps else 'its own table'}" for p in paths
     )
+    own = [p.metric for p in paths if not p.steps]
+    if own:
+        advice = (
+            f"{', '.join(own)} reads {entity} itself, so no pin can make the inputs share "
+            f"its dimensions"
+        )
+    else:
+        advice = (
+            f"a pin helps only if each input can reach {entity} by a chain that ends in the "
+            "same relationship; pin such a chain in every input if such a chain exists"
+        )
     return ExcludedEntity(
         entity,
         "inconsistent",
         f"{entity} dimensions are left out because the inputs enter {entity} through different "
-        f"relationships ({entries}), so the result would divide unlike numbers; "
-        "pin the same relationship in every input",
+        f"relationships ({entries}), so the result would divide unlike numbers; {advice}",
         tuple(p.steps for p in paths),
     )
 
@@ -404,9 +421,12 @@ def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = 
     inputs = tuple(
         _plan_input(model, leaf, *measures[leaf.name], dimensions, filters) for leaf in leaves
     )
-    _check_references(
-        model, {p.entity for i in inputs for p in i.paths} | {i.measure_entity for i in inputs}
-    )
+    touched = {i.measure_entity for i in inputs}
+    for plan_input in inputs:
+        for entity_path in plan_input.paths:
+            touched.add(entity_path.entity)
+            touched.update(n for step in entity_path.steps for n in (step.entity, step.to))
+    _check_references(model, touched)
     return QueryPlan(
         metric=metric.name,
         version=metric.version,

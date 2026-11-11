@@ -370,7 +370,7 @@ In the sample domain, `contract` reaches `branch` by `contract.booking_branch` a
 - For a **simple metric**: every dimension of the measure's entity and of every entity reachable by rule 7.3.
 - For a **ratio or derived metric**: a dimension `E.d` is available only if every input can reach `E` **and every input's path enters `E` through the same final relationship**. This prevents dividing a number by booking branch by a number by servicing branch.
 - A personal dimension without a masking rule is listed as unavailable with the reason, so agents do not try it.
-- "The same final relationship" compares relationship names: two inputs from different tables (for example `payment.contract` and `installment.contract`) enter `contract` through different relationships, so a ratio of them does not offer `contract` dimensions. Entities left out because of an ambiguous path or inconsistent inputs are recorded with the reason, and the reason is the warning for curators.
+- "The same final relationship" compares relationship names: two inputs from different tables (for example `payment.contract` and `installment.contract`) enter `contract` through different relationships, so a ratio of them does not offer `contract` dimensions until one input pins a chain that ends in the same relationship (for example `join_paths: {contract: [payment.installment, installment.contract]}` on the payment input). An entity that one input reads itself (`installment` for a ratio with a metric measured on installments) cannot be aligned by a pin. Entities left out because of an ambiguous path or inconsistent inputs are recorded with the reason, and the reason is the warning for curators.
 
 ### 7.5 SQL generation
 

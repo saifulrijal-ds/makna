@@ -96,12 +96,6 @@ def test_v19_points_at_the_metric_file_and_the_example_request(tmp_path: Path) -
 
 def test_the_second_example_is_reported_by_its_number(tmp_path: Path) -> None:
     def second_is_bad(files: Files) -> None:
-        metric_doc(files, "revenue")["example_requests"].append(
-            {
-                "question": "Revenue by hour?",
-                "request": {"grain": "day", "limit": 5},
-            }  # fine
-        )
         metric_doc(files, "order_count")["time_grains"] = ["month"]
         metric_doc(files, "order_count")["default_grain"] = "month"
         metric_doc(files, "order_count")["example_requests"].append(
