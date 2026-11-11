@@ -42,3 +42,13 @@ def db(dataset: Path) -> Iterator[duckdb.DuckDBPyConnection]:
     con = connect(dataset)
     yield con
     con.close()
+
+
+@pytest.fixture(scope="session")
+def lending_db(data_small: Path) -> Iterator[duckdb.DuckDBPyConnection]:
+    """The scale 0.05 sample data in DuckDB as `lending.core.<table>` (compiler tests)."""
+    from .duckdb_support import load_lending
+
+    con = load_lending(data_small)
+    yield con
+    con.close()
