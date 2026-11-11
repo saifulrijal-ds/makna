@@ -415,8 +415,8 @@ def _operand(nodes: dict[str, MetricNode], name: str) -> exp.Expr:
 def _derived(nodes: dict[str, MetricNode], node: MetricNode) -> exp.Expr:
     """A derived metric's expression, with each input name replaced by that input's value.
 
-    A division gets a floating-point numerator, so integer inputs divide the same way on
-    PostgreSQL (which truncates) and on DuckDB (which does not).
+    A division needs no cast here: sqlglot prints `a / b` for PostgreSQL with a floating-point
+    numerator, so integer inputs divide as they do on DuckDB (a test pins this).
     """
     assert node.expr is not None
     try:
@@ -428,8 +428,6 @@ def _derived(nodes: dict[str, MetricNode], node: MetricNode) -> exp.Expr:
     def replace(found: exp.Expr) -> exp.Expr:
         if isinstance(found, exp.Column) and found.name in inputs:
             return _operand(nodes, found.name)
-        if isinstance(found, exp.Div) and not isinstance(found.this, exp.Cast):
-            found.set("this", exp.Cast(this=found.this, to=exp.DataType.build("double")))
         return found
 
     return tree.transform(replace)
