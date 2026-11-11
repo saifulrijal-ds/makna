@@ -9,6 +9,7 @@ from pathlib import Path
 
 from makna.definitions.loader import load_definitions
 from makna.definitions.validate import validate
+from makna.services.examples import check_example_requests
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         "validate",
         help="check the definition files in a directory",
         description=(
-            "Check every definition file under a directory (definition errors V01 to V18 and V20). "
+            "Check every definition file under a directory (definition errors V01 to V20). "
             "Prints one line per problem as 'file:line: CODE message'. "
             "Exits 1 if there is any problem, 0 otherwise."
         ),
@@ -44,7 +45,7 @@ def _validate(directory: Path) -> int:
     if not directory.is_dir():
         print(f"makna validate: {directory} is not a directory", file=sys.stderr)
         return 2
-    issues = validate(load_definitions(directory))
+    issues = validate(load_definitions(directory), extra_checks=[check_example_requests])
     prefix = f"{directory.as_posix().rstrip('/')}/"
     for issue in issues:
         print(issue.format(prefix))
