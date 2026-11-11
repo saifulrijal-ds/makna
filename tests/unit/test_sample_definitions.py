@@ -514,11 +514,11 @@ def test_the_rules_of_the_document_exist_with_the_stated_condition() -> None:
     assert {(e, r) for e, r, _ in rules} == {
         ("contract_snapshot", "non_performing"),
         ("contract_snapshot", "past_due_30"),
+        ("contract_snapshot", "write_off_position"),
         ("contract", "restructured"),
     }
-    # the draft write-off metric adds a fourth rule that the document does not list
     declared = {(e.name, r.name) for e in loaded().entities.values() for r in e.rules or []}
-    assert declared == {(e, r) for e, r, _ in rules} | {("contract_snapshot", "write_off_position")}
+    assert declared == {(e, r) for e, r, _ in rules}
     for entity_name, rule_name, expected in rules:
         entity = loaded().entities[entity_name]
         rule = next(r for r in entity.rules or [] if r.name == rule_name)

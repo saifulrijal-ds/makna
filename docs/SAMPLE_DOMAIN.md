@@ -276,7 +276,7 @@ Conditions that several measures or metrics share are written once, as named rul
 | `contract_snapshot.non_performing` ★ | `days_past_due > 90` | `npf_outstanding_principal` (and through it `npf_ratio`) |
 | `contract_snapshot.past_due_30` | `days_past_due > 30` | `par30_outstanding_principal` (and `par30_ratio`) |
 | `contract.restructured` | `is_restructured` | `restructured_outstanding_principal` (a metric filter across a join, and `restructured_ratio`) |
-| `contract_snapshot.write_off_position` | `days_past_due > 210` (a write-off happens at the first month end past 210 days, quirk Q8, and leaves no later snapshot rows) | the draft `write_off_amount` (governance fixture) |
+| `contract_snapshot.write_off_position` | `days_past_due > 210` | the draft `write_off_amount` (governance fixture). It selects exactly the write-off row: a contract is written off at the first month end past 210 days and has no later snapshot rows (quirk Q8). |
 
 ### Glossary terms
 
