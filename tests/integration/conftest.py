@@ -16,13 +16,17 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
 
 from makna.index.db import sqlalchemy_url
+from tests import db_env
 
 
 @pytest.fixture(scope="session")
 def test_database_url() -> URL:
-    value = os.environ.get("MAKNA_TEST_DATABASE_URL")
-    if not value:
-        pytest.skip("MAKNA_TEST_DATABASE_URL is not set (needs PostgreSQL with pgvector)")
+    value, problem = db_env.find_test_database_url(os.environ)
+    if value is None:
+        assert problem is not None
+        if problem.startswith("FAIL"):
+            pytest.fail(problem, pytrace=False)
+        pytest.skip(problem)
     return make_url(sqlalchemy_url(value))
 
 

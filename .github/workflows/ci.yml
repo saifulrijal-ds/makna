@@ -24,6 +24,7 @@ jobs:
   integration:
     name: Integration tests (PostgreSQL with pgvector)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         # Keep this tag equal to the one in deploy/docker-compose.yml.
@@ -40,6 +41,8 @@ jobs:
           --health-retries 20
     env:
       MAKNA_TEST_DATABASE_URL: postgresql://postgres:makna_dev_postgres@localhost:5432/postgres
+      # A missing database must fail this job, never skip every test.
+      MAKNA_REQUIRE_TEST_DATABASE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -52,6 +55,7 @@ jobs:
   stack:
     name: Development stack
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -60,9 +64,12 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked
       - name: Generate a throwaway application secret
-        run: echo "MAKNA_SECRET_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+        run: |
+          key=$(openssl rand -hex 32)
+          echo "::add-mask::$key"
+          echo "MAKNA_SECRET_KEY=$key" >> "$GITHUB_ENV"
       - name: Start the stack (acceptance 1)
-        run: docker compose -f deploy/docker-compose.yml up -d --wait
+        run: docker compose -f deploy/docker-compose.yml up -d --wait --wait-timeout 300
       - name: Check row counts, a second init, roles and ports (acceptance 2, 4, 6)
         run: uv run python -m deploy.check_stack
       - name: Show service logs

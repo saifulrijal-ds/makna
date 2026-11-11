@@ -1,6 +1,7 @@
 # The Makna image: used by the `init` and `app` services of docker-compose.yml.
 # Build context is the repository root.
-FROM python:3.12-slim
+# Pinned to a patch release; raise it deliberately.
+FROM python:3.12.16-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

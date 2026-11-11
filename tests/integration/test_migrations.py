@@ -131,3 +131,66 @@ def test_search_document_generates_tsv_and_stores_a_vector(
         ).scalar()
     assert match == "metric:npf_ratio"
     assert dimension == 3
+
+
+def test_types_keys_constraints_and_indexes(empty_database: URL, engine: Engine) -> None:
+    migrate.upgrade(empty_database.render_as_string(hide_password=False))
+    inspector = inspect(engine)
+
+    def types(table: str) -> dict[str, str]:
+        return {c["name"]: str(c["type"]).upper() for c in inspector.get_columns(table)}
+
+    assert types("search_document")["embedding"] == "VECTOR"
+    assert types("search_document")["tsv"] == "TSVECTOR"
+    assert types("catalog_dataset")["owners"] == "JSONB"
+    assert types("tool_call_log")["request"] == "JSONB"
+    assert types("app_user")["teams"].startswith("ARRAY") or types("app_user")["teams"].endswith(
+        "[]"
+    )
+    assert types("data_freshness")["latest_value"] == "DATE"
+    assert types("audit_event")["at"].startswith("TIMESTAMP")
+    assert types("semantic_object")["id"] == "TEXT"
+    assert types("catalog_source")["id"] == "BIGINT"
+
+    primary_keys = {
+        "semantic_object": ["id"],
+        "object_edge": ["src_id", "dst_id", "type"],
+        "index_state": ["key"],
+        "data_freshness": ["object_id"],
+        "app_user": ["id"],
+        "search_document": ["id"],
+    }
+    for table, columns in primary_keys.items():
+        assert inspector.get_pk_constraint(table)["constrained_columns"] == columns, table
+
+    def unique(table: str) -> set[tuple[str, ...]]:
+        return {tuple(u["column_names"]) for u in inspector.get_unique_constraints(table)}
+
+    assert ("name",) in unique("catalog_source")
+    assert ("engine_fqn",) in unique("catalog_dataset")
+    assert ("dataset_id", "name") in unique("catalog_column")
+    assert ("email",) in unique("app_user")
+    assert ("token_hash",) in unique("api_token")
+    assert ("commit_sha", "object_id", "action") in unique("audit_event")
+
+    def foreign_keys(table: str) -> set[tuple[str, str]]:
+        return {
+            (fk["constrained_columns"][0], fk["referred_table"])
+            for fk in inspector.get_foreign_keys(table)
+        }
+
+    assert foreign_keys("catalog_dataset") == {("source_id", "catalog_source")}
+    assert foreign_keys("catalog_column") == {("dataset_id", "catalog_dataset")}
+    assert foreign_keys("api_token") == {("user_id", "app_user")}
+    assert foreign_keys("tool_call_log") == {("user_id", "app_user"), ("token_id", "api_token")}
+    for table in ("semantic_object", "object_edge", "search_document", "reference_issue"):
+        assert foreign_keys(table) == set(), table
+
+    with engine.connect() as connection:
+        gin = connection.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'search_document' AND indexname = 'ix_search_document_tsv'"
+            )
+        ).scalar()
+    assert gin is not None and "USING gin (tsv)" in gin

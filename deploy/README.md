@@ -54,6 +54,8 @@ It stops at the first failing step and exits 1. Every step is idempotent: a seco
 2. `load-lending`: creates `lending.core` tables from `data/generator/spec.py` and loads the files (`data/lending_loader.py`). A table is reloaded only when its file changed (its load marker is the file's SHA-256, kept as the table comment).
 3. `migrate`: `alembic upgrade head` on the `makna` database.
 
+Existing Parquet files are kept whatever `--seed` or `--scale` is passed (a file that cannot be read is regenerated); to change the data, delete the `generated` volume and the `pgdata` volume (`down -v`).
+
 Later work packages append their step to `STEPS`. `init` lives here and not in `src/makna`
 because it uses the sample-data code in `data/`, which the installed product never imports.
 
