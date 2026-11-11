@@ -99,3 +99,10 @@ def test_main_without_urls_exits_2_and_names_the_variable(
     monkeypatch.delenv("MAKNA_LENDING_LOADER_URL", raising=False)
     assert init.main([]) == 2
     assert "MAKNA_DATABASE_URL" in capsys.readouterr().err
+
+
+def test_sync_catalog_runs_after_migrate_and_the_image_carries_its_inputs() -> None:
+    names = [step.name for step in init.STEPS]
+    assert names.index("sync-catalog") == names.index("migrate") + 1
+    dockerfile = (Path(__file__).resolve().parents[2] / "deploy" / "Dockerfile").read_text()
+    assert "COPY semantic ./semantic" in dockerfile and "COPY data ./data" in dockerfile

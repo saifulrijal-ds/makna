@@ -3,7 +3,7 @@
 Run it as `python -m deploy.init` (the `init` service of docker-compose.yml does). It lives
 outside `src/makna` because the first steps use the sample-data code in `data/`, which the
 installed product package must not import. Later work packages append their step to `STEPS`
-(catalog sync, index build, demo users, definitions repository). A step is safe to run again:
+(index build, demo users, definitions repository). A step is safe to run again:
 the second run of the whole list changes nothing and exits 0.
 """
 
@@ -22,7 +22,12 @@ import pyarrow.parquet as pq
 
 from data.generator import DEFAULT_SEED, TABLES, generate, write_parquet
 from data.lending_loader import load_all
+from makna.catalog.file import FileConnector
+from makna.catalog.sync import sync_catalog
+from makna.config import load_tag_map
+from makna.definitions.loader import official_objects
 from makna.index import migrate
+from makna.index.db import make_engine
 
 
 class InitError(Exception):
@@ -38,6 +43,10 @@ class Context:
     """Application database (`MAKNA_DATABASE_URL`), as the `makna` role."""
     lending_loader_url: str
     """`lending` database as the loader role (`MAKNA_LENDING_LOADER_URL`)."""
+    catalog_file: Path = Path("data/catalog/lending.catalog.yaml")
+    """The catalog export that `sync-catalog` reads."""
+    definitions_dir: Path = Path("semantic/definitions")
+    """The definitions the reference check reads, until the definitions repository (WP-18)."""
 
 
 @dataclass(frozen=True)
@@ -79,11 +88,40 @@ def run_migrations(context: Context) -> str:
     return "unchanged" if before == after else f"upgraded {before} -> {after}"
 
 
+def sync_catalog_step(context: Context) -> str:
+    found = official_objects(context.definitions_dir)
+    engine = make_engine(context.database_url)
+    try:
+        result = sync_catalog(
+            engine,
+            FileConnector(context.catalog_file),
+            tag_map=load_tag_map(),
+            entities=found.entities,
+            glossary_terms=found.terms,
+            unreadable_objects=found.invalid,
+            record_unchanged=False,
+        )
+    finally:
+        engine.dispose()
+    summary = result.summary
+    warning = "".join(f" WARNING: {w}" for w in result.warnings)
+    if summary.total_changes == 0:
+        return "unchanged" + warning
+    return (
+        f"synced (datasets +{summary.datasets.added} ~{summary.datasets.changed} "
+        f"-{summary.datasets.removed}, columns +{summary.columns.added} "
+        f"~{summary.columns.changed} -{summary.columns.removed}, glossary terms "
+        f"+{summary.glossary_terms.added}, reference issues opened {summary.issues_opened} "
+        f"closed {summary.issues_closed})" + warning
+    )
+
+
 # Later packages append here, in the order the steps must run.
 STEPS: list[Step] = [
     Step("generate-sample-data", generate_sample_data),
     Step("load-lending", load_lending),
     Step("migrate", run_migrations),
+    Step("sync-catalog", sync_catalog_step),
 ]
 
 

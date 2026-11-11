@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 from makna.definitions.issues import Issue
-from makna.model.definitions import AnyDefinition, parse_definition
+from makna.model.definitions import AnyDefinition, Entity, GlossaryTerm, parse_definition
 
 PROPOSAL_SUFFIX = ".draft.yaml"
 OFFICIAL_SUFFIX = ".yaml"
@@ -204,4 +204,46 @@ def load_definitions(root: Path | str) -> DefinitionSet:
         file, issues = load_text(name, text)
         result.files.append(file)
         result.load_issues.extend(issues)
+    return result
+
+
+@dataclass
+class OfficialObjects:
+    """What the catalog reference check reads from a definitions directory."""
+
+    entities: list[Entity] = field(default_factory=list)
+    terms: list[GlossaryTerm] = field(default_factory=list)
+    invalid: dict[str, str] = field(default_factory=dict)
+    """Official files that failed to load: object id (`entity:customer`) -> path.
+
+    The object id comes from the file's folder and name, since the content could not be read.
+    A file in an unknown folder is listed under its path.
+    """
+
+
+_KIND_FOLDERS = {"entities": "entity", "glossary": "glossary_term", "metrics": "metric"}
+
+
+def _object_id_of_path(path: str) -> str:
+    parts = path.split("/")
+    kind = _KIND_FOLDERS.get(parts[-2]) if len(parts) >= 2 else None
+    return f"{kind}:{parts[-1].removesuffix(OFFICIAL_SUFFIX)}" if kind else path
+
+
+def official_objects(root: Path | str) -> OfficialObjects:
+    """Entities and glossary terms of the official files under `root`; proposals are left out.
+
+    A file that fails the schema is listed in `invalid`, so the reference check can leave the
+    open issues of that object alone instead of closing them.
+    """
+    result = OfficialObjects()
+    for file in load_definitions(root).files:
+        if file.is_proposal:
+            continue
+        if file.definition is None:
+            result.invalid[_object_id_of_path(file.path)] = file.path
+        elif isinstance(file.definition, Entity):
+            result.entities.append(file.definition)
+        elif isinstance(file.definition, GlossaryTerm):
+            result.terms.append(file.definition)
     return result
