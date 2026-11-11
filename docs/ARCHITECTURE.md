@@ -682,7 +682,7 @@ Errors: `{"error": {"code": "DIMENSION_NOT_AVAILABLE", "message": "...", "detail
 
 Output adds `rows` (list of lists), `row_count`, and `truncated`.
 
-**Client compatibility (MCP-3)** is tested in WP-22 with two different clients: the official SDK's client over stdio, and LangChain's MCP adapters over Streamable HTTP. Both list the tools and complete a search, a definition read, and a compile.
+**Client compatibility (MCP-3)** is tested in WP-22C with two different clients: the official SDK's client over stdio, and LangChain's MCP adapters over Streamable HTTP. Both list the tools and complete a search, a definition read, and a compile.
 
 ## 13. The web app (P-4, D-8)
 
@@ -698,8 +698,8 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V17) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
 | `/review` | Queue of proposals in review: object, author, reason, difference, validation result, reference issues. Approve and Reject ask for a reason. Buttons are shown only to users who may approve that object. | WEB-3 |
 | `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; the SQL and explanation; and, if running is enabled and engine credentials are in the session, the first 100 rows. | WEB-4 |
-| `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19). | GOV-1, GOV-2 |
-| `/admin/users`, `/admin/tokens`, `/admin/catalog` | Users and roles; tokens (both built in WP-16); sync runs and the reference-issue report, with buttons to run a sync and an index sync (built in WP-19). | WEB-5, SEM-4 |
+| `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19B and WP-19C). | GOV-1, GOV-2 |
+| `/admin/users`, `/admin/tokens`, `/admin/catalog` | Users and roles; tokens (both built in WP-16); sync runs and the reference-issue report, with buttons to run a sync and an index sync (built in WP-19C). | WEB-5, SEM-4 |
 | `/login`, `/logout`, `/account` | Sign-in; own tokens (a token that may run queries is created together with the owner's engine credentials, stored encrypted); engine credentials for this web session. | WEB-5 |
 
 Engine credentials entered on `/account` for the web session are kept in server memory for the session (lost on restart), never in the cookie and never in the database. Engine credentials given for a token are stored only encrypted (section 12).
@@ -725,7 +725,7 @@ DuckDB appears only in tests, as a fast stand-in for the engine. It is not an en
 
 Coding sessions may have no Docker (D-15). There, the unit tier (including DuckDB) is what runs locally, and results on Trino count as proven only when the CI stack job passes. The rules are in `docs/PLAN.md`, "How to use this plan".
 
-CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a PostgreSQL service container; then a job that starts the dev stack and runs `tests/engine` and the retrieval and compile evals with thresholds. The agent eval runs on manual trigger and on a schedule when a model key is configured.
+CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a PostgreSQL service container; then a job that starts the dev stack and runs `tests/engine` and the retrieval and compile evals with thresholds. The agent eval runs on manual trigger only, in quick mode, when the owner has configured the model key as a CI secret; the full run is started by hand (`docs/EVALS.md` section 5.5).
 
 ## 16. Where each requirement is met
 
@@ -739,7 +739,7 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | SEM-1 | 5.1, `semantic/schema/` | WP-03 |
 | SEM-2 | 5.1 common fields | WP-03, WP-04 |
 | SEM-3 | 5.2, 10 | WP-03, WP-18 |
-| SEM-4 | 5.3 reference issues R01 to R04, 6.4 `reference_issue`, 13 `/admin/catalog` | WP-06, WP-19 |
+| SEM-4 | 5.3 reference issues R01 to R04, 6.4 `reference_issue`, 13 `/admin/catalog` | WP-06, WP-19C |
 | SEM-5 | Not in MVP. DR-1 names Apache Ossie as the target. | — |
 | SRC-1 | 8.2 | WP-07 |
 | SRC-2 | 8.2 (`simple` configuration, synonyms in `names`), 8.1 (multilingual model) | WP-07 |
@@ -749,25 +749,25 @@ CI (GitHub Actions): lint (ruff), types (mypy), unit; integration with a Postgre
 | QRY-1 | 7.1 to 7.5 | WP-08, WP-09 |
 | QRY-2 | 7.6 | WP-10 |
 | QRY-3 | 7.8 | WP-09 |
-| QRY-4 | 4.2 step 7, 6.3, 12 | WP-11, WP-12 |
+| QRY-4 | 4.2 step 7, 6.3, 12 | WP-11, WP-12, WP-12B |
 | QRY-5 | Not in MVP. | — |
 | MCP-1, MCP-2 | 12 | WP-13 |
-| MCP-3 | 12 client compatibility | WP-22 |
+| MCP-3 | 12 client compatibility | WP-22C |
 | MCP-4, MCP-5 | Not in MVP. The service layer (2) is what an HTTP API will expose. | — |
 | WEB-1 | 13 discovery pages, freshness | WP-17 |
 | WEB-2 | 13 editor | WP-19 |
-| WEB-3 | 10, 11, 13 review queue | WP-18, WP-19 |
+| WEB-3 | 10, 11, 13 review queue | WP-18, WP-19B |
 | WEB-4 | 8.4, 13 `/bench` | WP-20 |
-| WEB-5 (basic) | 11 | WP-12, WP-16 |
+| WEB-5 (basic) | 11 | WP-12B, WP-16 |
 | WEB-6, WEB-7 | Not in MVP. | — |
-| GOV-1 | 10, 14, 13 `/audit` | WP-18, WP-19 |
-| GOV-2 | 14, 13 `/logs/tool-calls` | WP-12, WP-19 |
+| GOV-1 | 10, 14, 13 `/audit` | WP-18, WP-19B |
+| GOV-2 | 14, 13 `/logs/tool-calls` | WP-12, WP-19C |
 | GOV-3, GOV-4 | Not in MVP. 8.3 and 14 record the data GOV-3 needs. | — |
 | EVL-1 | `docs/EVALS.md` 2 | WP-14 |
 | EVL-2 | `docs/EVALS.md` 3 | WP-15 |
 | EVL-3 | `docs/EVALS.md` 4 | WP-15 |
-| EVL-4 | `docs/EVALS.md` 5 | WP-22 |
-| EVL-5 | `docs/EVALS.md` 6, 15 | WP-15, WP-22 |
+| EVL-4 | `docs/EVALS.md` 5 | WP-22, WP-22B, WP-23 (release gate) |
+| EVL-5 | `docs/EVALS.md` 6, 15 | WP-15, WP-22B |
 | DAT-1, DAT-2 | `docs/SAMPLE_DOMAIN.md` 3 and 4 | WP-02 |
 | DAT-3 | `docs/SAMPLE_DOMAIN.md` 5 | WP-04 |
 | NFR-1 | 9 | WP-05, WP-23 |

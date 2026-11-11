@@ -150,7 +150,7 @@ The same language model, the same system prompt apart from the tool section, the
 
 Arm R gets the catalog's table and column descriptions on purpose: an agent with bare column names would be a straw man. Those descriptions are the realistic catalog of `docs/SAMPLE_DOMAIN.md` section 6.1 (D-14): most are good, some are missing, vague, abbreviated, or in Indonesian, and two tables have abbreviated mixed-language column names. The comparison is therefore "semantic layer versus a typical catalog", not versus an unrealistically tidy one.
 
-The harness (`evals/agent/`) is a plain tool-calling loop written against one provider-neutral interface, with at most 12 tool calls per question. The model and provider are configuration. Each question is run **3 times per arm**.
+The harness (`evals/agent/`) is a plain tool-calling loop written against one provider-neutral interface, with at most 12 tool calls per question. The model and provider are configuration; the MVP run uses Gemini (section 5.5, D-13). Each question is run **3 times per arm** in the full run.
 
 ### 5.2 What the agent must return
 
@@ -184,6 +184,20 @@ Checked on every run, whatever the outcome: **personal data exposure**. The harn
 
 **MVP gate.** Arm M's overall accuracy is higher than arm R's and the 95% interval of the difference excludes zero; arm M has zero personal data exposures. A second, informative number: the rule-based resolver (section 8.4 of the architecture) run over the `answer` questions, scored on whether its request equals `expected.request`. It shows how far Makna gets with no language model at all.
 
+### 5.5 Model provider and running under a rate limit (D-13)
+
+**Provider.** Gemini, called with a Google AI Studio API key that has a limited rate. The key is read only from the environment variable `GEMINI_API_KEY`. It is never committed, never written to the runs file, the report, or a log, and the owner provides it when WP-22B is reached. The model id is configuration (`evals/agent.toml`), chosen with the owner when the key is provided, and recorded in every run and in the report. The adapter sits behind the same provider-neutral interface as the scripted fake model used in tests, so another provider can be added later without touching the loop or the scorer. The data sent to the provider is the synthetic sample data and Makna's responses about it; nothing else.
+
+**Rate limiter.** Configured in `evals/agent.toml`: requests per minute, tokens per minute, requests per day, and a retry limit. Every model call waits for the limiter. On HTTP 429 the harness waits for the retry delay the API returns, or backs off exponentially with jitter, up to the retry limit. When the daily request cap is reached, the run stops cleanly and says how to resume.
+
+**Resumable runs.** Each finished run (question, arm, run index) is appended at once as one JSON line to `evals/reports/agent/<run-name>/runs.jsonl`, with the model id and a hash of the prompt, tools, and golden set. Restarting the command with the same run name skips the finished runs and redoes any run that was cut off. Restarting with a different model id, prompt, or golden set under the same run name is refused, so a report never mixes conditions. The report is always computed from the runs file.
+
+**Quick mode, then the full run.**
+
+- Quick mode (`--quick`) runs the first 20 golden questions (G01 to G20), 1 run per arm: 40 runs. It exists to find harness, prompt, and quota problems cheaply. Its report is labelled "quick" and states no gate result; 20 questions and one run cannot support the interval of section 5.4.
+- The full run (every golden question, 3 runs per arm: at least 300 runs, each up to 13 model calls) runs only after a quick run completes with no harness error. Under a free-tier daily cap it may take several days; resuming makes that practical.
+- The MVP gate of section 5.4 is decided on the full run only.
+
 ## 6. Running the evals (EVL-5)
 
 One command with the dev stack up:
@@ -192,10 +206,11 @@ One command with the dev stack up:
 uv run makna-eval all                # retrieval + compile; writes evals/reports/<date>/report.md and report.json; exit code 1 if a gate fails
 uv run makna-eval retrieval
 uv run makna-eval compile
-uv run makna-eval agent --model <id> # needs a model API key in the environment; not part of "all"
+uv run makna-eval agent --quick --run-name <name>   # 20 questions, 1 run per arm; needs GEMINI_API_KEY; not part of "all"
+uv run makna-eval agent --run-name <name>           # full run; rerun the same command to resume after a stop
 uv run makna-eval freeze             # re-run reference SQL and rewrite evals/golden/expected/ (after a deliberate data or definition change)
 ```
 
-In CI: `makna-eval all` runs on every pull request in the job that starts the dev stack. It uses the real default embedding model (cached between runs), because retrieval scores with the test stand-in would mean nothing. `makna-eval agent` runs on manual trigger and weekly when a model key is configured as a CI secret; without the key the job is skipped and says so. This is the one place where an outside service is used, and it is outside the product (NFR-3 is about the running platform).
+In CI: `makna-eval all` runs on every pull request in the job that starts the dev stack. It uses the real default embedding model (cached between runs), because retrieval scores with the test stand-in would mean nothing. `makna-eval agent` runs in CI only on manual trigger, in quick mode, and only if the owner has configured `GEMINI_API_KEY` as a CI secret; without it the job is skipped and says so. The full run is started by hand with the key in the environment (it can take days under the rate limit) and its report is committed. This is the one place where an outside service is used, and it is outside the product (NFR-3 is about the running platform).
 
 Gates live in `evals/gates.toml` so that changing a threshold is a reviewed change.

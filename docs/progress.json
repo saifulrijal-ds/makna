@@ -9,7 +9,43 @@
   ],
   "design": {
     "status": "done",
-    "branch": "design/architecture"
+    "branch": "design/architecture",
+    "review": {
+      "status": "done",
+      "file": "docs/reviews/design.md",
+      "fixed": [
+        "R-1",
+        "R-2",
+        "R-3",
+        "R-4",
+        "R-5",
+        "R-6",
+        "R-7",
+        "R-8",
+        "R-9",
+        "R-10",
+        "R-11",
+        "R-12"
+      ],
+      "left_open": [
+        "R-13",
+        "R-14",
+        "R-15",
+        "R-16",
+        "R-17",
+        "R-18",
+        "R-19",
+        "R-20"
+      ],
+      "owner_decisions": [
+        "D-10",
+        "D-11",
+        "D-12",
+        "D-13",
+        "D-14",
+        "D-15"
+      ]
+    }
   },
   "milestones": [
     {
@@ -191,16 +227,29 @@
     },
     {
       "id": "WP-12",
-      "title": "Service layer, users, roles, tokens, tool-call log",
+      "title": "Service layer, permissions, tool-call log",
       "milestone": "M1",
       "requirements": [
         "QRY-4",
-        "WEB-5",
         "GOV-2"
       ],
       "depends_on": [
         "WP-07",
         "WP-11"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-12B",
+      "title": "Users, tokens, stored engine credentials",
+      "milestone": "M1",
+      "requirements": [
+        "WEB-5",
+        "QRY-4"
+      ],
+      "depends_on": [
+        "WP-12"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
@@ -214,7 +263,7 @@
         "MCP-2"
       ],
       "depends_on": [
-        "WP-12"
+        "WP-12B"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
@@ -259,7 +308,7 @@
         "WEB-5"
       ],
       "depends_on": [
-        "WP-12"
+        "WP-12B"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
@@ -287,27 +336,52 @@
         "GOV-1"
       ],
       "depends_on": [
-        "WP-12"
+        "WP-12B"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
     },
     {
       "id": "WP-19",
-      "title": "Editor, review queue, and curator tools",
+      "title": "Editor and Check",
       "milestone": "M2",
       "requirements": [
-        "WEB-2",
-        "WEB-3",
-        "SEM-4",
-        "GOV-1",
-        "GOV-2"
+        "WEB-2"
       ],
       "depends_on": [
         "WP-16",
         "WP-18"
       ],
       "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-19B",
+      "title": "Review queue and audit page",
+      "milestone": "M2",
+      "requirements": [
+        "WEB-3",
+        "GOV-1"
+      ],
+      "depends_on": [
+        "WP-19"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-19C",
+      "title": "Tool-call log and catalog admin pages",
+      "milestone": "M2",
+      "requirements": [
+        "GOV-2",
+        "SEM-4"
+      ],
+      "depends_on": [
+        "WP-16",
+        "WP-18"
+      ],
+      "suggested_model": "Haiku 5.5",
       "status": "not_started"
     },
     {
@@ -339,18 +413,44 @@
     },
     {
       "id": "WP-22",
-      "title": "Agent comparison eval and MCP client compatibility",
+      "title": "Agent eval scorer and report",
       "milestone": "M2",
       "requirements": [
-        "EVL-4",
-        "EVL-5",
-        "MCP-3"
+        "EVL-4"
       ],
       "depends_on": [
-        "WP-13",
+        "WP-14",
         "WP-15"
       ],
       "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-22B",
+      "title": "Agent eval harness, Gemini adapter, and runs",
+      "milestone": "M2",
+      "requirements": [
+        "EVL-4",
+        "EVL-5"
+      ],
+      "depends_on": [
+        "WP-13",
+        "WP-22"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-22C",
+      "title": "MCP client compatibility",
+      "milestone": "M2",
+      "requirements": [
+        "MCP-3"
+      ],
+      "depends_on": [
+        "WP-13"
+      ],
+      "suggested_model": "Haiku 5.5",
       "status": "not_started"
     },
     {
@@ -376,6 +476,7 @@
         "WP-10",
         "WP-11",
         "WP-12",
+        "WP-12B",
         "WP-13",
         "WP-14",
         "WP-15",
@@ -383,9 +484,13 @@
         "WP-17",
         "WP-18",
         "WP-19",
+        "WP-19B",
+        "WP-19C",
         "WP-20",
         "WP-21",
-        "WP-22"
+        "WP-22",
+        "WP-22B",
+        "WP-22C"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"

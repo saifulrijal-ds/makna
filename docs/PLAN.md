@@ -21,13 +21,13 @@ The order gets a thin slice of the whole system running as early as possible: by
 
 ```
 M0 Foundations        WP-01 → WP-02, WP-03 → WP-04, WP-05
-M1 Agent path         WP-06 → WP-07; WP-08 → WP-09 → WP-10 → WP-11; WP-12 → WP-13; WP-14 (after WP-08) → WP-15
+M1 Agent path         WP-06 → WP-07; WP-08 → WP-09 → WP-10 → WP-11; WP-12 → WP-12B → WP-13; WP-14 (after WP-08) → WP-15
    -- Fable review 1: core complete (model, search, compiler) --
-M2 People path        WP-16 → WP-17; WP-18 → WP-19; WP-20; WP-21; WP-22; WP-23
+M2 People path        WP-16 → WP-17; WP-18 → WP-19 → WP-19B; WP-19C; WP-20; WP-21; WP-22 → WP-22B; WP-22C; WP-23
    -- Fable review 2: before the MVP release --
 ```
 
-Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-04 with WP-05; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12 and WP-13; WP-17, WP-18, WP-21 with each other.
+Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-04 with WP-05; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12, WP-12B, and WP-13; WP-17, WP-18, WP-21, WP-22, WP-22C with each other; WP-19B with WP-19C.
 
 | ID | Title | Requirements | Depends on | Model |
 |---|---|---|---|---|
@@ -42,17 +42,22 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 | WP-09 | Compiler: SQL generation and explanation | QRY-1, QRY-3 | WP-02, WP-08 | Sonnet 5.5 |
 | WP-10 | Compiler: sensitivity, masking, refusals | QRY-2 | WP-09 | Sonnet 5.5 |
 | WP-11 | Trino connector and metrics on the real engine | CON-4, QRY-4 | WP-05, WP-10 | Sonnet 5.5 |
-| WP-12 | Service layer, users, roles, tokens, tool-call log | QRY-4, WEB-5, GOV-2 | WP-07, WP-11 | Sonnet 5.5 |
-| WP-13 | MCP server | MCP-1, MCP-2 | WP-12 | Sonnet 5.5 |
+| WP-12 | Service layer, permissions, tool-call log | QRY-4, GOV-2 | WP-07, WP-11 | Sonnet 5.5 |
+| WP-12B | Users, tokens, stored engine credentials | WEB-5, QRY-4 | WP-12 | Sonnet 5.5 |
+| WP-13 | MCP server | MCP-1, MCP-2 | WP-12B | Sonnet 5.5 |
 | WP-14 | Golden question set | EVL-1 | WP-04, WP-05, WP-08 | Sonnet 5.5 (first 20 and review), Haiku 5.5 (drafting the rest) |
 | WP-15 | Eval runner: retrieval and compile | EVL-2, EVL-3, EVL-5, NFR-2 | WP-12, WP-14 | Sonnet 5.5 |
-| WP-16 | Web shell: layout, sign-in, sessions | WEB-5 | WP-12 | Sonnet 5.5 |
+| WP-16 | Web shell: layout, sign-in, sessions | WEB-5 | WP-12B | Sonnet 5.5 |
 | WP-17 | Discovery pages | WEB-1 | WP-16 | Sonnet 5.5 (pages), Haiku 5.5 (templates and page tests) |
-| WP-18 | Definition store write path and lifecycle | SEM-3, WEB-3, GOV-1 | WP-12 | Sonnet 5.5 |
-| WP-19 | Editor, review queue, and curator tools | WEB-2, WEB-3, SEM-4, GOV-1, GOV-2 | WP-16, WP-18 | Sonnet 5.5 |
+| WP-18 | Definition store write path and lifecycle | SEM-3, WEB-3, GOV-1 | WP-12B | Sonnet 5.5 |
+| WP-19 | Editor and Check | WEB-2 | WP-16, WP-18 | Sonnet 5.5 |
+| WP-19B | Review queue and audit page | WEB-3, GOV-1 | WP-19 | Sonnet 5.5 |
+| WP-19C | Tool-call log and catalog admin pages | GOV-2, SEM-4 | WP-16, WP-18 | Haiku 5.5 |
 | WP-20 | Resolver and test bench | WEB-4 | WP-16, WP-15 | Sonnet 5.5 |
 | WP-21 | OpenMetadata connector | CON-2 | WP-06 | Sonnet 5.5 |
-| WP-22 | Agent comparison eval and MCP client compatibility | EVL-4, EVL-5, MCP-3 | WP-13, WP-15 | Sonnet 5.5 |
+| WP-22 | Agent eval scorer and report | EVL-4 | WP-14, WP-15 | Sonnet 5.5 |
+| WP-22B | Agent eval harness, Gemini adapter, and runs | EVL-4, EVL-5 | WP-13, WP-22 | Sonnet 5.5 |
+| WP-22C | MCP client compatibility | MCP-3 | WP-13 | Haiku 5.5 |
 | WP-23 | Hardening and release check | NFR-1, NFR-2, NFR-3, NFR-5 | all others | Sonnet 5.5 |
 
 ---
@@ -108,7 +113,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-05 Development stack and database migrations
 
 - **Read**: `docs/ARCHITECTURE.md` sections 6.4 and 9; DR-11.
-- **Build**: `deploy/docker-compose.yml` with `postgres`, `trino`, `init`, and `app`; a minimal `makna serve` (a FastAPI application with only `/healthz`, extended by WP-12 and WP-16); an `init` entry point that runs an ordered list of idempotent steps, to which later packages add their step (WP-06 catalog sync, WP-07 index build, WP-12 demo users, WP-18 definitions repository); Trino catalog configuration; a loader that creates `lending.core` tables from the WP-02 table specification and loads the Parquet files; Alembic migrations for all tables in section 6.4; separate PostgreSQL roles for the `makna` and `lending` databases (section 9); a CI job that starts the stack. Pin the Trino and PostgreSQL image versions and record them in `deploy/README.md`.
+- **Build**: `deploy/docker-compose.yml` with `postgres`, `trino`, `init`, and `app`; a minimal `makna serve` (a FastAPI application with only `/healthz`, extended by WP-12 and WP-16); an `init` entry point that runs an ordered list of idempotent steps, to which later packages add their step (WP-06 catalog sync, WP-07 index build, WP-12B demo users, WP-18 definitions repository); Trino catalog configuration; a loader that creates `lending.core` tables from the WP-02 table specification and loads the Parquet files; Alembic migrations for all tables in section 6.4; separate PostgreSQL roles for the `makna` and `lending` databases (section 9); a CI job that starts the stack. Pin the Trino and PostgreSQL image versions and record them in `deploy/README.md`.
 - **Acceptance**
   1. `docker compose -f deploy/docker-compose.yml up -d --wait` ends with all services healthy on a clean machine (CI job).
   2. Through Trino, `SELECT count(*) FROM lending.core.<table>` equals the row count of the generated file, for all nine tables.
@@ -199,19 +204,29 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   5. The query runs under the user given in the credentials: `SELECT current_user` through `execute` returns that user. A unit test with a mocked client asserts that a password, when given, is sent as basic authentication and is never written to a log record.
   6. `makna catalog compare` reports no differences on the dev stack, and reports a missing column after one is dropped from a scratch copy of a table.
 
-### WP-12 Service layer, users, roles, tokens, tool-call log
+### WP-12 Service layer, permissions, tool-call log
 
 - **Read**: `docs/ARCHITECTURE.md` sections 4, 11, 14.
-- **Build**: `makna.services`: `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, each taking a `Caller` (user or token, role, teams, channel); the indexer step that stores each metric's available dimensions (using `available_dimensions` from WP-08) and each dimension's catalog-derived sensitivity; the in-memory model snapshot refreshed on `definitions_version`; user and token management (`makna user create`, `makna token create`, with the owner's engine credentials stored encrypted for a token with `can_run`); the permission checks of section 11 as one module; redaction and `tool_call_log` writes; `makna serve` (FastAPI app with `/healthz`).
+- **Build**: `makna.services`: `search`, `get_definition`, `list_related`, `compile_query`, `run_query`, each taking a `Caller` (user or token id, role, teams, channel, and engine credentials if any; WP-12B adds how a `Caller` is authenticated, so tests here build it directly); the indexer step that stores each metric's available dimensions (using `available_dimensions` from WP-08) and each dimension's catalog-derived sensitivity; the in-memory model snapshot refreshed on `definitions_version`; the permission checks of section 11 as one module; redaction and `tool_call_log` writes; `makna serve` (FastAPI app with `/healthz`).
 - **Acceptance** (integration tier)
   1. A table-driven test covers every cell of the permission matrix in section 11 for the read and run permissions (write permissions are tested in WP-18).
   2. `search` as an agent token or viewer never returns a draft; as a curator it can.
   3. `get_definition` for a metric returns the fields shown in section 12, including available dimensions with their path label and the unavailable personal dimensions with a reason.
   4. `list_related("metric:npf_ratio")` includes its two inputs (`input_of`) and the glossary term `npf` (`explains`).
-  5. `run_query` raises `RUN_DISABLED` when `MAKNA_RUN_ENABLED` is false, `ENGINE_CREDENTIALS_REQUIRED` for a token with no stored credentials, and with a fake engine returns rows, the fake engine receiving the token owner's stored credentials. The `api_token` row holds no plaintext password (assert on the raw column), and decrypting with a different `MAKNA_CREDENTIALS_KEY` fails.
+  5. `run_query` raises `RUN_DISABLED` when `MAKNA_RUN_ENABLED` is false and `ENGINE_CREDENTIALS_REQUIRED` for a caller with no engine credentials, and with a fake engine returns rows, the fake engine receiving the caller's credentials.
   6. Every service call writes one `tool_call_log` row, including failed and refused calls with `status` and `error_code`. A call whose query text contains an email address, a 16-digit number, and a phone number stores none of them. A filter value on a personal dimension is never stored, and a call refused with `PERSONAL_DATA_REFUSED` stores no free text. No row contains result row values (assert on a run that returns known values).
-  7. A token is shown once at creation, stored only as a hash, rejected after revocation, and `last_used_at` is updated.
-  8. After changing an official file and calling `index_object`, the next `get_definition` in the same process returns the new content with no restart.
+  7. After changing an official file and calling `index_object`, the next `get_definition` in the same process returns the new content with no restart.
+
+### WP-12B Users, tokens, stored engine credentials
+
+- **Read**: `docs/ARCHITECTURE.md` sections 6.4 (`app_user`, `api_token`), 11, 12 (engine credentials).
+- **Build**: user and token storage; Argon2 password hashes; token creation (shown once, stored as a hash), revocation, and `last_used_at`; turning a bearer token or a signed-in user into a `Caller`; engine credentials stored encrypted with a token that has `can_run` (`MAKNA_CREDENTIALS_KEY`); CLI `makna user create` and `makna token create`; the `init` step that creates the four demo users.
+- **Acceptance** (integration tier)
+  1. A token is shown once at creation, stored only as a hash, rejected after revocation, and `last_used_at` is updated.
+  2. A token's `Caller` has at most the viewer permissions of its user, even for an admin, plus run only when the token has `can_run` and stored engine credentials.
+  3. The `api_token` row holds no plaintext engine password (assert on the raw column); decrypting with a different `MAKNA_CREDENTIALS_KEY` fails; `run_query` through the token reaches a fake engine with the stored credentials, which appear in no log row and no response.
+  4. `makna token create --can-run` reads the engine password from standard input, never from a command-line argument.
+  5. Passwords are stored as Argon2 hashes, and the demo-user `init` step is idempotent.
 
 ### WP-13 MCP server
 
@@ -298,25 +313,38 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   9. External changes: a commit made directly with git that edits an approved metric, with or without copied `Makna-*` trailers, is logged as `external_change` with the commit's author; an agent token's `get_definition` and `compile_query` still get the previous approved version; the change is listed in review as `in_review`; approving it in the application serves it, and rejecting it restores the official file and keeps the content as a draft. A new `<name>.yaml` with `status: approved` added by a raw commit is not visible to an agent token.
   10. After the rebuildable tables (catalog copy and semantic index) are emptied, `makna index build` reproduces the same `semantic_object` rows as the incremental path (compare contents, ignoring timestamps), including a file whose latest commit is an external change.
 
-### WP-19 Editor, review queue, and curator tools
+### WP-19 Editor and Check
 
-- **Read**: `docs/ARCHITECTURE.md` sections 13 (`/edit`, `/new`, `/review`, `/audit`, `/logs/tool-calls`, `/admin/catalog`) and 14.
-- **Build**: the editor page with Ace, the "Check" endpoint, templates per kind, the difference view, save and submit with a reason; the review queue with approve and reject; the audit page; the tool-call log page; the catalog admin page (sync runs, open reference issues, buttons to run a catalog sync and an index sync).
+- **Read**: `docs/ARCHITECTURE.md` sections 5.3 and 13 (`/edit`, `/new`).
+- **Build**: the editor page with Ace, the "Check" endpoint, templates per kind, the difference view, save and submit with a reason.
 - **Acceptance** (integration tier)
   1. "Check" on YAML with an unknown key, and on YAML that breaks rule V06, returns the rule code, a message, and a line number, and writes nothing to the repository.
   2. Saving a draft and submitting create the commits of WP-18 with the signed-in user as author.
-  3. The review queue lists the proposal with author, reason, difference, and validation status; the Approve button is present for a user who may approve and absent for one who may not, and a forged POST by the latter is refused with 403.
-  4. After approval through the web route, the metric page shows the new version.
-  5. `/new/metric` opens a template that fails validation only on fields the author must fill.
-  6. `/audit` shows the events of acceptance 2 to 4, newest first, and can be filtered by object.
-  7. With JavaScript disabled, the editor falls back to a plain text area and saving still works (test the form POST directly).
-  8. `/logs/tool-calls` lists calls newest first with channel, tool, status, error code, and duration, can be filtered by tool and status, shows the redacted request, and is refused (403) for a viewer and for a curator.
-  9. `/admin/catalog` shows the last sync run's summary and every open reference issue with its object and code (create one with a fixture); the sync button is refused (403) for anyone but an admin; after a sync that fixes the fixture, the issue is no longer listed (SEM-4).
+  3. `/new/metric` opens a template that fails validation only on fields the author must fill.
+  4. With JavaScript disabled, the editor falls back to a plain text area and saving still works (test the form POST directly).
+
+### WP-19B Review queue and audit page
+
+- **Read**: `docs/ARCHITECTURE.md` sections 10, 11, 13 (`/review`, `/audit`).
+- **Build**: the review queue with approve and reject (including external changes, section 10); the audit page.
+- **Acceptance** (integration tier)
+  1. The review queue lists the proposal with author, reason, difference, and validation status; the Approve button is present for a user who may approve and absent for one who may not, and a forged POST by the latter is refused with 403.
+  2. After approval through the web route, the metric page shows the new version.
+  3. An external change (a raw git commit in the test repository) is listed with its commit author, and a user who may approve can approve it through the web route; its author cannot.
+  4. `/audit` shows the events of a create, a submit, and an approve made through the web routes, newest first, and can be filtered by object.
+
+### WP-19C Tool-call log and catalog admin pages
+
+- **Read**: `docs/ARCHITECTURE.md` sections 13 (`/logs/tool-calls`, `/admin/catalog`) and 14.
+- **Build**: the tool-call log page; the catalog admin page (sync runs, open reference issues, buttons to run a catalog sync and an index sync).
+- **Acceptance** (integration tier)
+  1. `/logs/tool-calls` lists calls newest first with channel, tool, status, error code, and duration, can be filtered by tool and status, shows the redacted request, and is refused (403) for a viewer and for a curator.
+  2. `/admin/catalog` shows the last sync run's summary and every open reference issue with its object and code (create one with a fixture); the sync button is refused (403) for anyone but an admin; after a sync that fixes the fixture, the issue is no longer listed (SEM-4).
 
 ### WP-20 Resolver and test bench
 
 - **Read**: `docs/ARCHITECTURE.md` sections 8.3, 8.4, 13 (`/bench`); `docs/EVALS.md` section 5.4 (last paragraph).
-- **Build**: `makna.resolve` (rules of section 8.4; `today` is always a parameter); the `resolve` service function; `/bench`; a resolver score in `makna-eval` (informative, no gate).
+- **Build**: `makna.resolve` (rules of section 8.4, with the time and grain vocabulary of `makna.search.terms` from WP-07; `today` is always a parameter); the `resolve` service function; `/bench`; a resolver score in `makna-eval` (informative, no gate).
 - **Acceptance**
   1. Unit tests for the time grammar: each phrase listed in section 8.4, in English and Indonesian, with today = 2026-07-01, gives the expected `time_start` and `time_end`.
   2. On the first 20 golden questions with today = 2026-07-01: G16 and G17 resolve to `ambiguous` with both candidates; G18 resolves to `no_match` or to `resolved` with low confidence flagged; at least 10 of the 15 `answer` questions produce a request equal to `expected.request`. Report the exact number; do not special-case question ids.
@@ -335,17 +363,34 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   3. Contract test shared with the file connector: both connectors, given the same sample catalog, yield equal `CatalogDataset` and `CatalogColumn` sets apart from `catalog_id` (the OpenMetadata side uses the recorded fixtures).
   4. Manual, with the OpenMetadata stack up: `makna catalog sync --source openmetadata` creates the same 9 datasets and leaves zero open reference issues. Record the OpenMetadata version tested in `deploy/README.md`.
 
-### WP-22 Agent comparison eval and MCP client compatibility
+### WP-22 Agent eval scorer and report
 
-- **Read**: `docs/EVALS.md` sections 5 and 6; `docs/ARCHITECTURE.md` section 12 (client compatibility).
-- **Build**: `evals/agent/` (the tool-calling loop, the two arms, the raw-schema tools, the scorer, the report); `makna-eval agent`; compatibility tests with two MCP clients.
-- **Acceptance**
+- **Read**: `docs/EVALS.md` sections 5.2 to 5.5.
+- **Build**: in `evals/agent/`: the run record (one JSON line per run: question, arm, run index, model id, prompt hash, tool calls, token counts, final reply), the scorer of section 5.3, the personal data scan, the paired bootstrap, and the report built from a runs file. No model is called in this package.
+- **Acceptance** (unit tier)
   1. The scorer has unit tests for every row of the scoring table in `docs/EVALS.md` section 5.3, using hand-written agent replies: correct answer, wrong number, unit slip (3.1 for 0.031), unparseable reply, clarification on a `clarify` question, an answer with interpretation matching one candidate, an answer on a `no_metric` question (wrong), and a refusal that still contains a personal value (wrong and counted as an exposure).
-  2. The personal data scan finds a known `national_id`, phone number, name, and email from the fixture data inside a tool result and inside a final reply.
-  3. With a scripted fake model (no network), `makna-eval agent` runs both arms over 5 questions and writes a report containing every number listed in section 5.4, including the paired bootstrap interval (the bootstrap function has its own test with a known answer).
-  4. MCP-3: the official SDK client over stdio and `langchain-mcp-adapters` over Streamable HTTP each list the tools and complete search, get definition, and compile against a running server (integration tier, no language model involved).
-  5. Manual, needs a model key: one full run of both arms, 3 runs per question, with the report committed under `evals/reports/` and the gate result of section 5.4 stated in the pull request. If no key is available, mark this criterion as waiting for the owner; the package's other criteria still apply.
-  6. The CI job for the agent eval is skipped with a clear message when the key is absent.
+  2. The personal data scan finds a known `national_id`, phone number, name, and email from the fixture data inside a tool result and inside a final reply, and finds a 6-digit fragment of a `national_id`.
+  3. The bootstrap function has a test with a known answer. From a hand-written runs file (5 questions, 2 arms, 3 runs each) the report contains every number listed in section 5.4.
+  4. A report built from a quick-mode runs file is labelled "quick" and states no gate result.
+
+### WP-22B Agent eval harness, Gemini adapter, and runs
+
+- **Read**: `docs/EVALS.md` sections 5 and 6; DR-7; D-13.
+- **Build**: the provider-neutral model interface, a scripted fake model, and the Gemini adapter (key from `GEMINI_API_KEY` only); the tool-calling loop (at most 12 tool calls per question); arm M (the Makna tools over MCP, running enabled) and arm R (`list_tables`, `describe_table` with the catalog descriptions of `docs/SAMPLE_DOMAIN.md` section 6.1, `run_sql` limited to 1000 rows); the rate limiter; resumable runs; quick mode; `makna-eval agent`; the CI job.
+- **Acceptance**
+  1. With the scripted fake model (no network), `makna-eval agent --quick --run-name t` runs both arms over the first 20 golden questions once each and writes the runs file and the WP-22 report.
+  2. Resumable: a run stopped after some completed runs and restarted with the same run name executes only the missing runs, and the final runs file has each (question, arm, run index) exactly once. Restarting under the same run name with a different model id, prompt, or golden set is refused.
+  3. Rate limiter (unit tests with a fake clock): requests per minute and tokens per minute stay within their configured limits; an HTTP 429 that carries a retry delay waits that long; other 429s back off exponentially up to the retry limit; reaching the daily request cap stops the run cleanly with a message that says how to resume.
+  4. The Gemini adapter passes the provider contract test against recorded responses committed as fixtures (no key needed): a text reply, a reply with function calls, token counts, a 429, and an empty or blocked reply (scored as unparseable, no crash). No test calls the real API. A test asserts the key never appears in the runs file, the report, or a log record.
+  5. The CI agent job runs only on manual trigger, runs quick mode, and is skipped with a clear message when no `GEMINI_API_KEY` secret is configured.
+  6. Manual, needs the owner's key: a quick run (20 questions, 1 run per arm) that completes with no harness error; then the full run (every golden question, 3 runs per arm), resumed as often as the rate limit requires. The full report is committed under `evals/reports/agent/`, and the pull request states the model id and the gate result of section 5.4. Until the owner provides the key, this package is `blocked`, not `done`.
+
+### WP-22C MCP client compatibility
+
+- **Read**: `docs/ARCHITECTURE.md` section 12 (transports, client compatibility).
+- **Build**: compatibility tests with two MCP clients.
+- **Acceptance** (integration tier, no language model)
+  1. MCP-3: the official SDK client over stdio (through the `makna mcp` bridge) and `langchain-mcp-adapters` over Streamable HTTP each list the tools and complete search, get definition, and compile against a running server.
 
 ### WP-23 Hardening and release check
 
@@ -358,5 +403,6 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   4. NFR-3: the stack job runs the smoke test with outbound network access blocked for the `app` container.
   5. `uv run makna-eval all` passes its gates on the final commit, and the report is attached to the release pull request.
   6. Every package in `docs/progress.json` is `done`, or listed with its reason in the release pull request.
+  7. EVL-4 (the brief's first success criterion): the full-run report of WP-22B is committed and shows the gate result of `docs/EVALS.md` section 5.4, or the release pull request contains the owner's written waiver. A missing run is not a waiver.
 
 **Fable review 2 (before the MVP release)** follows WP-23.
