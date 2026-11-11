@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from makna.config import ConfigError, load_settings
+from makna.config import ConfigError, load_search_runtime, load_settings
 
 GOOD_ENV = {
     "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
@@ -91,3 +91,57 @@ def test_unknown_embedding_provider_names_the_variable(tmp_path: Path) -> None:
     env = {**GOOD_ENV, "MAKNA_EMBEDDING_PROVIDER": "local"}
     with pytest.raises(ConfigError, match="MAKNA_EMBEDDING_PROVIDER"):
         load_settings(env, tmp_path / "none.toml")
+
+
+def test_search_and_embedding_settings_have_a_section_each(tmp_path: Path) -> None:
+    config = tmp_path / "makna.toml"
+    config.write_text(
+        'embedding_provider = "hash"\n'
+        "[search]\nw_keyword = 0.5\n[search.kind_weights]\nmetric = 2.0\n"
+        "[search.confidence]\nhigh = 0.7\n"
+        '[embedding.ollama]\nurl = "http://ollama:11434"\nmodel = "m"\n'
+        '[embedding.fastembed]\ncache_dir = "/models"\n'
+    )
+    settings = load_settings(
+        {"MAKNA_DATABASE_URL": "postgresql://x", "MAKNA_SECRET_KEY": "k"}, config
+    )
+    assert settings.embedding_provider == "hash"
+    assert settings.search.w_keyword == 0.5
+    assert settings.search.kind_weights == {"metric": 2.0}
+    assert settings.search.confidence.high == 0.7
+    assert settings.embedding.ollama.url == "http://ollama:11434"
+    assert settings.embedding.fastembed.cache_dir == "/models"
+
+
+def test_the_environment_overrides_provider_cache_dir_and_key(tmp_path: Path) -> None:
+    config = tmp_path / "makna.toml"
+    config.write_text('embedding_provider = "fastembed"\n[embedding.fastembed]\nmodel = "m"\n')
+    env = {
+        "MAKNA_EMBEDDING_PROVIDER": "openai_compatible",
+        "MAKNA_EMBEDDING_CACHE_DIR": "/mnt/models",
+        "MAKNA_EMBEDDING_API_KEY": "sk-test",
+    }
+    runtime = load_search_runtime(env, config)  # needs no database URL or secret key
+    assert runtime.embedding_provider == "openai_compatible"
+    assert runtime.embedding.fastembed.cache_dir == "/mnt/models"
+    assert runtime.embedding.fastembed.model == "m"
+    assert runtime.embedding_api_key is not None
+    assert runtime.embedding_api_key.get_secret_value() == "sk-test"
+    assert "sk-test" not in repr(runtime)
+
+
+def test_the_committed_config_names_the_defaults() -> None:
+    runtime = load_search_runtime({}, Path(__file__).resolve().parents[2] / "config" / "makna.toml")
+    assert runtime.embedding_provider == "fastembed"
+    assert runtime.embedding.fastembed.model.endswith("paraphrase-multilingual-MiniLM-L12-v2")
+    assert runtime.embedding.fastembed.allow_download is False
+    assert runtime.search.w_keyword == runtime.search.w_vector == 1.0
+    assert runtime.search.status_weights["draft"] == 0.5
+    assert runtime.search.kind_weights["column"] == 0.6
+
+
+def test_a_bad_search_setting_is_reported(tmp_path: Path) -> None:
+    config = tmp_path / "makna.toml"
+    config.write_text("[search]\nw_keyword = -1\n")
+    with pytest.raises(ConfigError, match="search.w_keyword"):
+        load_search_runtime({}, config)
