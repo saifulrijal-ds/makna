@@ -271,9 +271,10 @@ def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
         how = (
             f"it is shown as the lower bound of its band, and every band is {masking.width:g} wide"
         )
-    return _sentence(
+    text = (
         f"{_named(model, planned.ref)} is personal data, so it is masked: {how} ({masking.method})"
     )
+    return _sentence(text[0].upper() + text[1:])
 
 
 # --------------------------------------------------------------------------------------
@@ -283,8 +284,9 @@ def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
 def _group_size_warning(plan: QueryPlan) -> str:
     records = _list([f"{g.label} records" for g in plan.guard])
     return (
-        f"Groups built from fewer than {plan.min_group_size} {records} are left out to protect "
-        "personal data, so a single person cannot be picked out. The number of groups left out "
+        f"Groups built from fewer than {plan.min_group_size} {records} are left out of this "
+        "result to protect personal data. This does not stop someone from comparing two "
+        "requests that differ by one person. The number of groups left out "
         f"is in the result column {GROUPS_LEFT_OUT}, the same on every row. A result with no rows "
         "can mean that every group was left out."
     )

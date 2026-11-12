@@ -69,8 +69,8 @@ def test_the_default_minimum_is_ten_like_the_configuration() -> None:
     assert plan.min_group_size == DEFAULT_MIN_GROUP_SIZE == 10
 
 
-@pytest.mark.parametrize("bad", [0, -1])
-def test_a_minimum_below_one_is_rejected(bad: int) -> None:
+@pytest.mark.parametrize("bad", [0, 1, -1])
+def test_a_minimum_below_two_is_rejected(bad: int) -> None:
     with pytest.raises(ValueError, match="min_group_size"):
         plan_request(lending(), request("new_customer_count"), min_group_size=bad)
     with pytest.raises(ValueError, match="min_group_size"):
@@ -317,7 +317,7 @@ def test_an_entity_with_a_composite_key_is_counted_by_the_whole_key(
     plan = plan_request(
         model,
         request("outstanding_principal", dimensions=["contract_snapshot.collectibility"]),
-        min_group_size=1,
+        min_group_size=2,
     )
     assert plan.guard[0].primary_key == ("snapshot_date", "contract_id")
     rows = run_tree(lending_db, build_tree(model, plan))

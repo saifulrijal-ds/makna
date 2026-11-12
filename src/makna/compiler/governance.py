@@ -130,8 +130,8 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     (`mask_expression`) or as the whole, bare argument of `COUNT(col)` or `COUNT(DISTINCT col)`
     (not `COUNT(CASE WHEN col < x ...)`, which would reveal a test on one person's value),
     and only in the select list or the GROUP BY of its query: never in WHERE, HAVING, ORDER BY,
-    or a join condition. `MIN`, `MAX`, and other aggregates do not count, because they return one person's value. `SELECT *` over a
-    table that holds a personal column fails too.
+    or a join condition. `MIN`, `MAX`, and other aggregates do not count, because they return one
+    person's value. `SELECT *` over a table that holds a personal column fails too.
 
     Raises `GovernanceError`. It does not plan again and does not read the model.
     """

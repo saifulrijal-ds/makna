@@ -137,7 +137,7 @@ def test_random_requests_never_leak_personal_data_or_small_groups(
     outcomes: Counter[str] = Counter()
     for _ in range(CASES):
         req = random_request(rng, metrics, refs, personal)
-        minimum = rng.choice([1, 2, 3, 5, 10])
+        minimum = rng.choice([2, 3, 5, 10])
         try:
             plan = plan_request(model, req, min_group_size=minimum)
         except QueryError as error:

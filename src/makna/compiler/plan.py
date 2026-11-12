@@ -39,6 +39,7 @@ from makna.model.request import (
 )
 
 DEFAULT_MIN_GROUP_SIZE = 10
+MIN_GROUP_SIZE_FLOOR = 2
 GRAINS: tuple[str, ...] = get_args(Grain)
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
@@ -426,10 +427,14 @@ def plan_request(
     the example-request check (V19), which runs before a metric is approved.
 
     `min_group_size` is the `[governance]` setting of `config/makna.toml`. The compiler does not
-    read configuration; the caller passes it. It must be at least 1 (`ValueError` otherwise).
+    read configuration; the caller passes it. It must be at least 2
+    (`ValueError` otherwise): 1 keeps every group.
     """
-    if min_group_size < 1:
-        raise ValueError(f"min_group_size must be at least 1, not {min_group_size}")
+    if min_group_size < MIN_GROUP_SIZE_FLOOR:
+        raise ValueError(
+            f"min_group_size must be at least {MIN_GROUP_SIZE_FLOOR}, not {min_group_size}: "
+            "a group of one is a single record, so a smaller minimum would switch the rule off"
+        )
     metric = model.metrics.get(request.metric)
     if metric is None:
         raise _unknown_metric(model, request.metric)
@@ -443,6 +448,7 @@ def plan_request(
     _check_limit(request.limit)
     start, end = _time_range(request.time_start, request.time_end)
     _check_grain(model, metric, request.grain)
+    _check_official_dates(model, request, [measures[leaf.name] for leaf in leaves])
 
     available = available_dimensions(model, metric)
     dimensions = tuple(
@@ -570,6 +576,34 @@ def _time_range(
             {"time_start": time_start, "time_end": time_end},
         )
     return start, end
+
+
+def _check_official_dates(
+    model: Model, request: QueryRequest, measures: list[tuple[Entity, Measure]]
+) -> None:
+    """PERSONAL_DATA_REFUSED when an input's official date is personal and the request would use
+    it: a grain, a time range, or a balance (which always reads its snapshot date). A personal
+    date cannot be returned or filtered on, and a catalog that starts tagging a date personal
+    closes this door at once (fail closed; section 7.6)."""
+    used = request.grain is not None or request.time_start or request.time_end
+    for entity, measure in measures:
+        date = next((d for d in entity.dimensions if d.name == measure.time_dimension), None)
+        if date is None or model.effective_sensitivity(entity, date) != "personal":
+            continue
+        if used or measure.semi_additive == "last":
+            ref = f"{entity.name}.{date.name}"
+            raise QueryError(
+                ErrorCode.PERSONAL_DATA_REFUSED,
+                f"The official date of {measure.name} ({ref}) is personal data, so this metric "
+                "cannot be grouped by time or limited to a time range. Ask without grain, "
+                "time_start, and time_end, or choose another metric.",
+                {
+                    "dimension": ref,
+                    "use": "time",
+                    "masked_form_available": date.masking is not None,
+                    "available_dimensions": [],
+                },
+            )
 
 
 def _check_grain(model: Model, metric: Metric, grain: str | None) -> None:

@@ -46,7 +46,7 @@ def dimension_of(model: Model, ref: str, **update: Any) -> Dimension:
 
 
 def run(model: Model, metric: str, **fields: Any) -> tuple[list[tuple[Any, ...]], list[str]]:
-    plan = plan_request(model, request(metric, **fields), min_group_size=1)
+    plan = plan_request(model, request(metric, **fields), min_group_size=2)
     con = _connection()
     rows = run_tree(con, build_tree(model, plan))
     return rows, [c.name for c in plan.columns]
