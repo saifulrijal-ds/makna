@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-11",
+  "updated": "2026-11-12",
   "statuses": [
     "not_started",
     "in_progress",
@@ -129,6 +129,22 @@
       ],
       "suggested_model": "Haiku 5.5",
       "status": "done"
+    },
+    {
+      "id": "WP-04B",
+      "title": "Sample definition fixes",
+      "milestone": "M1",
+      "requirements": [
+        "DAT-3",
+        "SEM-2",
+        "EVL-1"
+      ],
+      "depends_on": [
+        "WP-04",
+        "WP-14"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "in_progress"
     },
     {
       "id": "WP-05",

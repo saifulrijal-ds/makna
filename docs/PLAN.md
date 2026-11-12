@@ -45,6 +45,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 | WP-12 | Service layer, permissions, tool-call log | GOV-2 | WP-07, WP-11 | Sonnet 5.5 |
 | WP-12B | Users and tokens | WEB-5 | WP-12 | Haiku 5.5 |
 | WP-13 | MCP server | MCP-1, MCP-2 | WP-12B | Sonnet 5.5 |
+| WP-04B | Sample definition fixes | DAT-3, SEM-2, EVL-1 | WP-04, WP-14 | Sonnet 5.5 |
 | WP-14 | Golden question set | EVL-1 | WP-04, WP-05, WP-08 | Sonnet 5.5 (first 20 and review), Haiku 5.5 (drafting the rest) |
 | WP-15 | Eval runner: retrieval and compile | EVL-2, EVL-3, EVL-5, NFR-2 | WP-12, WP-14 | Sonnet 5.5 |
 | WP-16 | Web shell: layout, sign-in, sessions | WEB-5 | WP-12B | Sonnet 5.5 |
@@ -110,6 +111,15 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   5. The five personal columns of `customers` are each read by a dimension with `sensitivity: personal`; `full_name`, `national_id`, `phone_number`, and `email` have no masking rule; `birth_date` is masked only with `truncate_date` (there is no partial masking, review R-4).
   6. The files under `semantic/schema/examples/lending/metrics/` are identical to the files of the same name in `semantic/definitions/lending/metrics/`.
   7. Rules (D-17): the 90-day and 30-day past-due conditions are rules on `contract_snapshot` (`non_performing` and `past_due_30`), and every NPF and PAR measure uses them; the restructured condition is a rule on `contract` used by `restructured_outstanding_principal`. No measure or metric filter repeats a condition that a rule already names.
+
+### WP-04B Sample definition fixes
+
+- **Read**: D-31; `docs/SAMPLE_DOMAIN.md`; `docs/EVALS.md` section 2; the definitions in `semantic/definitions/`; `evals/golden/`.
+- **Build**: corrections to the sample definitions found by the second reviewer of the golden reference SQL (D-31): balance measures leave out contracts written off on or before the snapshot date; the caveats of the restructured measures say that positions before the `restructured_date` count as restructured; the NPF and collectibility descriptions say that the label "Macet" is class 5 only. Reference SQL of the affected golden questions is rewritten by hand and their CSVs refrozen. `docs/SAMPLE_DOMAIN.md` matches.
+- **Acceptance**
+  1. Unit tier (DuckDB fixture): a contract written off on a month end is not in that month end's outstanding principal, NPF, PAR 30, or active count; this is checked against a hand-written reference query.
+  2. Engine tier: every golden reference SQL re-runs equal to its committed CSV; the pull request lists each question whose expected result changed and why.
+  3. `makna validate semantic/definitions` exits 0, and the search tests that use "kredit macet" still pass.
 
 ### WP-05 Development stack and database migrations
 
