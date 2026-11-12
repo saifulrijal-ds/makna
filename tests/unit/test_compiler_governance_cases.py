@@ -264,7 +264,8 @@ def test_the_number_left_out_by_a_ratio_equals_a_reference_count(
     FROM contract_monthly_snapshots s
     JOIN contracts c ON c.contract_id = s.contract_id
     JOIN customers cu ON cu.customer_id = c.customer_id
-    WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM contract_monthly_snapshots) {{extra}}
+    WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM contract_monthly_snapshots)
+      AND s.days_past_due <= 210 {{extra}}
     GROUP BY 1, 2"""
     num = {
         (y, p): n

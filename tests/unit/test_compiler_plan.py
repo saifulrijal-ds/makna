@@ -489,7 +489,10 @@ def test_a_measure_with_a_rule_plans_and_adds_no_join() -> None:
         "non_performing",
     )
     assert plan.inputs[0].join_steps == ()
-    assert plan.inputs[0].definition_filters == ()
+    # the metric also applies the rule that leaves out the write-off row (WP-04B, D-31)
+    assert [getattr(r, "ref") for r in plan.inputs[0].definition_filters] == [  # noqa: B009
+        "contract_snapshot.in_book"
+    ]
 
 
 def test_a_metric_filter_rule_on_a_joined_entity_plans_and_adds_the_join_to_contract() -> None:
@@ -497,8 +500,10 @@ def test_a_metric_filter_rule_on_a_joined_entity_plans_and_adds_the_join_to_cont
     plan = plan_request(model, request("restructured_outstanding_principal"))
     only = plan.inputs[0]
     assert only.measure_rule is None
-    (rule,) = only.definition_filters
-    assert getattr(rule, "ref") == "contract.restructured"  # noqa: B009
+    assert [getattr(r, "ref") for r in only.definition_filters] == [  # noqa: B009
+        "contract.restructured",
+        "contract_snapshot.in_book",
+    ]
     assert [(p.entity, [s.name for s in p.steps]) for p in only.paths] == [
         ("contract", ["contract_snapshot.contract"])
     ]

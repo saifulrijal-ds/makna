@@ -131,6 +131,22 @@
       "status": "done"
     },
     {
+      "id": "WP-04B",
+      "title": "Sample definition fixes",
+      "milestone": "M1",
+      "requirements": [
+        "DAT-3",
+        "SEM-2",
+        "EVL-1"
+      ],
+      "depends_on": [
+        "WP-04",
+        "WP-14"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "done"
+    },
+    {
       "id": "WP-05",
       "title": "Development stack and database migrations",
       "milestone": "M0",

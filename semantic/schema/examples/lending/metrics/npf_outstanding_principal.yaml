@@ -5,6 +5,7 @@ label: NPF Outstanding Principal
 description: >-
   Principal still owed at a month end on contracts that are more than 90 days
   past due. This is the amount of non-performing financing, not the ratio.
+  Contracts that leave the book at that month end (more than 210 days past due) are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -15,6 +16,8 @@ synonyms:
 version: 1
 type: simple
 measure: contract_snapshot.npf_outstanding_principal
+filters:
+  - {rule: contract_snapshot.in_book}
 join_paths:
   branch: [contract_snapshot.contract, contract.servicing_branch]
 format: {kind: currency, unit: IDR, decimals: 0}

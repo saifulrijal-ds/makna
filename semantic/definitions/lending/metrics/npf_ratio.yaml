@@ -6,7 +6,8 @@ label: NPF Ratio
 description: >-
   Share of outstanding principal that is non-performing at a month end:
   principal owed on contracts more than 90 days past due, divided by all
-  outstanding principal.
+  outstanding principal. Contracts that leave the book at that month end (more
+  than 210 days past due) are in neither part.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -31,4 +32,5 @@ example_requests:
 caveats: >-
   Gross ratio based on principal; provisions are not deducted. Reported by
   servicing branch. Restructured contracts are included according to their
-  current days past due.
+  current days past due. Contracts that leave the book at the month end are left
+  out of the numerator and the denominator.

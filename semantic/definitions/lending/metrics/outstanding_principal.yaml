@@ -5,7 +5,8 @@ label: Outstanding Principal
 description: >-
   Principal that customers still owe at a month end. It is a balance, not a
   flow: for a period longer than a month the value is the balance at the last
-  month end in the period, never a sum of months.
+  month end in the period, never a sum of months. Contracts that leave the book
+  at that month end (more than 210 days past due) are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -16,6 +17,8 @@ synonyms:
 version: 1
 type: simple
 measure: contract_snapshot.outstanding_principal
+filters:
+  - {rule: contract_snapshot.in_book}
 join_paths:
   branch: [contract_snapshot.contract, contract.servicing_branch]
 format: {kind: currency, unit: IDR, decimals: 0}
@@ -28,4 +31,7 @@ example_questions:
 example_requests:
   - question: "Sisa pokok per wilayah di akhir Maret 2026"
     request: {dimensions: [branch.region_name], time_start: "2026-03-01", time_end: "2026-04-01"}
-caveats: Available at month ends only. Reported by servicing branch.
+caveats: >-
+  Available at month ends only. Reported by servicing branch. A contract more
+  than 210 days past due at a month end leaves the book at that month end; its
+  position at that month end is not counted, so the balance excludes it.

@@ -5,7 +5,8 @@ label: Active Contract Count
 description: >-
   Number of contracts that still have principal owed at a month end. It is a
   stock, not a flow: for a period longer than a month the value is the count
-  at the last month end in the period.
+  at the last month end in the period. A contract that leaves the book at that
+  month end (more than 210 days past due) is not counted.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -16,6 +17,8 @@ synonyms:
 version: 1
 type: simple
 measure: contract_snapshot.active_contracts
+filters:
+  - {rule: contract_snapshot.in_book}
 join_paths:
   branch: [contract_snapshot.contract, contract.servicing_branch]
 format: {kind: count, unit: contracts, decimals: 0}
@@ -29,4 +32,5 @@ example_requests:
     request: {dimensions: [product.financing_scheme], grain: quarter, time_start: "2025-10-01", time_end: "2026-07-01"}
 caveats: >-
   Available at month ends only; contracts fully repaid or written off have no
-  later position and are not counted. Reported by servicing branch.
+  later position and are not counted, and a contract is also left out at the
+  month it leaves the book at more than 210 days past due. Reported by servicing branch.

@@ -41,13 +41,24 @@ dimensions:
       - {value: "2", description: Dalam perhatian khusus (special mention). 11 to 90 days past due.}
       - {value: "3", description: Kurang lancar (substandard). 91 to 120 days past due.}
       - {value: "4", description: Diragukan (doubtful). 121 to 180 days past due.}
-      - {value: "5", description: Macet (loss). More than 180 days past due.}
+      - {value: "5", description: 'Macet (loss). More than 180 days past due. In everyday use "kredit macet" means NPF (more than 90 days past due, classes 3 to 5); the collectibility class Macet is class 5 only.'}
 rules:
   - name: non_performing
     label: Non-performing
-    description: A position more than 90 days past due. Written once and used by every NPF measure and metric.
+    description: >-
+      A position more than 90 days past due (collectibility classes 3, 4, and 5). Written once and used by every NPF measure and metric.
+      In everyday use "kredit macet" means this rule; the collectibility class "Macet" is class 5 only, more than 180 days past due.
     expr: days_past_due > 90
     synonyms: {en: [NPF, NPL, non-performing financing], id: [kredit macet, pembiayaan bermasalah]}
+  - name: in_book
+    label: In the book
+    description: >-
+      A position that counts in the portfolio at its month end: every position except the write-off position
+      (more than 210 days past due). A contract is written off at the month end of that position and has no later
+      position, but its write-off row is still a row of the table, so the portfolio metrics apply this rule and
+      leave it out. A missing days-past-due value counts as in the book.
+    expr: COALESCE(days_past_due, 0) <= 210
+    synonyms: {en: [in the portfolio, active book, not written off], id: [dalam portofolio, belum dihapus buku]}
 measures:
   - name: outstanding_principal
     agg: sum

@@ -2,6 +2,8 @@
 -- Rules: balance metric over a range without grain reports the last month end in the range
 -- (2026-06-30), not a sum; PAR 30 means days_past_due > 30; region from the SERVICING branch;
 -- the scheme is the contract's product (contracts.product_id -> products.financing_scheme).
+-- In the book (rule in_book): the write-off position, days_past_due > 210, is left out. A
+-- contract is written off AT the month end of that position, so it is still a snapshot row.
 WITH agg AS (
   SELECT
     b.region_name AS region_name,
@@ -17,6 +19,7 @@ WITH agg AS (
       FROM core.contract_monthly_snapshots
       WHERE snapshot_date >= DATE '2026-04-01' AND snapshot_date < DATE '2026-07-01'
     )
+    AND COALESCE(s.days_past_due, 0) <= 210
     AND p.financing_scheme = 'sharia'
   GROUP BY b.region_name
 )
