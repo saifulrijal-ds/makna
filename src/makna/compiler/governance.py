@@ -126,9 +126,11 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     """Fail unless every reference to a personal column in `tree` is allowed.
 
     Personal columns are those in `plan.personal_columns`: all columns read by any dimension of
-    the model whose effective sensitivity is personal. A reference is allowed only inside a mask
-    (`mask_expression`) or as the whole, bare argument of `COUNT(col)` or `COUNT(DISTINCT col)`
-    (not `COUNT(CASE WHEN col < x ...)`, which would reveal a test on one person's value),
+    the model whose effective sensitivity is personal or that the catalog tags personal. A
+    reference is allowed only inside a mask that the plan put in the query (see
+    `_is_planned_mask`; a mask-shaped expression from a definition is not exempt) or as the
+    whole, bare argument of `COUNT(col)` or `COUNT(DISTINCT col)` (not
+    `COUNT(CASE WHEN col < x ...)`, which would reveal a test on one person's value),
     and only in the select list or the GROUP BY of its query: never in WHERE, HAVING, ORDER BY,
     or a join condition. `MIN`, `MAX`, and other aggregates do not count, because they return one
     person's value. `SELECT *` over a table that holds a personal column fails too.
@@ -138,11 +140,12 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     personal = plan.personal_columns
     if not personal:
         return
+    masked = frozenset(d.column for d in plan.dimensions if d.masked)
     for node in tree.find_all(exp.Column, exp.Star):
         if isinstance(node, exp.Star) and isinstance(node.parent, (exp.Column, exp.Count)):
             continue  # `t.*` is checked as a column; `COUNT(*)` reads no value
         for table, column in _personal_reads(node, personal):
-            if not _allowed(node):
+            if not _allowed(node, masked):
                 raise _violation(column, table, _where(node))
 
 
@@ -208,14 +211,15 @@ def _ancestors(node: exp.Expr) -> list[exp.Expr]:
     return found
 
 
-def _allowed(node: exp.Expr) -> bool:
-    """True if `node` sits inside a mask or a COUNT of its own query, in an allowed clause."""
+def _allowed(node: exp.Expr, masked: frozenset[str]) -> bool:
+    """True if `node` sits inside a mask the plan built, or is the bare argument of a COUNT, in
+    an allowed clause of its own query."""
     covered = False
     child: exp.Expr = node
     for parent in _ancestors(node):
         if isinstance(parent, exp.Select):
             return covered and child.arg_key in _ALLOWED_CLAUSES
-        if not covered and is_mask(parent):
+        if not covered and is_mask(parent) and _is_planned_mask(parent, masked):
             covered = True
         elif not covered and isinstance(parent, exp.Count):
             if not _is_counted_bare(parent, node):
@@ -223,6 +227,22 @@ def _allowed(node: exp.Expr) -> bool:
             covered = True
         child = parent
     return covered
+
+
+def _is_planned_mask(mask: exp.Expr, masked: frozenset[str]) -> bool:
+    """True if `mask` is where the plan put one: a whole select-list item under the alias of a
+    planned masked dimension, or a whole GROUP BY item equal to such an item of the same query.
+    A mask-shaped expression anywhere else (inside `MAX`, `SUM`, or `COUNT`, or in a measure or
+    a dimension that is not masked) is not a mask and gets no exemption."""
+    parent = mask.parent
+    if isinstance(parent, exp.Alias) and parent.this is mask:
+        return parent.alias in masked and isinstance(parent.parent, exp.Select)
+    if isinstance(parent, exp.Group) and isinstance(parent.parent, exp.Select):
+        return any(
+            isinstance(item, exp.Alias) and item.alias in masked and item.this == mask
+            for item in parent.parent.expressions
+        )
+    return False
 
 
 def _is_counted_bare(count: exp.Count, node: exp.Expr) -> bool:

@@ -64,11 +64,54 @@ def test_a_personal_column_inside_min_max_or_another_aggregate_fails(
         verify(select(aggregate(this=col("birth_date"))), plan())
 
 
-def test_a_personal_column_inside_a_mask_passes() -> None:
-    verify(select(mask_expression(YEAR, col("birth_date"))), plan())
-    verify(
-        select(mask_expression(MaskBucket(method="bucket", width=10), col("birth_date"))), plan()
+def masked_plan() -> QueryPlan:
+    """A plan that selects the masked dimension `customer.birth_year`."""
+    return plan_request(
+        lending(), request("outstanding_principal", dimensions=["customer.birth_year"])
     )
+
+
+def test_a_personal_column_inside_the_mask_the_plan_built_passes() -> None:
+    mask = mask_expression(YEAR, col("birth_date"))
+    verify(select(mask.as_("customer__birth_year")), masked_plan())
+
+
+def test_a_bucket_mask_the_plan_built_passes() -> None:
+    from .test_compiler_masking import with_numeric_personal
+
+    model = with_numeric_personal(lending())
+    bucketed = plan_request(model, request("new_customer_count", dimensions=["customer.score"]))
+    mask = mask_expression(MaskBucket(method="bucket", width=10), col("birth_date"))
+    verify(select(mask.as_("customer__score")), bucketed)
+
+
+def test_a_mask_shaped_expression_that_the_plan_did_not_build_gets_no_exemption() -> None:
+    mask = mask_expression(YEAR, col("birth_date"))
+    with pytest.raises(GovernanceError):  # no masked dimension in this plan
+        verify(select(mask.as_("customer__birth_year")), plan())
+    with pytest.raises(GovernanceError):  # a select item that is not a planned masked column
+        verify(select(mask.as_("something_else")), masked_plan())
+
+
+@pytest.mark.parametrize("wrapper", [exp.Max, exp.Min, exp.Sum, exp.Count])
+def test_a_mask_shaped_expression_inside_an_aggregate_fails(wrapper: type[exp.AggFunc]) -> None:
+    bucket = mask_expression(MaskBucket(method="bucket", width=1), col("birth_date"))
+    with pytest.raises(GovernanceError):
+        verify(select(wrapper(this=bucket).as_("m")), masked_plan())
+
+
+def test_a_bucket_wrapped_case_inside_count_fails() -> None:
+    case = exp.Case(
+        ifs=[
+            exp.If(
+                this=exp.LT(this=col("birth_date"), expression=exp.Null()),
+                true=exp.Literal.number(1),
+            )
+        ]
+    )
+    bucket = mask_expression(MaskBucket(method="bucket", width=1), case)
+    with pytest.raises(GovernanceError):
+        verify(select(exp.Count(this=bucket).as_("m")), masked_plan())
 
 
 def test_a_personal_column_inside_count_passes() -> None:
@@ -79,9 +122,17 @@ def test_a_personal_column_inside_count_distinct_passes() -> None:
     verify(select(exp.Count(this=exp.Distinct(expressions=[col("national_id")]))), plan())
 
 
-def test_a_mask_in_the_group_by_passes() -> None:
+def test_a_mask_in_the_group_by_passes_when_a_planned_select_item_has_the_same_mask() -> None:
     mask = mask_expression(YEAR, col("birth_date"))
-    verify(select(mask.copy(), exp.Count(this=exp.Star())).group_by(mask), plan())
+    tree = select(mask.as_("customer__birth_year"), exp.Count(this=exp.Star())).group_by(
+        mask.copy()
+    )
+    verify(tree, masked_plan())
+    other = mask_expression(
+        MaskTruncateDate(method="truncate_date", grain="month"), col("birth_date")
+    )
+    with pytest.raises(GovernanceError):  # a group-by item that no planned select item shows
+        verify(select(exp.Count(this=exp.Star())).group_by(other), masked_plan())
 
 
 def test_the_error_is_internal_not_a_caller_error() -> None:
@@ -171,7 +222,7 @@ def test_a_filter_on_a_personal_column_fails() -> None:
 def test_a_masked_or_counted_personal_column_in_a_filter_still_fails() -> None:
     masked = exp.EQ(this=mask_expression(YEAR, col("birth_date")), expression=exp.Null())
     with pytest.raises(GovernanceError):
-        verify(select(exp.Literal.number(1)).where(masked), plan())
+        verify(select(exp.Literal.number(1)).where(masked), masked_plan())
     counted = exp.GT(this=exp.Count(this=col("email")), expression=exp.Literal.number(1))
     with pytest.raises(GovernanceError):
         verify(select(exp.Literal.number(1)).having(counted), plan())

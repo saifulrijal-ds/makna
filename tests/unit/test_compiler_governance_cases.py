@@ -294,3 +294,85 @@ def test_every_sentence_of_the_explanation_starts_with_a_capital_letter() -> Non
         lending(), request("new_customer_count", dimensions=["customer.birth_year"])
     )
     assert all(s[0].isupper() for s in response.explanation), response.explanation
+
+
+# ---- round 2: only masks the plan built are exempt ---------------------------------------
+
+BUCKET = "FLOOR(CAST({} AS DOUBLE) / 1) * 1"
+CATALOG_ONLY = {BIRTH: "personal"}
+
+
+def test_a_bucket_shaped_max_of_a_catalog_only_personal_column_fails_closed() -> None:
+    probe = measure("epoch_max", "max", BUCKET.format("EXTRACT(EPOCH FROM birth_date)"))
+    model = edited(lending(), drop_dimensions=("birth_year",), measures=[probe],
+                   metric="probe", measure="customer.epoch_max")  # fmt: skip
+    assert "MAX" in compile_request(model, request("probe", **ASK)).sql  # untagged: allowed
+    with pytest.raises(GovernanceError, match="birth_date"):
+        compile_request(with_derived(model, CATALOG_ONLY), request("probe", **ASK))
+
+
+def test_a_bucket_wrapped_case_in_count_of_a_catalog_only_personal_column_fails_closed() -> None:
+    case = "CASE WHEN birth_date < CAST('1975-01-01' AS DATE) THEN 1 END"
+    probe = measure("born_early", "count", BUCKET.format(case))
+    model = edited(lending(), drop_dimensions=("birth_year",), measures=[probe],
+                   metric="probe", measure="customer.born_early")  # fmt: skip
+    with pytest.raises(GovernanceError, match="birth_date"):
+        compile_request(with_derived(model, CATALOG_ONLY), request("probe", **ASK))
+
+
+def test_a_mask_shaped_dimension_on_a_catalog_only_personal_column_fails_closed() -> None:
+    shaped = Dimension(
+        name="epoch_band",
+        type="numeric",
+        expr=BUCKET.format("EXTRACT(EPOCH FROM birth_date)"),
+        sensitivity="internal",
+        description="A bucket-shaped copy of the birth date.",
+    )
+    model = with_derived(edited(lending(), dimensions=[shaped]), CATALOG_ONLY)
+    # birth_date is personal, so the dimension is personal too and, without a mask, is refused
+    with pytest.raises(QueryError) as caught:
+        plan_request(model, request("new_customer_count", dimensions=["customer.epoch_band"]))
+    assert caught.value.code == ErrorCode.PERSONAL_DATA_REFUSED
+
+
+# ---- round 2: column names are matched in lower case --------------------------------------
+
+
+def test_a_dimension_written_with_capitals_is_refused_when_the_catalog_tags_the_column() -> None:
+    shouted = Dimension(
+        name="shouted_city",
+        type="categorical",
+        expr="City",
+        sensitivity="internal",
+        description="The city, written with a capital.",
+    )
+    model = with_derived(edited(lending(), dimensions=[shouted]), {f"{CUSTOMERS}.city": "personal"})
+    with pytest.raises(QueryError) as caught:
+        plan_request(model, request("new_customer_count", dimensions=["customer.shouted_city"]))
+    assert caught.value.code == ErrorCode.PERSONAL_DATA_REFUSED
+
+
+def test_a_derived_key_written_with_capitals_is_read_in_lower_case() -> None:
+    model = Model.build(
+        lending().entities.values(),
+        lending().metrics.values(),
+        derived_sensitivity={("Lending.Core.Customers", "City"): "personal"},
+    )
+    assert model.derived_sensitivity == {(CUSTOMERS, "city"): "personal"}
+
+
+# ---- round 2: R02 on an entity only a definition filter reaches -------------------------
+
+
+def test_a_missing_column_on_an_entity_only_a_definition_filter_reaches_refuses_the_request() -> (
+    None
+):
+    flt = Filter(dimension="branch.region_name", op="!=", value="nowhere")
+    model = edited(lending(), metric="probe", measure="customer.new_customers", filters=[flt])
+    issue = ReferenceIssue("R02", "column region_name is not in lending.core.branches")
+    flagged = dataclasses.replace(model, reference_issues={"branch": (issue,)})
+    assert compile_request(model, request("probe")).sql  # the filter alone is fine
+    with pytest.raises(QueryError) as caught:
+        plan_request(flagged, request("probe"))
+    assert caught.value.code == ErrorCode.BROKEN_REFERENCE
+    assert caught.value.details["issues"][0]["object"] == "entity:branch"
