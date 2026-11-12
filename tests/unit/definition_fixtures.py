@@ -263,6 +263,18 @@ def v03_duplicate_relationship_name(files: Files) -> None:
     rels.append(copy.deepcopy(rels[0]))
 
 
+def v03_dimension_name_with_a_double_underscore(files: Files) -> None:
+    dims = _entity(files, "region")["dimensions"]
+    dims.append({**copy.deepcopy(dims[0]), "name": "region__code", "values": None})
+    dims[-1].pop("values")
+
+
+def v03_entity_name_with_a_double_underscore(files: Files) -> None:
+    twin = copy.deepcopy(_entity(files, "region"))
+    twin.update(name="ware__house", source={"table": "shop.core.warehouses"})
+    files["shop/entities/ware__house.yaml"] = twin
+
+
 # --- V04 ---------------------------------------------------------------------------------
 
 
@@ -578,6 +590,8 @@ FIXTURES: dict[str, list[Mutation]] = {
         v03_duplicate_dimension_name,
         v03_duplicate_measure_name,
         v03_duplicate_relationship_name,
+        v03_dimension_name_with_a_double_underscore,
+        v03_entity_name_with_a_double_underscore,
     ],
     "V04": [v04_domain_does_not_exist],
     "V05": [

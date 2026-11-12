@@ -376,3 +376,19 @@ def test_a_missing_column_on_an_entity_only_a_definition_filter_reaches_refuses_
         plan_request(flagged, request("probe"))
     assert caught.value.code == ErrorCode.BROKEN_REFERENCE
     assert caught.value.details["issues"][0]["object"] == "entity:branch"
+
+
+# ---- round 3: result column names, and the mask under each alias -------------------------
+
+
+def test_two_result_columns_with_the_same_name_fail_with_an_internal_error() -> None:
+    # A metric may be called `customer__city`, the name of the column of `customer.city`.
+    clash = lending().metrics["new_customer_count"].model_copy(update={"name": "customer__city"})
+    model = Model.build(lending().entities.values(), [*lending().metrics.values(), clash])
+    with pytest.raises(GovernanceError, match="customer__city"):
+        plan_request(model, request("customer__city", dimensions=["customer.city"]))
+
+
+def test_distinct_result_columns_are_not_affected() -> None:
+    plan = plan_request(lending(), request("new_customer_count", dimensions=["customer.city"]))
+    assert len({c.name for c in plan.columns}) == len(plan.columns)

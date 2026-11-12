@@ -1,9 +1,17 @@
 """Governance of personal data (ARCHITECTURE section 7.6, QRY-2): masks, and the final check.
 
 `mask_expression` builds the SQL node that replaces a personal dimension's value. `verify` walks
-the finished syntax tree and fails if any column read by a personal dimension appears anywhere
-except inside a mask or inside `COUNT(...)` or `COUNT(DISTINCT ...)`. The check catches mistakes
-in the generator itself; it is not a second planner and does not look at the model.
+the finished syntax tree and fails if a column that is personal (read by a personal dimension, or
+tagged personal by the catalog) appears anywhere except:
+
+- inside a mask that the plan put in the query: a whole select-list item under the alias of a
+  selected masked dimension (or the matching GROUP BY item), with the shape and parameters of
+  that dimension's own masking rule; or
+- as the whole, bare argument of `COUNT(col)` or `COUNT(DISTINCT col)`,
+
+and then only in the select list or the GROUP BY of its own query. A mask-shaped expression from a
+definition gets no exemption. The check catches mistakes in the generator itself; it is not a
+second planner and does not look at the model.
 
 All SQL is built as sqlglot nodes. No text is formatted or concatenated.
 """
@@ -17,7 +25,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
-from makna.model.definitions import Dimension, MaskBucket, MaskRedact, MaskTruncateDate
+from makna.model.definitions import Dimension, MaskBucket, Masking, MaskRedact, MaskTruncateDate
 
 if TYPE_CHECKING:
     from makna.compiler.plan import QueryPlan
@@ -117,6 +125,7 @@ def _violation(column: str, table: str, where: str) -> GovernanceError:
     )
 
 
+_Masked = dict[str, Masking | None]
 # Clauses of a SELECT in which a masked or counted personal column may sit.
 _ALLOWED_CLAUSES = ("expressions", "group")
 _MASK_GRAINS = ("month", "quarter", "year")
@@ -140,7 +149,7 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     personal = plan.personal_columns
     if not personal:
         return
-    masked = frozenset(d.column for d in plan.dimensions if d.masked)
+    masked = {d.column: d.dimension.masking for d in plan.dimensions if d.masked}
     for node in tree.find_all(exp.Column, exp.Star):
         if isinstance(node, exp.Star) and isinstance(node.parent, (exp.Column, exp.Count)):
             continue  # `t.*` is checked as a column; `COUNT(*)` reads no value
@@ -152,7 +161,10 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
 def _where(node: exp.Expr) -> str:
     if isinstance(node.parent, exp.AggFunc):
         return "inside an aggregate that is not a count"
-    return "outside a mask or COUNT, or in a clause that may not hold it"
+    return (
+        "outside a mask the plan built (with that dimension's masking rule) or a bare COUNT, "
+        "or in a clause that may not hold it"
+    )
 
 
 def _parts(table: exp.Table) -> tuple[str, ...]:
@@ -211,7 +223,7 @@ def _ancestors(node: exp.Expr) -> list[exp.Expr]:
     return found
 
 
-def _allowed(node: exp.Expr, masked: frozenset[str]) -> bool:
+def _allowed(node: exp.Expr, masked: _Masked) -> bool:
     """True if `node` sits inside a mask the plan built, or is the bare argument of a COUNT, in
     an allowed clause of its own query."""
     covered = False
@@ -229,20 +241,45 @@ def _allowed(node: exp.Expr, masked: frozenset[str]) -> bool:
     return covered
 
 
-def _is_planned_mask(mask: exp.Expr, masked: frozenset[str]) -> bool:
+def _is_planned_mask(mask: exp.Expr, masked: _Masked) -> bool:
     """True if `mask` is where the plan put one: a whole select-list item under the alias of a
     planned masked dimension, or a whole GROUP BY item equal to such an item of the same query.
     A mask-shaped expression anywhere else (inside `MAX`, `SUM`, or `COUNT`, or in a measure or
     a dimension that is not masked) is not a mask and gets no exemption."""
     parent = mask.parent
     if isinstance(parent, exp.Alias) and parent.this is mask:
-        return parent.alias in masked and isinstance(parent.parent, exp.Select)
+        return _has_rule(mask, parent.alias, masked) and isinstance(parent.parent, exp.Select)
     if isinstance(parent, exp.Group) and isinstance(parent.parent, exp.Select):
         return any(
-            isinstance(item, exp.Alias) and item.alias in masked and item.this == mask
+            isinstance(item, exp.Alias)
+            and item.this == mask
+            and _has_rule(mask, item.alias, masked)
             for item in parent.parent.expressions
         )
     return False
+
+
+def _has_rule(mask: exp.Expr, alias: str, masked: _Masked) -> bool:
+    """True if `mask` is the masking rule of the dimension planned under `alias`: the same
+    method and the same grain or width."""
+    rule = masked.get(alias)
+    return rule is not None and _signature(mask) == _rule_signature(rule)
+
+
+def _signature(mask: exp.Expr) -> tuple[str, object] | None:
+    if isinstance(mask, exp.Cast) and isinstance(mask.this, exp.TimestampTrunc):
+        return ("truncate_date", _unit(mask.this))
+    if isinstance(mask, exp.Mul):
+        return ("bucket", float(mask.expression.name))
+    return None
+
+
+def _rule_signature(rule: Masking) -> tuple[str, object] | None:
+    if isinstance(rule, MaskTruncateDate):
+        return ("truncate_date", rule.grain)
+    if isinstance(rule, MaskBucket):
+        return ("bucket", float(rule.width))
+    return None
 
 
 def _is_counted_bare(count: exp.Count, node: exp.Expr) -> bool:

@@ -893,4 +893,11 @@ def _columns(
     columns.append(ResultColumn(name=metric.name, role="metric", unit=_unit(metric)))
     if guard:
         columns.append(ResultColumn(name=governance.GROUPS_LEFT_OUT, role="governance"))
+    names = [c.name for c in columns]
+    repeated = sorted({n for n in names if names.count(n) > 1})
+    if repeated:
+        raise governance.GovernanceError(
+            f"internal error: result columns would share the name {', '.join(repeated)}; "
+            "entity, dimension, and metric names must not combine to the same column name"
+        )
     return tuple(columns)

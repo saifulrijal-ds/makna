@@ -93,6 +93,28 @@ def test_a_mask_shaped_expression_that_the_plan_did_not_build_gets_no_exemption(
         verify(select(mask.as_("something_else")), masked_plan())
 
 
+def test_the_mask_under_an_alias_must_be_the_masking_rule_of_that_dimension() -> None:
+    month = MaskTruncateDate(method="truncate_date", grain="month")
+    with pytest.raises(GovernanceError, match="masking rule"):
+        verify(
+            select(mask_expression(month, col("birth_date")).as_("customer__birth_year")),
+            masked_plan(),
+        )
+    bucket = mask_expression(MaskBucket(method="bucket", width=10), col("birth_date"))
+    with pytest.raises(GovernanceError):
+        verify(select(bucket.as_("customer__birth_year")), masked_plan())
+
+
+def test_a_bucket_of_another_width_under_a_bucket_alias_fails() -> None:
+    from .test_compiler_masking import with_numeric_personal
+
+    model = with_numeric_personal(lending())
+    bucketed = plan_request(model, request("new_customer_count", dimensions=["customer.score"]))
+    five = mask_expression(MaskBucket(method="bucket", width=5), col("birth_date"))
+    with pytest.raises(GovernanceError):
+        verify(select(five.as_("customer__score")), bucketed)
+
+
 @pytest.mark.parametrize("wrapper", [exp.Max, exp.Min, exp.Sum, exp.Count])
 def test_a_mask_shaped_expression_inside_an_aggregate_fails(wrapper: type[exp.AggFunc]) -> None:
     bucket = mask_expression(MaskBucket(method="bucket", width=1), col("birth_date"))

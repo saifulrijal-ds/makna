@@ -259,6 +259,18 @@ class _Checker:
             where = ", ".join(sorted(o.path for o in others if o is not self.file))
             self.add("V03", f"{d.kind} name {d.name} is also used by {where}", "name")
         if isinstance(d, Entity):
+            # `__` separates entity and dimension in result column names (section 7.2)
+            if "__" in d.name:
+                self.add("V03", f"entity name {d.name} contains a double underscore", "name")
+            for index, dimension in enumerate(d.dimensions):
+                if "__" in dimension.name:
+                    self.add(
+                        "V03",
+                        f"dimension name {dimension.name} contains a double underscore",
+                        "dimensions",
+                        index,
+                        "name",
+                    )
             parts: dict[str, Sequence[object]] = {
                 "dimensions": d.dimensions,
                 "measures": d.measures or [],
