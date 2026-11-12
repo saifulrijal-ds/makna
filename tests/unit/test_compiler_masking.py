@@ -20,6 +20,7 @@ from makna.compiler.plan import plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import build_tree, to_sql
 from makna.model.definitions import Dimension, MaskBucket, MaskRedact, MaskTruncateDate
+from makna.model.governance import GovernancePolicy
 
 from .compiler_support import lending, request
 from .duckdb_support import run_tree
@@ -46,7 +47,7 @@ def dimension_of(model: Model, ref: str, **update: Any) -> Dimension:
 
 
 def run(model: Model, metric: str, **fields: Any) -> tuple[list[tuple[Any, ...]], list[str]]:
-    plan = plan_request(model, request(metric, **fields), min_group_size=2)
+    plan = plan_request(model, request(metric, **fields), governance=GovernancePolicy.strict(2))
     con = _connection()
     rows = run_tree(con, build_tree(model, plan))
     return rows, [c.name for c in plan.columns]

@@ -1,0 +1,3 @@
+Allow only listed functions in definition expressions: `set_config` and `current_setting` in two approved dimensions carried raw names past every check on columns.
+
+Found by the safety review of WP-10B (2026-11-12, PostgreSQL 16.2). A dimension that calls `set_config('k', full_name, false)` inside a masked expression, and a second dimension that reads `current_setting('k')`, returned every customer's raw name; with `min_group_size = 0` or `allow_personal_filters` alone it was full exfiltration, and under `strict` one name per query. A deny-list misses names (see the note on missing columns read as functions), so V05 and the final check use the allow-list in `makna.model.functions`.

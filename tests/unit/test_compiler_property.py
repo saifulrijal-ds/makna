@@ -32,6 +32,7 @@ from makna.compiler.plan import available_dimensions, plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import build_tree, reparse
 from makna.model.definitions import Dimension
+from makna.model.governance import GovernancePolicy
 from makna.model.request import ErrorCode, QueryError, QueryRequest
 
 from .compiler_support import lending
@@ -139,7 +140,7 @@ def test_random_requests_never_leak_personal_data_or_small_groups(
         req = random_request(rng, metrics, refs, personal)
         minimum = rng.choice([2, 3, 5, 10])
         try:
-            plan = plan_request(model, req, min_group_size=minimum)
+            plan = plan_request(model, req, governance=GovernancePolicy.strict(minimum))
         except QueryError as error:
             assert isinstance(error.code, ErrorCode)
             outcomes[f"error {error.code}"] += 1

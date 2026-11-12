@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from makna.config import ConfigError, load_search_runtime, load_settings
+from makna.config import ConfigError, Settings, load_search_runtime, load_settings
+from makna.model.governance import RULES, GovernancePolicy
 
 GOOD_ENV = {
     "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
@@ -162,3 +164,148 @@ def test_allow_download_can_be_set_from_the_environment(
     config.write_text("[embedding.fastembed]\nallow_download = false\n")
     runtime = load_search_runtime({"MAKNA_EMBEDDING_ALLOW_DOWNLOAD": value}, config)
     assert runtime.embedding.fastembed.allow_download is expected
+
+
+# ---- governance modes (WP-10B criterion 5, D-29) -------------------------------------------
+
+
+def governance(tmp_path: Path, body: str) -> Settings:
+    config = tmp_path / "makna.toml"
+    config.write_text(f"[governance]\n{body}\n")
+    return load_settings(GOOD_ENV, config)
+
+
+def refused(tmp_path: Path, body: str, field: str) -> str:
+    with pytest.raises(ConfigError) as caught:
+        governance(tmp_path, body)
+    message = str(caught.value)
+    assert f"governance.{field}" in message, message
+    return message
+
+
+def test_the_default_mode_is_strict_with_a_minimum_of_ten(tmp_path: Path) -> None:
+    settings = load_settings(GOOD_ENV, tmp_path / "none.toml")
+    assert settings.governance.mode == "strict"
+    assert settings.governance.policy() == GovernancePolicy.strict(10)
+
+
+def test_the_committed_config_file_is_strict(tmp_path: Path) -> None:
+    settings = load_settings(GOOD_ENV, ROOT / "config" / "makna.toml")
+    assert settings.governance.policy() == GovernancePolicy.strict(10)
+    assert settings.governance.team == "data-governance"
+
+
+def test_strict_takes_a_minimum(tmp_path: Path) -> None:
+    settings = governance(tmp_path, 'mode = "strict"\nmin_group_size = 25')
+    assert settings.governance.policy() == GovernancePolicy.strict(25)
+
+
+def test_off_gives_the_off_policy_and_ignores_the_minimum(tmp_path: Path) -> None:
+    assert governance(tmp_path, 'mode = "off"').governance.policy() == GovernancePolicy.off()
+    ignored = governance(tmp_path, 'mode = "off"\nmin_group_size = 25')
+    assert ignored.governance.policy() == GovernancePolicy.off()
+
+
+def test_custom_defaults_every_rule_to_its_strict_value(tmp_path: Path) -> None:
+    settings = governance(tmp_path, 'mode = "custom"')
+    assert settings.governance.policy() == GovernancePolicy.custom()
+    assert settings.governance.policy().relaxed() == ()
+
+
+def test_custom_sets_each_rule(tmp_path: Path) -> None:
+    body = (
+        'mode = "custom"\nmin_group_size = 0\nallow_personal_filters = true\n'
+        "apply_masks = false\nallow_unmasked_personal = true"
+    )
+    policy = governance(tmp_path, body).governance.policy()
+    assert policy == GovernancePolicy.custom(
+        min_group_size=0,
+        allow_personal_filters=True,
+        apply_masks=False,
+        allow_unmasked_personal=True,
+    )
+    assert [name for name, _ in policy.relaxed()] == list(RULES)
+
+
+@pytest.mark.parametrize("value", ["tight", "STRICT", "", "relaxed"])
+def test_an_unknown_mode_is_refused_and_names_the_field(tmp_path: Path, value: str) -> None:
+    refused(tmp_path, f'mode = "{value}"', "mode")
+
+
+@pytest.mark.parametrize("mode", ["strict", "off"])
+@pytest.mark.parametrize(
+    "rule", ["allow_personal_filters", "apply_masks", "allow_unmasked_personal"]
+)
+def test_a_custom_rule_outside_custom_is_refused_even_at_its_strict_value(
+    tmp_path: Path, mode: str, rule: str
+) -> None:
+    strict_value = "true" if rule == "apply_masks" else "false"
+    for value in ("true", "false", strict_value):
+        message = refused(tmp_path, f'mode = "{mode}"\n{rule} = {value}', rule)
+        assert "custom" in message
+
+
+def test_a_custom_rule_with_no_mode_is_refused(tmp_path: Path) -> None:
+    refused(tmp_path, "apply_masks = false", "apply_masks")
+
+
+@pytest.mark.parametrize("mode", ["strict", "custom", "off"])
+@pytest.mark.parametrize("bad", [1, -1, -10])
+def test_a_minimum_of_one_or_less_than_zero_is_refused_in_every_mode(
+    tmp_path: Path, mode: str, bad: int
+) -> None:
+    refused(tmp_path, f'mode = "{mode}"\nmin_group_size = {bad}', "min_group_size")
+
+
+@pytest.mark.parametrize("mode", ["strict", "off"])
+def test_a_minimum_of_zero_is_accepted_only_in_custom(tmp_path: Path, mode: str) -> None:
+    message = refused(tmp_path, f'mode = "{mode}"\nmin_group_size = 0', "min_group_size")
+    assert "custom" in message
+    refused(tmp_path, "min_group_size = 0", "min_group_size")  # no mode: strict
+
+
+def test_a_minimum_of_zero_in_custom_turns_the_rule_off(tmp_path: Path) -> None:
+    policy = governance(tmp_path, 'mode = "custom"\nmin_group_size = 0').governance.policy()
+    assert policy == GovernancePolicy.custom(min_group_size=0)
+    assert policy.relaxed() == (("min_group_size", 0),)
+
+
+def test_an_unknown_governance_key_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="governance.allow_everything"):
+        governance(tmp_path, 'mode = "custom"\nallow_everything = true')
+
+
+def test_the_environment_cannot_set_the_mode(tmp_path: Path) -> None:
+    env = {**GOOD_ENV, "MAKNA_GOVERNANCE_MODE": "off", "MAKNA_MODE": "off"}
+    assert load_settings(env, tmp_path / "none.toml").governance.mode == "strict"
+
+
+# ---- fix round 1: typed values, immutable settings, hints -------------------------------------
+
+
+@pytest.mark.parametrize("value", ['"no"', '"yes"', '"false"', "0", "1", '"on"'])
+@pytest.mark.parametrize(
+    "rule", ["allow_personal_filters", "apply_masks", "allow_unmasked_personal"]
+)
+def test_a_custom_rule_must_be_a_real_boolean(tmp_path: Path, value: str, rule: str) -> None:
+    refused(tmp_path, f'mode = "custom"\n{rule} = {value}', rule)
+
+
+@pytest.mark.parametrize("value", ['"10"', "10.0", "true", "false"])
+def test_the_minimum_must_be_a_real_integer(tmp_path: Path, value: str) -> None:
+    refused(tmp_path, f'mode = "custom"\nmin_group_size = {value}', "min_group_size")
+
+
+def test_the_governance_settings_cannot_be_changed_after_loading(tmp_path: Path) -> None:
+    settings = governance(tmp_path, 'mode = "strict"')
+    with pytest.raises(ValidationError):
+        settings.governance.mode = "off"  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        settings.governance.apply_masks = False  # type: ignore[misc]
+    assert settings.governance.policy() == GovernancePolicy.strict(10)
+
+
+def test_the_minimum_hint_about_zero_appears_only_in_custom(tmp_path: Path) -> None:
+    assert "or 0" not in refused(tmp_path, 'mode = "strict"\nmin_group_size = 1', "min_group_size")
+    assert "or 0" not in refused(tmp_path, 'mode = "off"\nmin_group_size = 1', "min_group_size")
+    assert "or 0" in refused(tmp_path, 'mode = "custom"\nmin_group_size = 1', "min_group_size")

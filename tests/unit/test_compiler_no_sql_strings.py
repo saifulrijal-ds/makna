@@ -89,6 +89,7 @@ ALLOWED_HELPERS: dict[tuple[str, str], str] = {
     ("sqlgen.py", "_alias"): "table alias text, becomes a quoted identifier node",
     ("sqlgen.py", "_cte"): "CTE name text, becomes a quoted identifier node",
     ("governance.py", "_violation"): "error message for the internal governance error",
+    ("governance.py", "_function_violation"): "error message for the internal governance error",
     ("compile.py", "_metric_id"): "the `metric:<name>` reference of the response, not SQL",
 }
 

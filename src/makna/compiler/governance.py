@@ -13,6 +13,24 @@ and then only in the select list or the GROUP BY of its own query. A mask-shaped
 definition gets no exemption. The check catches mistakes in the generator itself; it is not a
 second planner and does not look at the model.
 
+The governance policy of the plan (D-29) widens what is accepted, and nothing else. Under `strict`
+the rules above apply as they are. Under `custom` (and `off`, which is `custom` with every rule
+relaxed: the checks are the same, only the policy's values differ) a raw personal column is also
+accepted where an enabled rule allows it and where the plan put it:
+
+- in a whole select-list item, or the equal GROUP BY item, under the alias of a personal
+  dimension the plan selected raw (or `metric_time`, for a grain the policy released), when the
+  policy lets that column be returned raw (`allow_unmasked_personal` for a dimension with no
+  masking rule, `apply_masks = false` for one with a rule);
+- inside the WHERE of an input query (its filters, time range, and month-end selection) when
+  `allow_personal_filters`.
+
+Every other case fails, in particular `MIN`, `MAX`, `SUM`, and `AVG` of a personal column, and a
+raw column under any other alias, in a subquery or lateral item, or in HAVING, ORDER BY, or a join.
+A function that is not on the allow-list of `makna.model.functions` (or built by the compiler)
+fails in every mode, because a function such as `set_config` can carry a value past a check on
+columns.
+
 All SQL is built as sqlglot nodes. No text is formatted or concatenated.
 """
 
@@ -26,6 +44,8 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
 from makna.model.definitions import Dimension, MaskBucket, Masking, MaskRedact, MaskTruncateDate
+from makna.model.functions import node_problem
+from makna.model.governance import GovernancePolicy
 
 if TYPE_CHECKING:
     from makna.compiler.plan import QueryPlan
@@ -109,6 +129,24 @@ def personal_columns(model: Model) -> frozenset[tuple[str, str]]:
     return frozenset(found)
 
 
+def raw_returnable_columns(model: Model, policy: GovernancePolicy) -> frozenset[tuple[str, str]]:
+    """`(table, column)`, lower case, of the personal columns the select list and GROUP BY may
+    return unmasked under `policy`: those every personal dimension reading them may return raw
+    (`GovernancePolicy.may_return_raw`). A column the catalog tags personal that no dimension
+    reads is not in the set, so nothing may return it. Empty under `strict`."""
+    allowed: set[tuple[str, str]] = set()
+    refused: set[tuple[str, str]] = set()
+    for entity in model.entities.values():
+        table = entity.source.table.lower()
+        for dimension in entity.dimensions:
+            if model.effective_sensitivity(entity, dimension) != "personal":
+                continue
+            ok = policy.may_return_raw(dimension.masking is not None)
+            target = allowed if ok else refused
+            target.update((table, name.lower()) for name in columns_read(dimension))
+    return frozenset(allowed - refused)
+
+
 # --------------------------------------------------------------------------------------
 # The final check
 
@@ -122,6 +160,14 @@ def _violation(column: str, table: str, where: str) -> GovernanceError:
     return GovernanceError(
         f"internal error: the personal column {table}.{column} appears {where}. A personal "
         "column may appear only inside a mask or a count, in the select list or the group clause."
+    )
+
+
+def _function_violation(problem: str) -> GovernanceError:
+    return GovernanceError(
+        f"internal error: the query uses {problem}, which is not on the list of functions and "
+        "cast types a query may use (makna.model.functions), so a value could pass through it "
+        "unchecked"
     )
 
 
@@ -144,8 +190,19 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     or a join condition. `MIN`, `MAX`, and other aggregates do not count, because they return one
     person's value. `SELECT *` over a table that holds a personal column fails too.
 
+    The plan's governance policy can widen this (see the module docstring): a raw personal
+    column is accepted where an enabled rule allows it and the plan put it. `off` is `custom`
+    with every rule relaxed; the checks do not skip. A function that is neither an aggregate,
+    built by the compiler, nor on the allow-list fails in every mode.
+
     Raises `GovernanceError`. It does not plan again and does not read the model.
     """
+    for node in tree.walk():
+        if isinstance(node, (exp.AggFunc, exp.Window)):
+            continue
+        problem = node_problem(node)
+        if problem is not None:
+            raise _function_violation(problem)
     personal = plan.personal_columns
     if not personal:
         return
@@ -154,7 +211,7 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
         if isinstance(node, exp.Star) and isinstance(node.parent, (exp.Column, exp.Count)):
             continue  # `t.*` is checked as a column; `COUNT(*)` reads no value
         for table, column in _personal_reads(node, personal):
-            if not _allowed(node, masked):
+            if not _allowed(node, masked) and not _raw_allowed(node, (table, column), plan):
                 raise _violation(column, table, _where(node))
 
 
@@ -239,6 +296,112 @@ def _allowed(node: exp.Expr, masked: _Masked) -> bool:
             covered = True
         child = parent
     return covered
+
+
+def _raw_allowed(node: exp.Expr, pair: tuple[str, str], plan: QueryPlan) -> bool:
+    """True if the policy of the plan lets this raw personal column stand where it is, and the
+    plan put it there (as `_is_planned_mask` does for masks).
+
+    - Inside the WHERE of a query at the level of an input query (not inside a select-list
+      expression or a join): when `allow_personal_filters`. This covers the filters, the time
+      range, and the month-end subquery the plan built.
+    - As a whole select-list item, or the equal GROUP BY item, of such a query, under the alias
+      of a dimension the plan selected raw (or `metric_time`), in an expression that holds no
+      aggregate, window, or subquery: when the column is one of the plan's `raw_columns`.
+    - Nowhere else: not in HAVING, ORDER BY, a join condition, or another select-list item.
+    """
+    if not isinstance(node, exp.Column) or isinstance(node.this, exp.Star):
+        return False  # a star returns whatever the table holds; it is never accepted
+    wheres = [a for a in _ancestors(node) if isinstance(a, exp.Where)]
+    if wheres:
+        outer = wheres[-1]
+        return plan.governance.allow_personal_filters and (
+            isinstance(outer.parent, exp.Select) and _query_level(outer.parent)
+        )
+    if pair not in plan.raw_columns:
+        return False
+    expected = _planned_raw_items(plan)
+    child: exp.Expr = node
+    item: exp.Expr = node  # the whole select-list or GROUP BY item that holds the column
+    for parent in _ancestors(node):
+        if isinstance(parent, (exp.AggFunc, exp.Window, exp.Subquery)):
+            return False
+        if not isinstance(parent, (exp.Select, exp.Group)):
+            item = parent
+        if isinstance(parent, exp.Select):
+            if not _query_level(parent):
+                return False
+            if child.arg_key == "expressions":
+                return isinstance(child, exp.Alias) and _is_planned_item(child, expected)
+            if child.arg_key == "group":
+                return any(
+                    isinstance(other, exp.Alias)
+                    and other.this == item
+                    and _is_planned_item(other, expected)
+                    for other in parent.expressions
+                )
+            return False
+        child = parent
+    return False
+
+
+def _normalized(expression: exp.Expr) -> exp.Expr:
+    """`expression` without table qualifiers and quoting, so that the text a definition holds
+    can be compared with the column bound to a table alias in the query."""
+    copy = expression.copy()
+    for column in copy.find_all(exp.Column):
+        column.set("table", None)
+        column.this.set("quoted", False)
+    return copy
+
+
+def _planned_raw_items(plan: QueryPlan) -> dict[str, list[exp.Expr]]:
+    """The expressions the plan built for each alias that may hold a raw personal column: for a
+    dimension selected raw, the dimension's own expression; for `metric_time`, the grain applied
+    to the official date of an input. The query's item must equal one of them."""
+    found: dict[str, list[exp.Expr]] = {}
+    for planned in plan.dimensions:
+        if planned.personal and not planned.masked:
+            text = planned.dimension.expr or planned.dimension.name
+            found[planned.column] = [_normalized(_parse_condition(text))]
+    if plan.grain is not None:
+        found["metric_time"] = [
+            _normalized(
+                exp.Cast(
+                    this=exp.TimestampTrunc(
+                        this=_parse_condition(item.time_dimension.expr or item.time_dimension.name),
+                        unit=exp.Literal.string(plan.grain),
+                    ),
+                    to=exp.DataType.build("date"),
+                )
+            )
+            for item in plan.inputs
+        ]
+    return found
+
+
+def _parse_condition(text: str) -> exp.Expr:
+    try:
+        return sqlglot.parse_one(text, into=exp.Condition)
+    except SqlglotError:
+        return exp.column(text)
+
+
+def _is_planned_item(item: exp.Alias, expected: dict[str, list[exp.Expr]]) -> bool:
+    return item.alias in expected and _normalized(item.this) in expected[item.alias]
+
+
+def _query_level(select: exp.Select) -> bool:
+    """True if `select` is a query of its own: the root, or the body of a CTE. A select inside
+    an expression, a join, a lateral, or a subquery is not."""
+    child: exp.Expr = select
+    for parent in _ancestors(select):
+        if isinstance(parent, exp.Select) and child.arg_key != "with_":
+            return False
+        if isinstance(parent, (exp.Subquery, exp.Where, exp.Lateral, exp.Join)):
+            return False
+        child = parent
+    return True
 
 
 def _is_planned_mask(mask: exp.Expr, masked: _Masked) -> bool:

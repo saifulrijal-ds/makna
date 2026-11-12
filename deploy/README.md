@@ -81,6 +81,28 @@ docker compose -p makna-offline -f deploy/docker-compose.yml -f deploy/docker-co
 
 starts a second copy of the stack (its own project name, volumes, and a small data set) on a network with `internal: true`: containers reach each other and nothing else. `init` builds the index there with the model in the image, the check first proves that the container cannot connect to a public address, and CI also runs `makna index build` and `makna search` in that container. No port is published on that stack. Stop it with `down -v` and the same two `-f` options.
 
+## Personal-data guardrails (governance mode)
+
+`[governance] mode` in `config/makna.toml` (not an environment variable, and never a request
+field) sets how strictly the compiler protects personal data for the whole deployment
+(`docs/ARCHITECTURE.md` section 7.6, D-29):
+
+- `strict` (the default): masks, no filters on personal dimensions, no unmasked personal
+  dimensions, and groups smaller than `min_group_size` (default 10) left out.
+- `custom`: relax only the rules you set (`min_group_size = 0` or at least 2,
+  `allow_personal_filters`, `apply_masks`, `allow_unmasked_personal`); a rule you leave out keeps
+  its strict value.
+- `off`: every rule relaxed.
+
+Setting `allow_personal_filters`, `apply_masks`, or `allow_unmasked_personal` while the mode is
+not `custom` is an error, and so is a `min_group_size` of 1, a negative one, or 0 outside
+`custom`. When the policy relaxes at least one rule, every compile response carries a warning that
+names the mode and each relaxed rule. With `allow_personal_filters`, the minimum group size does
+not apply to filters: a filter on an identifier can select one person's records. With
+`apply_masks = false` a masked dimension returns the raw value of its column (`customer.birth_year`
+returns full birth dates), which can be much finer than its name. `makna validate` always checks in `strict` mode. Relaxing the rules does not
+replace access control in the engine: restrict or mask personal data there too.
+
 ## Migrations
 
 `uv run alembic upgrade head` and `uv run alembic downgrade base` work from the repository

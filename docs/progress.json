@@ -54,7 +54,10 @@
         "D-23",
         "D-24",
         "D-25",
-        "D-26"
+        "D-26",
+        "D-29",
+        "D-30",
+        "D-31"
       ]
     }
   },
@@ -234,6 +237,19 @@
       ],
       "depends_on": [
         "WP-09"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "done"
+    },
+    {
+      "id": "WP-10B",
+      "title": "Compiler: governance modes",
+      "milestone": "M1",
+      "requirements": [
+        "QRY-2"
+      ],
+      "depends_on": [
+        "WP-10"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "done"
