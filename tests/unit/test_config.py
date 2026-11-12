@@ -57,6 +57,13 @@ def test_toml_and_env_are_combined(tmp_path: Path) -> None:
     assert settings.engine_url is not None
 
 
+def test_a_minimum_group_size_of_one_is_refused(tmp_path: Path) -> None:
+    config = tmp_path / "makna.toml"
+    config.write_text("[governance]\nmin_group_size = 1\n")
+    with pytest.raises(ConfigError, match="min_group_size"):
+        load_settings(GOOD_ENV, config)
+
+
 def test_invalid_toml_value_names_the_field(tmp_path: Path) -> None:
     config = tmp_path / "makna.toml"
     config.write_text("min_group_size = 'x'\n")

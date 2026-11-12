@@ -32,7 +32,7 @@ class GovernanceSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     team: str = "data-governance"
-    min_group_size: int = Field(default=10, ge=1)
+    min_group_size: int = Field(default=10, ge=2)
 
 
 class SensitivitySettings(BaseModel):

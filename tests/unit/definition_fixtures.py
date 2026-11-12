@@ -263,6 +263,18 @@ def v03_duplicate_relationship_name(files: Files) -> None:
     rels.append(copy.deepcopy(rels[0]))
 
 
+def v03_dimension_name_with_a_double_underscore(files: Files) -> None:
+    dims = _entity(files, "region")["dimensions"]
+    dims.append({**copy.deepcopy(dims[0]), "name": "region__code", "values": None})
+    dims[-1].pop("values")
+
+
+def v03_entity_name_with_a_double_underscore(files: Files) -> None:
+    twin = copy.deepcopy(_entity(files, "region"))
+    twin.update(name="ware__house", source={"table": "shop.core.warehouses"})
+    files["shop/entities/ware__house.yaml"] = twin
+
+
 # --- V04 ---------------------------------------------------------------------------------
 
 
@@ -430,6 +442,23 @@ def v12_filter_on_personal_column_of_a_sum(files: Files) -> None:
     )
 
 
+def v12_count_over_an_expression_of_a_personal_column(files: Files) -> None:
+    measures = _entity(files, "customer")["measures"]
+    measures.append(
+        _measure(
+            "early_signups",
+            "count",
+            "registered_date",
+            expr="CASE WHEN email < 'm' THEN 1 END",
+        )
+    )
+
+
+def v12_count_with_a_filter_on_a_personal_column(files: Files) -> None:
+    measures = _entity(files, "customer")["measures"]
+    measures.append(_measure("mailed", "count", "registered_date", filter="email <> ''"))
+
+
 # --- V13 ---------------------------------------------------------------------------------
 
 
@@ -561,6 +590,8 @@ FIXTURES: dict[str, list[Mutation]] = {
         v03_duplicate_dimension_name,
         v03_duplicate_measure_name,
         v03_duplicate_relationship_name,
+        v03_dimension_name_with_a_double_underscore,
+        v03_entity_name_with_a_double_underscore,
     ],
     "V04": [v04_domain_does_not_exist],
     "V05": [
@@ -595,7 +626,12 @@ FIXTURES: dict[str, list[Mutation]] = {
         v10_date_filter_with_text,
     ],
     "V11": [v11_truncate_date_on_categorical, v11_bucket_on_time, v11_redact_on_numeric],
-    "V12": [v12_sum_over_personal_column, v12_filter_on_personal_column_of_a_sum],
+    "V12": [
+        v12_sum_over_personal_column,
+        v12_filter_on_personal_column_of_a_sum,
+        v12_count_over_an_expression_of_a_personal_column,
+        v12_count_with_a_filter_on_a_personal_column,
+    ],
     "V13": [
         v13_approved_metric_depends_on_draft_metric,
         v13_in_review_metric_depends_on_draft_entity,

@@ -94,6 +94,15 @@ def _forbidden(tree: exp.Condition) -> str | None:
     return None
 
 
+def _is_bare_column(sql: str | None) -> bool:
+    if sql is None:
+        return False
+    try:
+        return isinstance(_parse(sql), exp.Column)
+    except _ExprError:
+        return False
+
+
 def _columns(sql: str | None) -> set[str]:
     """Lower-case names of the columns an expression reads (empty if it does not parse)."""
     if sql is None:
@@ -250,6 +259,18 @@ class _Checker:
             where = ", ".join(sorted(o.path for o in others if o is not self.file))
             self.add("V03", f"{d.kind} name {d.name} is also used by {where}", "name")
         if isinstance(d, Entity):
+            # `__` separates entity and dimension in result column names (section 7.2)
+            if "__" in d.name:
+                self.add("V03", f"entity name {d.name} contains a double underscore", "name")
+            for index, dimension in enumerate(d.dimensions):
+                if "__" in dimension.name:
+                    self.add(
+                        "V03",
+                        f"dimension name {dimension.name} contains a double underscore",
+                        "dimensions",
+                        index,
+                        "name",
+                    )
             parts: dict[str, Sequence[object]] = {
                 "dimensions": d.dimensions,
                 "measures": d.measures or [],
@@ -381,17 +402,9 @@ class _Checker:
                 index,
                 "time_dimension",
             )
-        if m.agg not in NOT_AGGREGATE_AGGS:
-            read = sorted((_columns(m.expr) | _columns(m.filter)) & personal_columns)
-            if read:
-                self.add(
-                    "V12",
-                    f"{what}: {m.agg} reads personal column {', '.join(read)}; "
-                    "only count or count_distinct may",
-                    "measures",
-                    index,
-                    "agg",
-                )
+        problem = self.v12_problem(m, personal_columns)
+        if problem is not None:
+            self.add("V12", f"{what}: {problem}", "measures", index, "agg")
         if m.rule is not None and m.rule not in rules:
             self.add(
                 "V18",
@@ -400,6 +413,27 @@ class _Checker:
                 index,
                 "rule",
             )
+
+    def v12_problem(self, m: Measure, personal_columns: set[str]) -> str | None:
+        """Why a measure may not read personal columns, or None. A measure may count rows or
+        distinct values of the personal column itself, and nothing else: no other aggregate, no
+        expression around the column (it could test one person's value), no filter on it."""
+        in_filter = sorted(_columns(m.filter) & personal_columns)
+        if in_filter:
+            return f"its filter reads personal column {', '.join(in_filter)}"
+        read = sorted(_columns(m.expr) & personal_columns)
+        if not read:
+            return None
+        if m.agg not in NOT_AGGREGATE_AGGS:
+            return (
+                f"{m.agg} reads personal column {', '.join(read)}; only count or count_distinct may"
+            )
+        if not _is_bare_column(m.expr):
+            return (
+                f"{m.agg} reads personal column {', '.join(read)} inside an expression; "
+                "it may count the column itself, not an expression over it"
+            )
+        return None
 
     # Metric: V05, V08, V09, V10, V13, V15, V18 -----------------------------------------
 

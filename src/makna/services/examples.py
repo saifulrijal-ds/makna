@@ -20,6 +20,7 @@ from __future__ import annotations
 from sqlglot.errors import SqlglotError
 
 from makna.compiler.compile import compile_plan
+from makna.compiler.governance import GovernanceError
 from makna.compiler.plan import plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import reparse
@@ -74,6 +75,15 @@ def check_example_requests(definitions: DefinitionSet) -> list[Issue]:
                 if error.code == ErrorCode.BROKEN_REFERENCE:
                     break
                 issues.append(_issue(file, index, example.question, "compile to SQL", error))
+            except GovernanceError as error:
+                issues.append(
+                    file.issue(
+                        "V19",
+                        f"example request {index + 1} ({example.question!r}) compiles to SQL "
+                        f"that breaks a personal-data rule: {error}",
+                        ("example_requests", index, "request"),
+                    )
+                )
             except SqlglotError as error:
                 first = str(error).splitlines()[0]
                 issues.append(

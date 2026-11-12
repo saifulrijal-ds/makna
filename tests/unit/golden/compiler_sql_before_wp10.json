@@ -1,0 +1,100 @@
+{
+ "simple, no dimensions": {
+  "metric": "disbursement_amount",
+  "fields": {},
+  "sql": "SELECT\n  SUM(\"t0\".\"principal_amount\") AS \"disbursement_amount\"\nFROM \"lending\".\"core\".\"contracts\" AS \"t0\"\nWHERE\n  (\n    NOT \"t0\".\"disbursement_date\" IS NULL\n  )\nLIMIT 1000"
+ },
+ "simple, region, month, range": {
+  "metric": "disbursement_amount",
+  "fields": {
+   "dimensions": [
+    "branch.region_name"
+   ],
+   "grain": "month",
+   "time_start": "2026-01-01",
+   "time_end": "2026-07-01"
+  },
+  "sql": "SELECT\n  CAST(DATE_TRUNC('MONTH', \"t0\".\"disbursement_date\") AS DATE) AS \"metric_time\",\n  \"t1\".\"region_name\" AS \"branch__region_name\",\n  SUM(\"t0\".\"principal_amount\") AS \"disbursement_amount\"\nFROM \"lending\".\"core\".\"contracts\" AS \"t0\"\nLEFT JOIN \"lending\".\"core\".\"branches\" AS \"t1\"\n  ON \"t0\".\"booking_branch_id\" = \"t1\".\"branch_id\"\nWHERE\n  (\n    NOT \"t0\".\"disbursement_date\" IS NULL\n  )\n  AND \"t0\".\"disbursement_date\" >= CAST('2026-01-01' AS DATE)\n  AND \"t0\".\"disbursement_date\" < CAST('2026-07-01' AS DATE)\nGROUP BY\n  CAST(DATE_TRUNC('MONTH', \"t0\".\"disbursement_date\") AS DATE),\n  \"t1\".\"region_name\"\nORDER BY\n  \"metric_time\",\n  \"branch__region_name\"\nLIMIT 1000"
+ },
+ "balance by region": {
+  "metric": "outstanding_principal",
+  "fields": {
+   "dimensions": [
+    "branch.region_name"
+   ],
+   "grain": "quarter",
+   "time_start": "2025-10-01",
+   "time_end": "2026-07-01"
+  },
+  "sql": "SELECT\n  CAST(DATE_TRUNC('QUARTER', \"t0\".\"snapshot_date\") AS DATE) AS \"metric_time\",\n  \"t2\".\"region_name\" AS \"branch__region_name\",\n  SUM(\"t0\".\"outstanding_principal\") AS \"outstanding_principal\"\nFROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"t0\"\nLEFT JOIN \"lending\".\"core\".\"contracts\" AS \"t1\"\n  ON \"t0\".\"contract_id\" = \"t1\".\"contract_id\"\nLEFT JOIN \"lending\".\"core\".\"branches\" AS \"t2\"\n  ON \"t1\".\"servicing_branch_id\" = \"t2\".\"branch_id\"\nWHERE\n  \"t0\".\"snapshot_date\" >= CAST('2025-10-01' AS DATE)\n  AND \"t0\".\"snapshot_date\" < CAST('2026-07-01' AS DATE)\n  AND \"t0\".\"snapshot_date\" IN (\n    SELECT\n      MAX(\"s0\".\"snapshot_date\")\n    FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"s0\"\n    WHERE\n      \"s0\".\"snapshot_date\" >= CAST('2025-10-01' AS DATE)\n      AND \"s0\".\"snapshot_date\" < CAST('2026-07-01' AS DATE)\n    GROUP BY\n      CAST(DATE_TRUNC('QUARTER', \"s0\".\"snapshot_date\") AS DATE)\n  )\nGROUP BY\n  CAST(DATE_TRUNC('QUARTER', \"t0\".\"snapshot_date\") AS DATE),\n  \"t2\".\"region_name\"\nORDER BY\n  \"metric_time\",\n  \"branch__region_name\"\nLIMIT 1000"
+ },
+ "balance by customer segment": {
+  "metric": "outstanding_principal",
+  "fields": {
+   "dimensions": [
+    "customer.customer_segment"
+   ]
+  },
+  "sql": "SELECT\n  \"t2\".\"customer_segment\" AS \"customer__customer_segment\",\n  SUM(\"t0\".\"outstanding_principal\") AS \"outstanding_principal\"\nFROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"t0\"\nLEFT JOIN \"lending\".\"core\".\"contracts\" AS \"t1\"\n  ON \"t0\".\"contract_id\" = \"t1\".\"contract_id\"\nLEFT JOIN \"lending\".\"core\".\"customers\" AS \"t2\"\n  ON \"t1\".\"customer_id\" = \"t2\".\"customer_id\"\nWHERE\n  \"t0\".\"snapshot_date\" IN (\n    SELECT\n      MAX(\"s0\".\"snapshot_date\")\n    FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"s0\"\n  )\nGROUP BY\n  \"t2\".\"customer_segment\"\nORDER BY\n  \"customer__customer_segment\"\nLIMIT 1000"
+ },
+ "ratio by region": {
+  "metric": "npf_ratio",
+  "fields": {
+   "dimensions": [
+    "branch.region_name"
+   ],
+   "grain": "quarter",
+   "time_start": "2025-10-01",
+   "time_end": "2026-07-01"
+  },
+  "sql": "WITH \"m_npf_outstanding_principal\" AS (\n  SELECT\n    CAST(DATE_TRUNC('QUARTER', \"t0\".\"snapshot_date\") AS DATE) AS \"metric_time\",\n    \"t2\".\"region_name\" AS \"branch__region_name\",\n    SUM(\"t0\".\"outstanding_principal\") AS \"npf_outstanding_principal\"\n  FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"t0\"\n  LEFT JOIN \"lending\".\"core\".\"contracts\" AS \"t1\"\n    ON \"t0\".\"contract_id\" = \"t1\".\"contract_id\"\n  LEFT JOIN \"lending\".\"core\".\"branches\" AS \"t2\"\n    ON \"t1\".\"servicing_branch_id\" = \"t2\".\"branch_id\"\n  WHERE\n    (\n      \"t0\".\"days_past_due\" > 90\n    )\n    AND \"t0\".\"snapshot_date\" >= CAST('2025-10-01' AS DATE)\n    AND \"t0\".\"snapshot_date\" < CAST('2026-07-01' AS DATE)\n    AND \"t0\".\"snapshot_date\" IN (\n      SELECT\n        MAX(\"s0\".\"snapshot_date\")\n      FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"s0\"\n      WHERE\n        \"s0\".\"snapshot_date\" >= CAST('2025-10-01' AS DATE)\n        AND \"s0\".\"snapshot_date\" < CAST('2026-07-01' AS DATE)\n      GROUP BY\n        CAST(DATE_TRUNC('QUARTER', \"s0\".\"snapshot_date\") AS DATE)\n    )\n  GROUP BY\n    CAST(DATE_TRUNC('QUARTER', \"t0\".\"snapshot_date\") AS DATE),\n    \"t2\".\"region_name\"\n), \"m_outstanding_principal\" AS (\n  SELECT\n    CAST(DATE_TRUNC('QUARTER', \"t0\".\"snapshot_date\") AS DATE) AS \"metric_time\",\n    \"t2\".\"region_name\" AS \"branch__region_name\",\n    SUM(\"t0\".\"outstanding_principal\") AS \"outstanding_principal\"\n  FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"t0\"\n  LEFT JOIN \"lending\".\"core\".\"contracts\" AS \"t1\"\n    ON \"t0\".\"contract_id\" = \"t1\".\"contract_id\"\n  LEFT JOIN \"lending\".\"core\".\"branches\" AS \"t2\"\n    ON \"t1\".\"servicing_branch_id\" = \"t2\".\"branch_id\"\n  WHERE\n    \"t0\".\"snapshot_date\" >= CAST('2025-10-01' AS DATE)\n    AND \"t0\".\"snapshot_date\" < CAST('2026-07-01' AS DATE)\n    AND \"t0\".\"snapshot_date\" IN (\n      SELECT\n        MAX(\"s0\".\"snapshot_date\")\n      FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"s0\"\n      WHERE\n        \"s0\".\"snapshot_date\" >= CAST('2025-10-01' AS DATE)\n        AND \"s0\".\"snapshot_date\" < CAST('2026-07-01' AS DATE)\n      GROUP BY\n        CAST(DATE_TRUNC('QUARTER', \"s0\".\"snapshot_date\") AS DATE)\n    )\n  GROUP BY\n    CAST(DATE_TRUNC('QUARTER', \"t0\".\"snapshot_date\") AS DATE),\n    \"t2\".\"region_name\"\n), \"unioned\" AS (\n  SELECT\n    \"metric_time\",\n    \"branch__region_name\",\n    \"npf_outstanding_principal\",\n    NULL AS \"outstanding_principal\"\n  FROM \"m_npf_outstanding_principal\"\n  UNION ALL\n  SELECT\n    \"metric_time\",\n    \"branch__region_name\",\n    NULL AS \"npf_outstanding_principal\",\n    \"outstanding_principal\"\n  FROM \"m_outstanding_principal\"\n), \"combined\" AS (\n  SELECT\n    \"metric_time\",\n    \"branch__region_name\",\n    COALESCE(MAX(\"npf_outstanding_principal\"), 0) AS \"npf_outstanding_principal\",\n    COALESCE(MAX(\"outstanding_principal\"), 0) AS \"outstanding_principal\"\n  FROM \"unioned\"\n  GROUP BY\n    \"metric_time\",\n    \"branch__region_name\"\n)\nSELECT\n  \"metric_time\",\n  \"branch__region_name\",\n  \"npf_outstanding_principal\",\n  \"outstanding_principal\",\n  CAST(\"npf_outstanding_principal\" AS DOUBLE PRECISION) / NULLIF(\"outstanding_principal\", 0) AS \"npf_ratio\"\nFROM \"combined\"\nORDER BY\n  \"metric_time\",\n  \"branch__region_name\"\nLIMIT 1000"
+ },
+ "ratio with filter": {
+  "metric": "collection_rate",
+  "fields": {
+   "dimensions": [
+    "product.financing_scheme"
+   ],
+   "filters": [
+    {
+     "dimension": "product.product_category",
+     "op": "in",
+     "value": [
+      "car_backed"
+     ]
+    }
+   ],
+   "grain": "month"
+  },
+  "sql": "WITH \"m_collected_amount\" AS (\n  SELECT\n    CAST(DATE_TRUNC('MONTH', \"t0\".\"posting_date\") AS DATE) AS \"metric_time\",\n    \"t2\".\"financing_scheme\" AS \"product__financing_scheme\",\n    SUM(\"t0\".\"principal_paid\" + \"t0\".\"interest_paid\") AS \"collected_amount\"\n  FROM \"lending\".\"core\".\"payments\" AS \"t0\"\n  LEFT JOIN \"lending\".\"core\".\"contracts\" AS \"t1\"\n    ON \"t0\".\"contract_id\" = \"t1\".\"contract_id\"\n  LEFT JOIN \"lending\".\"core\".\"products\" AS \"t2\"\n    ON \"t1\".\"product_id\" = \"t2\".\"product_id\"\n  WHERE\n    (\n      NOT \"t0\".\"is_reversed\"\n    ) AND \"t2\".\"product_category\" IN ('car_backed')\n  GROUP BY\n    CAST(DATE_TRUNC('MONTH', \"t0\".\"posting_date\") AS DATE),\n    \"t2\".\"financing_scheme\"\n), \"m_due_amount\" AS (\n  SELECT\n    CAST(DATE_TRUNC('MONTH', \"t0\".\"due_date\") AS DATE) AS \"metric_time\",\n    \"t2\".\"financing_scheme\" AS \"product__financing_scheme\",\n    SUM(\"t0\".\"installment_amount\") AS \"due_amount\"\n  FROM \"lending\".\"core\".\"installment_schedules\" AS \"t0\"\n  LEFT JOIN \"lending\".\"core\".\"contracts\" AS \"t1\"\n    ON \"t0\".\"contract_id\" = \"t1\".\"contract_id\"\n  LEFT JOIN \"lending\".\"core\".\"products\" AS \"t2\"\n    ON \"t1\".\"product_id\" = \"t2\".\"product_id\"\n  WHERE\n    (\n      \"t0\".\"is_current\"\n    ) AND \"t2\".\"product_category\" IN ('car_backed')\n  GROUP BY\n    CAST(DATE_TRUNC('MONTH', \"t0\".\"due_date\") AS DATE),\n    \"t2\".\"financing_scheme\"\n), \"unioned\" AS (\n  SELECT\n    \"metric_time\",\n    \"product__financing_scheme\",\n    \"collected_amount\",\n    NULL AS \"due_amount\"\n  FROM \"m_collected_amount\"\n  UNION ALL\n  SELECT\n    \"metric_time\",\n    \"product__financing_scheme\",\n    NULL AS \"collected_amount\",\n    \"due_amount\"\n  FROM \"m_due_amount\"\n), \"combined\" AS (\n  SELECT\n    \"metric_time\",\n    \"product__financing_scheme\",\n    COALESCE(MAX(\"collected_amount\"), 0) AS \"collected_amount\",\n    COALESCE(MAX(\"due_amount\"), 0) AS \"due_amount\"\n  FROM \"unioned\"\n  GROUP BY\n    \"metric_time\",\n    \"product__financing_scheme\"\n)\nSELECT\n  \"metric_time\",\n  \"product__financing_scheme\",\n  \"collected_amount\",\n  \"due_amount\",\n  CAST(\"collected_amount\" AS DOUBLE PRECISION) / NULLIF(\"due_amount\", 0) AS \"collection_rate\"\nFROM \"combined\"\nORDER BY\n  \"metric_time\",\n  \"product__financing_scheme\"\nLIMIT 1000"
+ },
+ "ratio with no dimensions": {
+  "metric": "par30_ratio",
+  "fields": {},
+  "sql": "WITH \"m_par30_outstanding_principal\" AS (\n  SELECT\n    SUM(\"t0\".\"outstanding_principal\") AS \"par30_outstanding_principal\"\n  FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"t0\"\n  WHERE\n    (\n      \"t0\".\"days_past_due\" > 30\n    )\n    AND \"t0\".\"snapshot_date\" IN (\n      SELECT\n        MAX(\"s0\".\"snapshot_date\")\n      FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"s0\"\n    )\n), \"m_outstanding_principal\" AS (\n  SELECT\n    SUM(\"t0\".\"outstanding_principal\") AS \"outstanding_principal\"\n  FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"t0\"\n  WHERE\n    \"t0\".\"snapshot_date\" IN (\n      SELECT\n        MAX(\"s0\".\"snapshot_date\")\n      FROM \"lending\".\"core\".\"contract_monthly_snapshots\" AS \"s0\"\n    )\n), \"unioned\" AS (\n  SELECT\n    \"par30_outstanding_principal\",\n    NULL AS \"outstanding_principal\"\n  FROM \"m_par30_outstanding_principal\"\n  UNION ALL\n  SELECT\n    NULL AS \"par30_outstanding_principal\",\n    \"outstanding_principal\"\n  FROM \"m_outstanding_principal\"\n), \"combined\" AS (\n  SELECT\n    COALESCE(MAX(\"par30_outstanding_principal\"), 0) AS \"par30_outstanding_principal\",\n    COALESCE(MAX(\"outstanding_principal\"), 0) AS \"outstanding_principal\"\n  FROM \"unioned\"\n)\nSELECT\n  \"par30_outstanding_principal\",\n  \"outstanding_principal\",\n  CAST(\"par30_outstanding_principal\" AS DOUBLE PRECISION) / NULLIF(\"outstanding_principal\", 0) AS \"par30_ratio\"\nFROM \"combined\"\nLIMIT 1000"
+ },
+ "customer count by province and gender": {
+  "metric": "new_customer_count",
+  "fields": {
+   "dimensions": [
+    "customer.province",
+    "customer.gender"
+   ]
+  },
+  "sql": "SELECT\n  \"t0\".\"province\" AS \"customer__province\",\n  \"t0\".\"gender\" AS \"customer__gender\",\n  COUNT(*) AS \"new_customer_count\"\nFROM \"lending\".\"core\".\"customers\" AS \"t0\"\nGROUP BY\n  \"t0\".\"province\",\n  \"t0\".\"gender\"\nORDER BY\n  \"customer__province\",\n  \"customer__gender\"\nLIMIT 1000"
+ },
+ "count on customer filtered": {
+  "metric": "new_customer_count",
+  "fields": {
+   "filters": [
+    {
+     "dimension": "customer.city",
+     "op": "!=",
+     "value": "x"
+    }
+   ],
+   "limit": 5
+  },
+  "sql": "SELECT\n  COUNT(*) AS \"new_customer_count\"\nFROM \"lending\".\"core\".\"customers\" AS \"t0\"\nWHERE\n  \"t0\".\"city\" <> 'x'\nLIMIT 5"
+ }
+}

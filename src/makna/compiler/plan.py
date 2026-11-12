@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from makna.compiler import governance
 from makna.compiler.graph import JoinPath, JoinStep, path_names, resolve_path
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Dimension, Entity, Grain, Measure, Metric, RuleRef, Scalar
@@ -37,6 +38,8 @@ from makna.model.request import (
     ResultColumn,
 )
 
+DEFAULT_MIN_GROUP_SIZE = 10
+MIN_GROUP_SIZE_FLOOR = 2
 GRAINS: tuple[str, ...] = get_args(Grain)
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
@@ -126,6 +129,23 @@ class PlannedDimension:
     def column(self) -> str:
         return f"{self.entity}__{self.name}"
 
+    @property
+    def masked(self) -> bool:
+        """True for a personal dimension: planning refuses one without a masking rule, so a
+        planned personal dimension always has a mask that SQL generation applies."""
+        return self.sensitivity == "personal"
+
+
+@dataclass(frozen=True)
+class GuardedEntity:
+    """An entity that holds a selected personal dimension. Every input counts its distinct
+    records, in the column `column`, so that small groups can be left out (section 7.6)."""
+
+    entity: str
+    label: str
+    primary_key: tuple[str, ...]
+    column: str
+
 
 @dataclass(frozen=True)
 class PlannedFilter:
@@ -192,6 +212,11 @@ class QueryPlan:
     time_end: datetime.date | None
     limit: int
     columns: tuple[ResultColumn, ...]
+    min_group_size: int = DEFAULT_MIN_GROUP_SIZE
+    guard: tuple[GuardedEntity, ...] = ()
+    """Empty unless a personal dimension is selected."""
+    personal_columns: frozenset[tuple[str, str]] = frozenset()
+    """`(table, column)` read by any personal dimension of the model, for `governance.verify`."""
 
 
 # --------------------------------------------------------------------------------------
@@ -310,7 +335,7 @@ def available_dimensions(model: Model, metric: Metric) -> AvailableDimensions:
         if len({p.steps[-1] if p.steps else None for p in paths}) > 1:
             excluded.append(_inconsistent(entity.name, paths))
             continue
-        options.extend(_options(entity, tuple(paths)))
+        options.extend(_options(model, entity, tuple(paths)))
     return AvailableDimensions(tuple(options), tuple(excluded))
 
 
@@ -361,10 +386,10 @@ def _inconsistent(entity: str, paths: list[InputPath]) -> ExcludedEntity:
     )
 
 
-def _options(entity: Entity, paths: tuple[InputPath, ...]) -> list[DimensionOption]:
+def _options(model: Model, entity: Entity, paths: tuple[InputPath, ...]) -> list[DimensionOption]:
     found: list[DimensionOption] = []
     for dimension in entity.dimensions:
-        sensitivity = _sensitivity(entity, dimension)
+        sensitivity = model.effective_sensitivity(entity, dimension)
         unmasked = sensitivity == "personal" and dimension.masking is None
         found.append(
             DimensionOption(
@@ -385,20 +410,31 @@ def _options(entity: Entity, paths: tuple[InputPath, ...]) -> list[DimensionOpti
     return found
 
 
-def _sensitivity(entity: Entity, dimension: Dimension) -> str:
-    return dimension.sensitivity or entity.sensitivity
-
-
 # --------------------------------------------------------------------------------------
 # Planning
 
 
-def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = True) -> QueryPlan:
+def plan_request(
+    model: Model,
+    request: QueryRequest,
+    *,
+    enforce_status: bool = True,
+    min_group_size: int = DEFAULT_MIN_GROUP_SIZE,
+) -> QueryPlan:
     """Plan `request` against `model`, or raise one `QueryError`.
 
     `enforce_status=False` skips the check that the metric and its inputs are approved. It is for
     the example-request check (V19), which runs before a metric is approved.
+
+    `min_group_size` is the `[governance]` setting of `config/makna.toml`. The compiler does not
+    read configuration; the caller passes it. It must be at least 2
+    (`ValueError` otherwise): 1 keeps every group.
     """
+    if min_group_size < MIN_GROUP_SIZE_FLOOR:
+        raise ValueError(
+            f"min_group_size must be at least {MIN_GROUP_SIZE_FLOOR}, not {min_group_size}: "
+            "a group of one is a single record, so a smaller minimum would switch the rule off"
+        )
     metric = model.metrics.get(request.metric)
     if metric is None:
         raise _unknown_metric(model, request.metric)
@@ -412,6 +448,7 @@ def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = 
     _check_limit(request.limit)
     start, end = _time_range(request.time_start, request.time_end)
     _check_grain(model, metric, request.grain)
+    _check_official_dates(model, request, [measures[leaf.name] for leaf in leaves])
 
     available = available_dimensions(model, metric)
     dimensions = tuple(
@@ -419,6 +456,7 @@ def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = 
     )
     filters = tuple(_planned_filter(model, available, f) for f in request.filters)
 
+    guard = _guard(model, dimensions)
     inputs = tuple(
         _plan_input(model, leaf, *measures[leaf.name], dimensions, filters) for leaf in leaves
     )
@@ -441,7 +479,10 @@ def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = 
         time_start=start,
         time_end=end,
         limit=request.limit,
-        columns=_columns(metric, closure, request.grain, dimensions),
+        columns=_columns(metric, closure, request.grain, dimensions, guard),
+        min_group_size=min_group_size,
+        guard=guard,
+        personal_columns=governance.personal_columns(model),
     )
 
 
@@ -537,6 +578,34 @@ def _time_range(
     return start, end
 
 
+def _check_official_dates(
+    model: Model, request: QueryRequest, measures: list[tuple[Entity, Measure]]
+) -> None:
+    """PERSONAL_DATA_REFUSED when an input's official date is personal and the request would use
+    it: a grain, a time range, or a balance (which always reads its snapshot date). A personal
+    date cannot be returned or filtered on, and a catalog that starts tagging a date personal
+    closes this door at once (fail closed; section 7.6)."""
+    used = request.grain is not None or request.time_start or request.time_end
+    for entity, measure in measures:
+        date = next((d for d in entity.dimensions if d.name == measure.time_dimension), None)
+        if date is None or model.effective_sensitivity(entity, date) != "personal":
+            continue
+        if used or measure.semi_additive == "last":
+            ref = f"{entity.name}.{date.name}"
+            raise QueryError(
+                ErrorCode.PERSONAL_DATA_REFUSED,
+                f"The official date of {measure.name} ({ref}) is personal data, so this metric "
+                "cannot be grouped by time or limited to a time range. Ask without grain, "
+                "time_start, and time_end, or choose another metric.",
+                {
+                    "dimension": ref,
+                    "use": "time",
+                    "masked_form_available": date.masking is not None,
+                    "available_dimensions": [],
+                },
+            )
+
+
 def _check_grain(model: Model, metric: Metric, grain: str | None) -> None:
     if grain is None:
         return
@@ -553,8 +622,8 @@ def _check_grain(model: Model, metric: Metric, grain: str | None) -> None:
 # ---- dimensions and filters -----------------------------------------------------------
 
 
-def _locate(model: Model, available: AvailableDimensions, ref: str) -> tuple[Entity, Dimension]:
-    """The dimension `ref`, if it exists and the metric can use it."""
+def _find(model: Model, available: AvailableDimensions, ref: str) -> tuple[Entity, Dimension]:
+    """The dimension `ref`, or UNKNOWN_DIMENSION."""
     found = model.dimension(ref)
     if found is None:
         raise QueryError(
@@ -563,7 +632,11 @@ def _locate(model: Model, available: AvailableDimensions, ref: str) -> tuple[Ent
             "entity.dimension.",
             {"dimension": ref, "available_dimensions": list(available.refs())},
         )
-    entity = found[0]
+    return found
+
+
+def _check_reachable(available: AvailableDimensions, ref: str, entity: Entity) -> None:
+    """DIMENSION_NOT_AVAILABLE if the metric cannot reach the dimension's entity."""
     problem = next((e for e in available.excluded if e.entity == entity.name), None)
     if problem is not None:
         raise QueryError(
@@ -577,24 +650,63 @@ def _locate(model: Model, available: AvailableDimensions, ref: str) -> tuple[Ent
                 "candidate_paths": [list(c) for c in problem.candidate_paths],
             },
         )
-    return found
+
+
+def _refuse_personal(
+    available: AvailableDimensions,
+    ref: str,
+    dimension: Dimension,
+    sensitivity: str,
+    use: Literal["group", "filter"],
+) -> None:
+    """PERSONAL_DATA_REFUSED (section 7.6) for a personal dimension that is filtered on, or
+    grouped by without a masking rule. A masked personal dimension may be grouped by."""
+    if sensitivity != "personal" or (use == "group" and dimension.masking is not None):
+        return
+    masked = dimension.masking is not None
+    instead = [o.ref for o in available.options if o.available and o.sensitivity != "personal"]
+    if use == "filter":
+        message = (
+            f"{ref} is personal data and cannot be used in a filter, masked or not, because "
+            "a filter on it would single out people. Remove the filter or filter on a "
+            "dimension that is not personal."
+        )
+    else:
+        message = (
+            f"{ref} is personal data and has no masked form, so it cannot be returned. "
+            "Choose a dimension that is not personal."
+        )
+    raise QueryError(
+        ErrorCode.PERSONAL_DATA_REFUSED,
+        message,
+        {
+            "dimension": ref,
+            "use": use,
+            "masked_form_available": masked,
+            "available_dimensions": instead,
+        },
+    )
 
 
 def _planned_dimension(model: Model, available: AvailableDimensions, ref: str) -> PlannedDimension:
-    entity, dimension = _locate(model, available, ref)
-    return PlannedDimension(
-        ref, entity.name, dimension.name, dimension, _sensitivity(entity, dimension)
-    )
+    """Checks in this order: the dimension exists, it is not refused as personal data, the
+    metric can reach it (section 7.7)."""
+    entity, dimension = _find(model, available, ref)
+    sensitivity = model.effective_sensitivity(entity, dimension)
+    _refuse_personal(available, ref, dimension, sensitivity, "group")
+    _check_reachable(available, ref, entity)
+    return PlannedDimension(ref, entity.name, dimension.name, dimension, sensitivity)
 
 
 def _planned_filter(
     model: Model, available: AvailableDimensions, flt: RequestFilter
 ) -> PlannedFilter:
-    entity, dimension = _locate(model, available, flt.dimension)
+    entity, dimension = _find(model, available, flt.dimension)
+    sensitivity = model.effective_sensitivity(entity, dimension)
+    _refuse_personal(available, flt.dimension, dimension, sensitivity, "filter")
+    _check_reachable(available, flt.dimension, entity)
     value = _checked_value(flt, dimension)
-    return PlannedFilter(
-        flt.dimension, entity.name, flt.op, value, dimension, _sensitivity(entity, dimension)
-    )
+    return PlannedFilter(flt.dimension, entity.name, flt.op, value, dimension, sensitivity)
 
 
 def _invalid_filter(flt: RequestFilter, dimension: Dimension, problem: str) -> QueryError:
@@ -662,6 +774,22 @@ def _type_fits(dimension_type: str, value: object) -> bool:
             return False
         return True
     return isinstance(value, (str, int, float))
+
+
+def _guard(model: Model, dimensions: Sequence[PlannedDimension]) -> tuple[GuardedEntity, ...]:
+    """The entities whose records are counted: one for each entity holding a selected personal
+    dimension, in the order the dimensions were asked for."""
+    found: dict[str, GuardedEntity] = {}
+    for dimension in dimensions:
+        if dimension.masked and dimension.entity not in found:
+            entity = model.entities[dimension.entity]
+            found[entity.name] = GuardedEntity(
+                entity.name,
+                entity.label,
+                tuple(entity.primary_key),
+                governance.RECORDS_PREFIX + entity.name,
+            )
+    return tuple(found.values())
 
 
 # ---- one simple input -----------------------------------------------------------------
@@ -734,7 +862,12 @@ def _definition_filter(model: Model, leaf: Metric, item: DefinitionFilter) -> Pl
     entity, dimension = found
     value = tuple(item.value) if isinstance(item.value, list) else item.value
     return PlannedFilter(
-        item.dimension, entity.name, item.op, value, dimension, _sensitivity(entity, dimension)
+        item.dimension,
+        entity.name,
+        item.op,
+        value,
+        dimension,
+        model.effective_sensitivity(entity, dimension),
     )
 
 
@@ -746,6 +879,7 @@ def _columns(
     closure: list[Metric],
     grain: str | None,
     dimensions: Sequence[PlannedDimension],
+    guard: Sequence[GuardedEntity],
 ) -> tuple[ResultColumn, ...]:
     by_name = {m.name: m for m in closure}
     columns: list[ResultColumn] = []
@@ -757,4 +891,13 @@ def _columns(
         for name in _direct_inputs(metric)
     )
     columns.append(ResultColumn(name=metric.name, role="metric", unit=_unit(metric)))
+    if guard:
+        columns.append(ResultColumn(name=governance.GROUPS_LEFT_OUT, role="governance"))
+    names = [c.name for c in columns]
+    repeated = sorted({n for n in names if names.count(n) > 1})
+    if repeated:
+        raise governance.GovernanceError(
+            f"internal error: result columns would share the name {', '.join(repeated)}; "
+            "entity, dimension, and metric names must not combine to the same column name"
+        )
     return tuple(columns)

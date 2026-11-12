@@ -6,7 +6,8 @@ These functions are pure: the same model and request give an equal response. The
 from __future__ import annotations
 
 from makna.compiler.explain import explain
-from makna.compiler.plan import QueryPlan, plan_request
+from makna.compiler.governance import verify
+from makna.compiler.plan import DEFAULT_MIN_GROUP_SIZE, QueryPlan, plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import Dialect, build_tree, to_sql
 from makna.model.request import CompileResponse, MetricRef, QueryRequest
@@ -20,8 +21,10 @@ def _metric_id(name: str) -> str:
 def compile_plan(model: Model, plan: QueryPlan, dialect: Dialect = "postgres") -> CompileResponse:
     """The SQL for a plan, printed for `dialect`, with its columns and explanation."""
     explanation = explain(model, plan)
+    tree = build_tree(model, plan)
+    verify(tree, plan)
     return CompileResponse(
-        sql=to_sql(build_tree(model, plan), dialect),
+        sql=to_sql(tree, dialect),
         dialect=dialect,
         columns=plan.columns,
         explanation=explanation.sentences,
@@ -36,7 +39,13 @@ def compile_request(
     dialect: Dialect = "postgres",
     *,
     enforce_status: bool = True,
+    min_group_size: int = DEFAULT_MIN_GROUP_SIZE,
 ) -> CompileResponse:
-    """Plan `request` and compile the plan, or raise one `QueryError`."""
-    plan = plan_request(model, request, enforce_status=enforce_status)
+    """Plan `request` and compile the plan, or raise one `QueryError`.
+
+    `min_group_size` is the `[governance]` setting of `config/makna.toml`; the caller passes it.
+    """
+    plan = plan_request(
+        model, request, enforce_status=enforce_status, min_group_size=min_group_size
+    )
     return compile_plan(model, plan, dialect)

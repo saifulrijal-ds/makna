@@ -26,8 +26,10 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, SqlglotError
 
+from makna.compiler.governance import GROUPS_LEFT_OUT, mask_expression
 from makna.compiler.graph import JoinStep
 from makna.compiler.plan import (
+    GuardedEntity,
     InputPlan,
     MetricNode,
     PlannedFilter,
@@ -77,7 +79,7 @@ def build_tree(model: Model, plan: QueryPlan) -> exp.Select:
     keys = _key_names(plan)
     leaves = {item.metric: _input_query(model, plan, item) for item in plan.inputs}
     if root.type == "simple":
-        query = leaves[root.name]
+        query = _guarded(plan, root, keys, leaves[root.name]) if plan.guard else leaves[root.name]
     else:
         query = _combine(plan, nodes, root, keys, leaves)
     if keys:
@@ -265,9 +267,13 @@ def _input_query(model: Model, plan: QueryPlan, item: InputPlan) -> exp.Select:
         groups.append(_trunc(plan.grain, time_expr.copy()))
     for planned in plan.dimensions:
         value = _dimension_expr(joins, planned.entity, planned.dimension)
+        if planned.masked and planned.dimension.masking is not None:
+            value = mask_expression(planned.dimension.masking, value)
         selects.append(exp.alias_(value, planned.column, quoted=True))
         groups.append(value.copy())
     selects.append(exp.alias_(_aggregate(item), item.metric, quoted=True))
+    for guarded in plan.guard:
+        selects.append(exp.alias_(_records(joins, guarded), guarded.column, quoted=True))
 
     where: list[exp.Expr] = []
     if item.measure.filter is not None:
@@ -291,6 +297,15 @@ def _input_query(model: Model, plan: QueryPlan, item: InputPlan) -> exp.Select:
     if groups:
         query = query.group_by(*groups)
     return query
+
+
+def _records(joins: _Joins, guarded: GuardedEntity) -> exp.Expr:
+    """The distinct records of the entity holding a personal dimension that this input's rows
+    come from, reached on the same join path as the dimension."""
+    alias = joins.alias(guarded.entity)
+    keys: list[exp.Expr] = [exp.column(c, table=alias, quoted=True) for c in guarded.primary_key]
+    key = keys[0] if len(keys) == 1 else exp.Tuple(expressions=keys)
+    return exp.Count(this=exp.Distinct(expressions=[key]))
 
 
 def _aggregate(item: InputPlan) -> exp.Expr:
@@ -364,6 +379,7 @@ def _combine(
         part = exp.select(
             *[_name(k) for k in keys],
             *[_name(n) if n == name else exp.alias_(exp.Null(), n, quoted=True) for n in names],
+            *[_name(g.column) for g in plan.guard],
         ).from_(exp.table_(_cte(name), quoted=True))
         union = part if union is None else exp.union(union, part, distinct=False)
     assert union is not None
@@ -372,6 +388,8 @@ def _combine(
     combined = exp.select(
         *[_name(k) for k in keys],
         *[exp.alias_(_merge(n, aggregates[n]), n, quoted=True) for n in names],
+        # The smallest count among the inputs that have rows for the group (NULLs are skipped).
+        *[exp.alias_(exp.Min(this=_name(g.column)), g.column, quoted=True) for g in plan.guard],
     ).from_(exp.table_("unioned", quoted=True))
     if keys:
         combined = combined.group_by(*[_name(k) for k in keys])
@@ -380,9 +398,45 @@ def _combine(
         *key_columns,
         *[_shown(nodes, name) for name in [*root.inputs, root.name]],
     ).from_(exp.table_("combined", quoted=True))
+    if plan.guard:
+        final = _leave_out_small(plan, final, "combined")
     for name in names:
         final = final.with_(_cte_identifier(name), as_=leaves[name])
     return final.with_(_ident("unioned"), as_=union).with_(_ident("combined"), as_=combined)
+
+
+def _guarded(
+    plan: QueryPlan, root: MetricNode, keys: Sequence[str], leaf: exp.Select
+) -> exp.Select:
+    """A simple metric over personal dimensions: the input query in a CTE, small groups left out."""
+    final = exp.select(*[_name(k) for k in keys], _name(root.name)).from_(
+        exp.table_(_cte(root.name), quoted=True)
+    )
+    return _leave_out_small(plan, final, _cte(root.name)).with_(
+        _cte_identifier(root.name), as_=leaf
+    )
+
+
+def _leave_out_small(plan: QueryPlan, query: exp.Select, source: str) -> exp.Select:
+    """Keep the groups in which every counted entity has at least `min_group_size` records, and
+    add the column that says how many groups were left out (section 7.6). The count is a scalar
+    subquery over the same rows, so it does not depend on `LIMIT`."""
+    too_small = exp.or_(*[_below(plan, g) for g in plan.guard])
+    left_out = (
+        exp.select(exp.Count(this=exp.Star()))
+        .from_(exp.table_(source, quoted=True))
+        .where(too_small)
+    )
+    enough = exp.and_(*[_at_least(plan, g) for g in plan.guard])
+    return query.select(exp.alias_(left_out.subquery(), GROUPS_LEFT_OUT, quoted=True)).where(enough)
+
+
+def _below(plan: QueryPlan, guarded: GuardedEntity) -> exp.Expr:
+    return exp.LT(this=_name(guarded.column), expression=exp.Literal.number(plan.min_group_size))
+
+
+def _at_least(plan: QueryPlan, guarded: GuardedEntity) -> exp.Expr:
+    return exp.GTE(this=_name(guarded.column), expression=exp.Literal.number(plan.min_group_size))
 
 
 def _shown(nodes: dict[str, MetricNode], name: str) -> exp.Expr:
