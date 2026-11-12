@@ -100,7 +100,7 @@ class ResultColumn(_Frozen):
     """One column of the result, in the order of section 7.2."""
 
     name: str
-    role: Literal["time", "dimension", "input", "metric"]
+    role: Literal["time", "dimension", "input", "metric", "governance"]
     unit: str | None = None
 
 

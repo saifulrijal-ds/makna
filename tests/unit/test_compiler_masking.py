@@ -168,3 +168,42 @@ def test_the_postgres_text_of_a_masked_request_carries_the_mask() -> None:
     )
     sql = to_sql(build_tree(lending(), plan), "postgres")
     assert "DATE_TRUNC('YEAR'" in sql.upper()
+
+
+# ---- the explanation names masked dimensions and their method --------------------------
+
+
+def explanation_of(model: Model, metric: str, **fields: Any) -> list[str]:
+    from makna.compiler.compile import compile_request
+
+    return list(compile_request(model, request(metric, **fields)).explanation)
+
+
+def test_the_explanation_names_a_masked_dimension_and_its_method() -> None:
+    sentences = explanation_of(lending(), "new_customer_count", dimensions=["customer.birth_year"])
+    [sentence] = [s for s in sentences if "customer.birth_year" in s and "personal" in s]
+    assert "truncate_date" in sentence
+    assert "year" in sentence
+
+
+def test_the_explanation_names_redact_and_bucket_too() -> None:
+    redacted = masked(lending(), "customer.email", dimension_of(lending(), "customer.email",
+                      masking=MaskRedact(method="redact")))  # fmt: skip
+    [sentence] = [
+        s
+        for s in explanation_of(redacted, "new_customer_count", dimensions=["customer.email"])
+        if "customer.email" in s and "personal" in s
+    ]
+    assert "redact" in sentence and "***" in sentence
+    bucketed = with_numeric_personal(lending())
+    [sentence] = [
+        s
+        for s in explanation_of(bucketed, "new_customer_count", dimensions=["customer.score"])
+        if "customer.score" in s and "personal" in s
+    ]
+    assert "bucket" in sentence and "10" in sentence
+
+
+def test_a_dimension_that_is_not_personal_is_not_described_as_masked() -> None:
+    sentences = explanation_of(lending(), "new_customer_count", dimensions=["customer.province"])
+    assert not any("personal" in s for s in sentences)

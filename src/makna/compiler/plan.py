@@ -136,6 +136,17 @@ class PlannedDimension:
 
 
 @dataclass(frozen=True)
+class GuardedEntity:
+    """An entity that holds a selected personal dimension. Every input counts its distinct
+    records, in the column `column`, so that small groups can be left out (section 7.6)."""
+
+    entity: str
+    label: str
+    primary_key: tuple[str, ...]
+    column: str
+
+
+@dataclass(frozen=True)
 class PlannedFilter:
     """A structured filter, with the value checked and lists made tuples."""
 
@@ -201,6 +212,8 @@ class QueryPlan:
     limit: int
     columns: tuple[ResultColumn, ...]
     min_group_size: int = DEFAULT_MIN_GROUP_SIZE
+    guard: tuple[GuardedEntity, ...] = ()
+    """Empty unless a personal dimension is selected."""
     personal_columns: frozenset[tuple[str, str]] = frozenset()
     """`(table, column)` read by any personal dimension of the model, for `governance.verify`."""
 
@@ -437,6 +450,7 @@ def plan_request(
     )
     filters = tuple(_planned_filter(model, available, f) for f in request.filters)
 
+    guard = _guard(model, dimensions)
     inputs = tuple(
         _plan_input(model, leaf, *measures[leaf.name], dimensions, filters) for leaf in leaves
     )
@@ -459,8 +473,9 @@ def plan_request(
         time_start=start,
         time_end=end,
         limit=request.limit,
-        columns=_columns(metric, closure, request.grain, dimensions),
+        columns=_columns(metric, closure, request.grain, dimensions, guard),
         min_group_size=min_group_size,
+        guard=guard,
         personal_columns=governance.personal_columns(model),
     )
 
@@ -727,6 +742,22 @@ def _type_fits(dimension_type: str, value: object) -> bool:
     return isinstance(value, (str, int, float))
 
 
+def _guard(model: Model, dimensions: Sequence[PlannedDimension]) -> tuple[GuardedEntity, ...]:
+    """The entities whose records are counted: one for each entity holding a selected personal
+    dimension, in the order the dimensions were asked for."""
+    found: dict[str, GuardedEntity] = {}
+    for dimension in dimensions:
+        if dimension.masked and dimension.entity not in found:
+            entity = model.entities[dimension.entity]
+            found[entity.name] = GuardedEntity(
+                entity.name,
+                entity.label,
+                tuple(entity.primary_key),
+                governance.RECORDS_PREFIX + entity.name,
+            )
+    return tuple(found.values())
+
+
 # ---- one simple input -----------------------------------------------------------------
 
 
@@ -814,6 +845,7 @@ def _columns(
     closure: list[Metric],
     grain: str | None,
     dimensions: Sequence[PlannedDimension],
+    guard: Sequence[GuardedEntity],
 ) -> tuple[ResultColumn, ...]:
     by_name = {m.name: m for m in closure}
     columns: list[ResultColumn] = []
@@ -825,4 +857,6 @@ def _columns(
         for name in _direct_inputs(metric)
     )
     columns.append(ResultColumn(name=metric.name, role="metric", unit=_unit(metric)))
+    if guard:
+        columns.append(ResultColumn(name=governance.GROUPS_LEFT_OUT, role="governance"))
     return tuple(columns)

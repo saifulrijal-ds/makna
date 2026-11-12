@@ -8,9 +8,12 @@ is fixed so that a reader (and a test) can rely on it:
 2. for each input, its time dimension and time range;
 3. for each input, the filters and rules that are part of its definition;
 4. the filters the request added;
-5. the join path behind every dimension or filter that lives on another entity.
+5. the join path behind every dimension or filter that lives on another entity;
+6. for each personal dimension, that it is masked and how.
 
-A balance metric adds a warning. Nothing here changes what the SQL does.
+A balance metric adds a warning, and so does a personal dimension: groups built from fewer than
+the minimum number of records are left out, and the result column that says how many is named.
+Nothing here changes what the SQL does.
 """
 
 from __future__ import annotations
@@ -18,8 +21,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from makna.compiler.governance import GROUPS_LEFT_OUT
 from makna.compiler.graph import JoinStep
-from makna.compiler.plan import InputPlan, PlannedFilter, PlannedRule, QueryPlan
+from makna.compiler.plan import InputPlan, PlannedDimension, PlannedFilter, PlannedRule, QueryPlan
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Scalar
 
@@ -50,7 +54,10 @@ def explain(model: Model, plan: QueryPlan) -> Explanation:
         sentences.extend(_definition_sentences(model, item))
     sentences.extend(_request_filter_sentences(plan))
     sentences.extend(_join_sentences(model, plan))
+    sentences.extend(_mask_sentence(model, d) for d in plan.dimensions if d.masked)
     warnings = [w for item in plan.inputs if (w := _balance_warning(model, plan, item))]
+    if plan.guard:
+        warnings.append(_group_size_warning(plan))
     return Explanation(tuple(sentences), tuple(warnings))
 
 
@@ -250,7 +257,37 @@ def _route(
 
 
 # --------------------------------------------------------------------------------------
+# 6. Masks
+
+
+def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
+    masking = planned.dimension.masking
+    assert masking is not None  # planning refuses a personal dimension without a mask
+    if masking.method == "redact":
+        how = "it is replaced by *** in every row"
+    elif masking.method == "truncate_date":
+        how = f"the date is cut to the first day of its {masking.grain}"
+    else:
+        how = (
+            f"it is shown as the lower bound of its band, and every band is {masking.width:g} wide"
+        )
+    return _sentence(
+        f"{_named(model, planned.ref)} is personal data, so it is masked: {how} ({masking.method})"
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Warnings
+
+
+def _group_size_warning(plan: QueryPlan) -> str:
+    records = _list([f"{g.label} records" for g in plan.guard])
+    return (
+        f"Groups built from fewer than {plan.min_group_size} {records} are left out to protect "
+        "personal data, so a single person cannot be picked out. The number of groups left out "
+        f"is in the result column {GROUPS_LEFT_OUT}, the same on every row. A result with no rows "
+        "can mean that every group was left out."
+    )
 
 
 def _balance_warning(model: Model, plan: QueryPlan, item: InputPlan) -> str | None:

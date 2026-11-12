@@ -52,3 +52,14 @@ def lending_db(data_small: Path) -> Iterator[duckdb.DuckDBPyConnection]:
     con = load_lending(data_small)
     yield con
     con.close()
+
+
+@pytest.fixture(scope="session")
+def lending_full_db(data_full: Path) -> Iterator[duckdb.DuckDBPyConnection]:
+    """The scale 1.0 sample data in DuckDB as `lending.core.<table>`: enough customers for the
+    minimum-group-size tests to keep some groups and drop others."""
+    from .duckdb_support import load_lending
+
+    con = load_lending(data_full)
+    yield con
+    con.close()
