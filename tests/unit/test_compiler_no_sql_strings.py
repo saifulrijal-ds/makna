@@ -82,12 +82,13 @@ def violations(source: str, name: str = "<source>") -> list[str]:
 # few helpers below. Each returns an identifier that is passed to sqlglot (`exp.to_identifier`,
 # `exp.table_`) or a plain message for a QueryError, never a piece of SQL.
 
-STRICT_MODULES = ("sqlgen.py", "compile.py")
+STRICT_MODULES = ("sqlgen.py", "compile.py", "governance.py")
 ALLOWED_HELPERS: dict[tuple[str, str], str] = {
     ("sqlgen.py", "_failed"): "error message for a QueryError",
     ("sqlgen.py", "_refused"): "error message for a QueryError",
     ("sqlgen.py", "_alias"): "table alias text, becomes a quoted identifier node",
     ("sqlgen.py", "_cte"): "CTE name text, becomes a quoted identifier node",
+    ("governance.py", "_violation"): "error message for the internal governance error",
     ("compile.py", "_metric_id"): "the `metric:<name>` reference of the response, not SQL",
 }
 

@@ -6,6 +6,7 @@ These functions are pure: the same model and request give an equal response. The
 from __future__ import annotations
 
 from makna.compiler.explain import explain
+from makna.compiler.governance import verify
 from makna.compiler.plan import QueryPlan, plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import Dialect, build_tree, to_sql
@@ -20,8 +21,10 @@ def _metric_id(name: str) -> str:
 def compile_plan(model: Model, plan: QueryPlan, dialect: Dialect = "postgres") -> CompileResponse:
     """The SQL for a plan, printed for `dialect`, with its columns and explanation."""
     explanation = explain(model, plan)
+    tree = build_tree(model, plan)
+    verify(tree, plan)
     return CompileResponse(
-        sql=to_sql(build_tree(model, plan), dialect),
+        sql=to_sql(tree, dialect),
         dialect=dialect,
         columns=plan.columns,
         explanation=explanation.sentences,

@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from makna.compiler import governance
 from makna.compiler.graph import JoinPath, JoinStep, path_names, resolve_path
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Dimension, Entity, Grain, Measure, Metric, RuleRef, Scalar
@@ -200,6 +201,8 @@ class QueryPlan:
     limit: int
     columns: tuple[ResultColumn, ...]
     min_group_size: int = DEFAULT_MIN_GROUP_SIZE
+    personal_columns: frozenset[tuple[str, str]] = frozenset()
+    """`(table, column)` read by any personal dimension of the model, for `governance.verify`."""
 
 
 # --------------------------------------------------------------------------------------
@@ -458,6 +461,7 @@ def plan_request(
         limit=request.limit,
         columns=_columns(metric, closure, request.grain, dimensions),
         min_group_size=min_group_size,
+        personal_columns=governance.personal_columns(model),
     )
 
 
