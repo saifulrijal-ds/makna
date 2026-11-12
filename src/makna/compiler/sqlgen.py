@@ -26,6 +26,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, SqlglotError
 
+from makna.compiler.governance import mask_expression
 from makna.compiler.graph import JoinStep
 from makna.compiler.plan import (
     InputPlan,
@@ -265,6 +266,8 @@ def _input_query(model: Model, plan: QueryPlan, item: InputPlan) -> exp.Select:
         groups.append(_trunc(plan.grain, time_expr.copy()))
     for planned in plan.dimensions:
         value = _dimension_expr(joins, planned.entity, planned.dimension)
+        if planned.masked and planned.dimension.masking is not None:
+            value = mask_expression(planned.dimension.masking, value)
         selects.append(exp.alias_(value, planned.column, quoted=True))
         groups.append(value.copy())
     selects.append(exp.alias_(_aggregate(item), item.metric, quoted=True))

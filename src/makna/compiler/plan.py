@@ -37,6 +37,7 @@ from makna.model.request import (
     ResultColumn,
 )
 
+DEFAULT_MIN_GROUP_SIZE = 10
 GRAINS: tuple[str, ...] = get_args(Grain)
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
@@ -126,6 +127,12 @@ class PlannedDimension:
     def column(self) -> str:
         return f"{self.entity}__{self.name}"
 
+    @property
+    def masked(self) -> bool:
+        """True for a personal dimension: planning refuses one without a masking rule, so a
+        planned personal dimension always has a mask that SQL generation applies."""
+        return self.sensitivity == "personal"
+
 
 @dataclass(frozen=True)
 class PlannedFilter:
@@ -192,6 +199,7 @@ class QueryPlan:
     time_end: datetime.date | None
     limit: int
     columns: tuple[ResultColumn, ...]
+    min_group_size: int = DEFAULT_MIN_GROUP_SIZE
 
 
 # --------------------------------------------------------------------------------------
@@ -389,12 +397,23 @@ def _options(model: Model, entity: Entity, paths: tuple[InputPath, ...]) -> list
 # Planning
 
 
-def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = True) -> QueryPlan:
+def plan_request(
+    model: Model,
+    request: QueryRequest,
+    *,
+    enforce_status: bool = True,
+    min_group_size: int = DEFAULT_MIN_GROUP_SIZE,
+) -> QueryPlan:
     """Plan `request` against `model`, or raise one `QueryError`.
 
     `enforce_status=False` skips the check that the metric and its inputs are approved. It is for
     the example-request check (V19), which runs before a metric is approved.
+
+    `min_group_size` is the `[governance]` setting of `config/makna.toml`. The compiler does not
+    read configuration; the caller passes it. It must be at least 1 (`ValueError` otherwise).
     """
+    if min_group_size < 1:
+        raise ValueError(f"min_group_size must be at least 1, not {min_group_size}")
     metric = model.metrics.get(request.metric)
     if metric is None:
         raise _unknown_metric(model, request.metric)
@@ -438,6 +457,7 @@ def plan_request(model: Model, request: QueryRequest, *, enforce_status: bool = 
         time_end=end,
         limit=request.limit,
         columns=_columns(metric, closure, request.grain, dimensions),
+        min_group_size=min_group_size,
     )
 
 
