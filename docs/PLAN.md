@@ -21,7 +21,7 @@ The order gets a thin slice of the whole system running as early as possible: by
 
 ```
 M0 Foundations        WP-01 → WP-02, WP-03 → WP-04, WP-05
-M1 Agent path         WP-06 → WP-07; WP-08 → WP-09 → WP-10 → WP-11; WP-12 → WP-12B → WP-13; WP-14 (after WP-08) → WP-15
+M1 Agent path         WP-06 → WP-07; WP-08 → WP-09 → WP-10 → WP-10B, WP-11; WP-12 → WP-12B → WP-13; WP-14 (after WP-08) → WP-04B, WP-15
    -- Fable review 1: core complete (model, search, compiler) --
 M2 People path        WP-16 → WP-17; WP-18 → WP-19 → WP-19B; WP-19C; WP-20; WP-21; WP-22 → WP-22B; WP-22C; WP-23
    -- Fable review 2: before the MVP release --
@@ -41,6 +41,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 | WP-08 | Compiler: model snapshot, join graph, request planning | QRY-1, SEM-1 | WP-03, WP-04 | Sonnet 5.5 |
 | WP-09 | Compiler: SQL generation and explanation | QRY-1, QRY-3 | WP-02, WP-08 | Sonnet 5.5 |
 | WP-10 | Compiler: sensitivity, masking, refusals | QRY-2 | WP-09 | Sonnet 5.5 |
+| WP-10B | Compiler: governance modes | QRY-2 | WP-10 | Sonnet 5.5 |
 | WP-11 | PostgreSQL engine connector and metrics on the target database | CON-4, QRY-1 | WP-05, WP-10 | Sonnet 5.5 |
 | WP-12 | Service layer, permissions, tool-call log | GOV-2 | WP-07, WP-11 | Sonnet 5.5 |
 | WP-12B | Users and tokens | WEB-5 | WP-12 | Haiku 5.5 |
@@ -192,7 +193,19 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   4. A dimension declared `internal` whose column has `derived_sensitivity = personal` is treated as personal (refused without masking).
   5. `verify` raises when given a hand-built tree that selects a personal column bare or inside `MIN` or `MAX`, and passes when the same column is inside a mask or inside `COUNT` or `COUNT(DISTINCT ...)`.
   6. Property test: for at least 500 random valid requests over the sample model (random metric, dimensions drawn from all dimensions including personal ones, random filters), every request either raises a section 7.7 error or yields SQL that passes `verify`, whose DuckDB result contains no raw value of any personal column of the fixture `customers` table, and, when a personal dimension is selected, no group built from fewer than `min_group_size` customers.
-  7. Minimum group size: on the fixture data, `npf_outstanding_principal` by `customer.birth_year`, `customer.province`, and `branch.region_name` returns no group built from fewer than `min_group_size` customers (checked against a reference count query), the warning states how many groups were left out, and the same metric by `branch.region_name` alone is not suppressed. A ratio drops a group when either input has it from fewer than the minimum.
+  7. Minimum group size: on the fixture data, `npf_outstanding_principal` by `customer.birth_year`, `customer.province`, and `branch.region_name` returns no group built from fewer than `min_group_size` customers (checked against a reference count query), the warning names the result column that states how many groups were left out (`__groups_left_out`; the compiler runs no SQL, D-21, D-31), and the same metric by `branch.region_name` alone is not suppressed. A ratio drops a group when either input has it from fewer than the minimum.
+
+### WP-10B Compiler: governance modes
+
+- **Read**: D-29; DR-5; `docs/ARCHITECTURE.md` section 7.6 and "Details settled in WP-10".
+- **Build**: a governance policy (`strict`, `custom`, `off`; the custom rules `min_group_size`, `allow_personal_filters`, `apply_masks`, `allow_unmasked_personal`) passed to the planner and compiler as data, replacing the `min_group_size` parameter; planning, SQL generation, the warnings, the explanation, and `verify` follow it; `[governance] mode` and the custom rules in `config/makna.toml` with validation; V19 always `strict`.
+- **Acceptance** (unit tier)
+  1. With no policy argument and with `strict`, every request compiles to the same SQL as on main before this package (the WP-10 golden file and an equivalence test over generated requests, including personal ones).
+  2. With `off`: `customer.full_name` is returned raw, a filter on a personal dimension plans, no record-count or `__groups_left_out` column is added, `verify` passes, and the response warning names the mode.
+  3. With `custom`, each rule relaxed alone changes only its own behaviour (one test per rule, asserting that the other rules still hold).
+  4. `verify` under `strict` still rejects the hand-built trees of WP-10 criterion 5; under `custom` it rejects what the policy does not allow (for example, with only `allow_personal_filters`, a raw personal column in the select list still fails).
+  5. Configuration: an unknown mode, a custom rule set while the mode is not `custom`, and `min_group_size` 1 are rejected with an error naming the field; `min_group_size` 0 is accepted only in `custom`.
+  6. The WP-10 property test passes unchanged under `strict`; no request field can set or change the mode; `makna validate` gives the same result whatever the configured mode.
 
 ### WP-11 PostgreSQL engine connector and metrics on the target database
 
@@ -209,7 +222,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-12 Service layer, permissions, tool-call log
 
 - **Read**: `docs/ARCHITECTURE.md` sections 4, 11, 14.
-- **Build**: `makna.services`: `search`, `get_definition`, `list_related`, `compile_query`, each taking a `Caller` (user or token id, role, teams, channel; WP-12B adds how a `Caller` is authenticated, so tests here build it directly); the indexer step that stores each metric's available dimensions (using `available_dimensions` from WP-08) and each dimension's catalog-derived sensitivity; the in-memory model snapshot refreshed on `definitions_version`; the permission checks of section 11 as one module; redaction and `tool_call_log` writes; `makna serve` (FastAPI app with `/healthz`).
+- **Build**: `makna.services`: `search`, `get_definition`, `list_related`, `compile_query`, each taking a `Caller` (user or token id, role, teams, channel; WP-12B adds how a `Caller` is authenticated, so tests here build it directly); the indexer step that stores each metric's available dimensions (using `available_dimensions` from WP-08) and each dimension's catalog-derived sensitivity; the in-memory model snapshot refreshed on `definitions_version`; the governance policy from configuration passed to every compile (D-29), and a refusal to compile when no catalog has been synced (D-30); the permission checks of section 11 as one module; redaction and `tool_call_log` writes; `makna serve` (FastAPI app with `/healthz`).
 - **Acceptance** (integration tier)
   1. A table-driven test covers every cell of the permission matrix in section 11 for the read and run permissions (write permissions are tested in WP-18).
   2. `search` as an agent token or viewer never returns a draft; as a curator it can.
