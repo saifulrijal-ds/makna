@@ -6,8 +6,10 @@ compiler (which the definitions package may not import).
 
 Each example request goes through `makna.compiler.plan.plan_request` and then through SQL
 generation for the `postgres` dialect, and the SQL must re-parse with sqlglot's `postgres`
-dialect. Nothing is executed: `makna validate` needs no database. The status gate is off here,
-because the check runs when a metric is submitted and approved, before it is approved.
+dialect. Nothing is executed: `makna validate` needs no database. The governance policy is always
+`strict` (D-29), whatever the server is configured to use: a deployment that relaxes its rules
+must not make a definition valid that another deployment would refuse. The status gate is off
+here, because the check runs when a metric is submitted and approved, before it is approved.
 
 Names resolve as `validate` resolves them: an official file wins over a proposal of the same
 name, and the metric under check is always seen as itself, so a proposal's example requests are
@@ -27,6 +29,7 @@ from makna.compiler.sqlgen import reparse
 from makna.definitions.issues import Issue
 from makna.definitions.loader import DefinitionFile, DefinitionSet
 from makna.model.definitions import Entity, Metric
+from makna.model.governance import STRICT
 from makna.model.request import ErrorCode, QueryError, QueryRequest
 
 
@@ -63,7 +66,7 @@ def check_example_requests(definitions: DefinitionSet) -> list[Issue]:
         for index, example in enumerate(metric.example_requests):
             request = QueryRequest.from_example(metric.name, example.request)
             try:
-                plan = plan_request(model, request, enforce_status=False)
+                plan = plan_request(model, request, enforce_status=False, governance=STRICT)
             except QueryError as error:
                 if error.code == ErrorCode.BROKEN_REFERENCE:
                     break

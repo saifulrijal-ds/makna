@@ -52,9 +52,28 @@ model = "text-embedding-3-small"
 [embedding.hash]
 dimension = 256
 
+# Personal-data guardrails (ARCHITECTURE 7.6, D-29). The mode applies to the whole deployment and
+# only this file sets it: no request, user, or token can change it. `makna validate` always checks
+# definitions as in "strict", so definitions stay portable between deployments.
 [governance]
 team = "data-governance"
+# "strict" (default): every protection applies. "custom": relax only the rules set below.
+# "off": relax every rule. Outside "strict", every compile response carries a warning that names
+# the mode and each relaxed rule.
+mode = "strict"
+# Groups built from fewer than this many records of the entity holding a personal dimension are
+# left out. Allowed in "strict" (at least 2) and "custom" (0 turns the rule off, otherwise at
+# least 2). Ignored in "off". 1 and negative numbers are errors.
 min_group_size = 10
+# The next three are rules of mode "custom" only; setting one in another mode is an error.
+# The values shown are the strict ones. Set one only together with mode = "custom"; a rule left
+# out keeps its strict value.
+# allow_personal_filters = false    # true: filters on personal dimensions (and time ranges on a
+#                                   #       personal official date) are allowed
+# apply_masks = true                # false: a personal dimension with a masking rule returns the
+#                                   #        raw value
+# allow_unmasked_personal = false   # true: a personal dimension with no masking rule may be
+#                                   #       selected and returns the raw value
 
 [sensitivity.tag_map]
 "PII.Sensitive" = "personal"

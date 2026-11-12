@@ -61,12 +61,12 @@ def explain(model: Model, plan: QueryPlan) -> Explanation:
     sentences.extend(_mask_sentence(model, d) for d in plan.dimensions if d.masked)
     relaxed = relaxed_rules_text(plan.governance)
     if relaxed is not None:
-        sentences.append(_relaxed_sentence(relaxed))
+        sentences.append(_relaxed_sentence(plan.governance, relaxed))
     warnings = [w for item in plan.inputs if (w := _balance_warning(model, plan, item))]
     if plan.guard:
         warnings.append(_group_size_warning(plan))
     if relaxed is not None:
-        warnings.append(_relaxed_warning(relaxed))
+        warnings.append(_relaxed_warning(plan.governance, relaxed))
     return Explanation(tuple(sentences), tuple(warnings))
 
 
@@ -299,27 +299,26 @@ _RELAXED_MEANING = {
 
 
 def relaxed_rules_text(policy: GovernancePolicy) -> str | None:
-    """`mode custom relaxes min_group_size = 0 (...) and apply_masks = false (...)`, or None when
-    the policy relaxes nothing. It names the mode and each relaxed rule with its value."""
+    """The relaxed rules with their values, such as `min_group_size = 0 (no group is left out for
+    being small) and apply_masks = false (...)`, or None when the policy relaxes nothing."""
     relaxed = policy.relaxed()
     if not relaxed:
         return None
-    rules = [f"{name} = {str(value).lower()} ({_RELAXED_MEANING[name]})" for name, value in relaxed]
-    return f"mode {policy.mode} relaxes {_list(rules)}"
+    return _list([f"{n} = {str(v).lower()} ({_RELAXED_MEANING[n]})" for n, v in relaxed])
 
 
-def _relaxed_sentence(text: str) -> str:
+def _relaxed_sentence(policy: GovernancePolicy, rules: str) -> str:
     return _sentence(
-        f"The governance setting of this server is {text}, so the personal-data protection "
-        "that applies by default is reduced for this result"
+        f"This server runs in governance mode {policy.mode}, which relaxes {rules}, so the "
+        "personal-data protection that applies by default is reduced for this result"
     )
 
 
-def _relaxed_warning(text: str) -> str:
+def _relaxed_warning(policy: GovernancePolicy, rules: str) -> str:
     return _sentence(
-        f"Governance {text}. The server configuration sets this, not the request. Personal "
-        "data protection is reduced: check that the people and agents who can read this result "
-        "may see the data it can contain"
+        f"Governance mode {policy.mode} relaxes {rules}. The server configuration sets this, not "
+        "the request. Personal-data protection is reduced: check that the people and agents who "
+        "can read this result may see the data it can contain"
     )
 
 

@@ -286,7 +286,9 @@ def _raw_allowed(node: exp.Expr, pair: tuple[str, str], plan: QueryPlan) -> bool
     ancestors = _ancestors(node)
     if any(isinstance(a, exp.Where) for a in ancestors):
         return plan.governance.allow_personal_filters
-    if not isinstance(node, exp.Column) or pair not in plan.raw_columns:
+    if not isinstance(node, exp.Column) or isinstance(node.this, exp.Star):
+        return False  # a star returns whatever the table holds; it is never accepted
+    if pair not in plan.raw_columns:
         return False
     child: exp.Expr = node
     for parent in ancestors:

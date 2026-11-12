@@ -11,8 +11,22 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
+from makna.model.governance import (
+    DEFAULT_MIN_GROUP_SIZE,
+    MIN_GROUP_SIZE_FLOOR,
+    GovernanceMode,
+    GovernancePolicy,
+)
 from makna.model.search import EmbeddingSettings, SearchSettings
 
 ENV_PREFIX = "MAKNA_"
@@ -29,10 +43,64 @@ class ConfigError(Exception):
 
 
 class GovernanceSettings(BaseModel):
+    """`[governance]` of `config/makna.toml` (D-29).
+
+    `mode` is `strict` (the default), `custom`, or `off`. The three booleans are rules of `custom`
+    only: setting one in any other mode is an error, because a rule that is silently ignored
+    would look like protection. `min_group_size` may be set in `strict` (at least 2) and in
+    `custom` (0 turns the rule off, otherwise at least 2). In `off` it is ignored (the rule is
+    off), but the same limits are checked: 1 and negative numbers are always errors, and 0 is
+    accepted only in `custom`. `policy()` builds the `GovernancePolicy` the compiler is given.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     team: str = "data-governance"
-    min_group_size: int = Field(default=10, ge=2)
+    mode: GovernanceMode = "strict"
+    min_group_size: int = DEFAULT_MIN_GROUP_SIZE
+    allow_personal_filters: bool | None = None
+    apply_masks: bool | None = None
+    allow_unmasked_personal: bool | None = None
+
+    @field_validator("min_group_size")
+    @classmethod
+    def _check_minimum(cls, value: int, info: ValidationInfo) -> int:
+        if value < 0 or value == 1:
+            raise ValueError(
+                f"{value} is not allowed: use at least {MIN_GROUP_SIZE_FLOOR}, because a group of "
+                "one is a single record"
+                + (" (or 0 to turn the rule off, in mode custom)" if value in (1, 0) else "")
+            )
+        if value == 0 and info.data.get("mode", "strict") != "custom":
+            raise ValueError(
+                "0 (rule off) is allowed only in mode custom; use at least "
+                f'{MIN_GROUP_SIZE_FLOOR}, or set mode = "custom"'
+            )
+        return value
+
+    @field_validator("allow_personal_filters", "apply_masks", "allow_unmasked_personal")
+    @classmethod
+    def _custom_only(cls, value: bool | None, info: ValidationInfo) -> bool | None:
+        mode = info.data.get("mode", "strict")
+        if value is not None and mode != "custom":
+            raise ValueError(
+                f"is a rule of mode custom and cannot be set in mode {mode}; set mode = "
+                '"custom" or remove it'
+            )
+        return value
+
+    def policy(self) -> GovernancePolicy:
+        """The policy of this configuration."""
+        if self.mode == "off":
+            return GovernancePolicy.off()
+        if self.mode == "strict":
+            return GovernancePolicy.strict(self.min_group_size)
+        return GovernancePolicy.custom(
+            min_group_size=self.min_group_size,
+            allow_personal_filters=bool(self.allow_personal_filters),
+            apply_masks=True if self.apply_masks is None else self.apply_masks,
+            allow_unmasked_personal=bool(self.allow_unmasked_personal),
+        )
 
 
 class SensitivitySettings(BaseModel):
