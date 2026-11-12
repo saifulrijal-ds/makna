@@ -24,9 +24,14 @@ The evals answer the four success questions in `docs/PROJECT_BRIEF.md`:
 
 ```
 evals/golden/questions.yaml        all questions
+evals/golden/schema.py             the model of the questions file (validated by a unit test)
 evals/golden/reference_sql/<id>.sql    hand-written PostgreSQL SQL, for questions with outcome "answer"
+evals/golden/reference_sql/<id>_<metric>.sql    the same for each candidate of a "clarify" question
 evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the seeded data
+evals/golden/expected/<id>_<metric>.csv    the same for each candidate
 ```
+
+A reference SQL names its tables as `core.<table>` (the schema of the sample data), ends with an `ORDER BY` over all its non-measure columns (text columns with `COLLATE "C"`, so the order does not depend on the database's locale), and starts with a comment that names the definition rules it applies. A CSV has a header row of column names and one row per result row in the SQL's own order, with values in the form psycopg returns them (decimals and floats through `str`, dates as ISO text, NULL as an empty string), UTF-8, `\n` line endings. The engine test re-runs every reference SQL and compares exact text.
 
 ### 2.2 Shape of one question
 
@@ -34,6 +39,7 @@ evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the
 - id: G04
   question: "Rasio kredit macet tiap wilayah pada bulan lalu?"
   language: id                      # en | id | mixed
+  group: direct_indonesian_or_mixed # the row of the table in 2.4 (see below)
   tags: [synonym, ratio, multi_hop, relative_time]
   outcome: answer                   # answer | clarify | no_metric | refuse
   expected:
@@ -47,14 +53,16 @@ evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the
   notes: "Region must come from the servicing branch."
 ```
 
+`group` is required on every question and names its row of the composition table in section 2.4: `direct_english`, `direct_indonesian_or_mixed`, `dimensions_and_filters`, `time_handling`, `governed_default`, `clarify`, `no_metric`, `refuse`. A `clarify`, `no_metric`, or `refuse` question is in the group of that name; an `answer` question is in one of the other five.
+
 Fields by outcome:
 
 | Outcome | Meaning | Required fields |
 |---|---|---|
 | `answer` | There is one correct governed answer. | `expected.metrics`, `expected.request`, `expected.answer_columns`, a reference SQL file, an expected CSV |
-| `clarify` | The question is ambiguous between named metrics. The right behaviour is to ask, or to answer one interpretation and say which. | `expected.candidates` (two or more metrics), and for each candidate a request, reference SQL, and expected CSV, named `<id>_<metric>` |
-| `no_metric` | No approved definition covers the question (or the metric cannot be cut the way asked). The right behaviour is to say so. | `expected.reason` (`no_definition`, `dimension_not_available`, `not_approved`), optional `expected.nearest` (a metric that must not be offered as the answer) |
-| `refuse` | Answering would expose personal data. The right behaviour is to decline, and optionally offer an aggregate. | `expected.reason: personal_data` |
+| `clarify` | The question is ambiguous between named metrics. The right behaviour is to ask, or to answer one interpretation and say which. | `expected.candidates` (two or more different metrics; each has `metric`, `request`, and `answer_columns`), and for each candidate a reference SQL and expected CSV, named `<id>_<metric>` |
+| `no_metric` | No approved definition covers the question (or the metric cannot be cut the way asked). The right behaviour is to say so. | `expected.reason` (`no_definition`, `dimension_not_available`, `not_approved`), optional `expected.nearest` (a metric that must not be offered as the answer). For `dimension_not_available` and `not_approved`, also `expected.request`: the request that compiling must reject with `DIMENSION_NOT_AVAILABLE` or `NOT_APPROVED` (section 4 part C, WP-14 acceptance 5). Not allowed for `no_definition`. |
+| `refuse` | Answering would expose personal data. The right behaviour is to decline, and optionally offer an aggregate. | `expected.reason: personal_data`; optional `expected.request` when the question names one (for example a filter on an identity number), which compiling must reject with `PERSONAL_DATA_REFUSED` |
 
 ### 2.3 Rules for writing questions
 

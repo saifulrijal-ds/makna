@@ -1,0 +1,8 @@
+-- G44 candidate restructured_outstanding_principal, June 2026.
+-- Rules: balance at the last month end in the range (2026-06-30); restructured means the
+-- CONTRACT has is_restructured = true, reached through contract_monthly_snapshots.contract_id.
+SELECT COALESCE(SUM(s.outstanding_principal), 0) AS restructured_outstanding_principal
+FROM core.contract_monthly_snapshots AS s
+LEFT JOIN core.contracts AS c ON c.contract_id = s.contract_id
+WHERE s.snapshot_date = DATE '2026-06-30'
+  AND c.is_restructured

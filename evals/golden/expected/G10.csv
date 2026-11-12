@@ -1,0 +1,5 @@
+product__product_category,approved_application_count,decided_application_count,approval_rate
+car_backed,83,116,0.7155172413793104
+motorcycle_backed,162,228,0.7105263157894737
+unsecured,126,183,0.6885245901639344
+used_car_purchase,79,119,0.6638655462184874
