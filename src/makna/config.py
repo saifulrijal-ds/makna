@@ -16,6 +16,8 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    StrictBool,
+    StrictInt,
     ValidationError,
     ValidationInfo,
     field_validator,
@@ -45,7 +47,9 @@ class ConfigError(Exception):
 class GovernanceSettings(BaseModel):
     """`[governance]` of `config/makna.toml` (D-29).
 
-    `mode` is `strict` (the default), `custom`, or `off`. The three booleans are rules of `custom`
+    `mode` is `strict` (the default), `custom`, or `off`, written in lower case. Booleans and the
+    minimum must be real TOML booleans and integers (a string or 1 for true is an error), and
+    the settings cannot be changed after loading. The three booleans are rules of `custom`
     only: setting one in any other mode is an error, because a rule that is silently ignored
     would look like protection. `min_group_size` may be set in `strict` (at least 2) and in
     `custom` (0 turns the rule off, otherwise at least 2). In `off` it is ignored (the rule is
@@ -53,23 +57,23 @@ class GovernanceSettings(BaseModel):
     accepted only in `custom`. `policy()` builds the `GovernancePolicy` the compiler is given.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     team: str = "data-governance"
     mode: GovernanceMode = "strict"
-    min_group_size: int = DEFAULT_MIN_GROUP_SIZE
-    allow_personal_filters: bool | None = None
-    apply_masks: bool | None = None
-    allow_unmasked_personal: bool | None = None
+    min_group_size: StrictInt = DEFAULT_MIN_GROUP_SIZE
+    allow_personal_filters: StrictBool | None = None
+    apply_masks: StrictBool | None = None
+    allow_unmasked_personal: StrictBool | None = None
 
     @field_validator("min_group_size")
     @classmethod
     def _check_minimum(cls, value: int, info: ValidationInfo) -> int:
         if value < 0 or value == 1:
+            custom = info.data.get("mode") == "custom"
             raise ValueError(
                 f"{value} is not allowed: use at least {MIN_GROUP_SIZE_FLOOR}, because a group of "
-                "one is a single record"
-                + (" (or 0 to turn the rule off, in mode custom)" if value in (1, 0) else "")
+                "one is a single record" + (" (or 0 to turn the rule off)" if custom else "")
             )
         if value == 0 and info.data.get("mode", "strict") != "custom":
             raise ValueError(

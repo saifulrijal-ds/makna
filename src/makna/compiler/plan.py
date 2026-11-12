@@ -326,8 +326,10 @@ def available_dimensions(
     all inputs enter it through the same final relationship. Entities that need a join choice the
     metric does not make are left out and reported in `excluded` (and `warnings`).
 
-    A personal dimension without a masking rule is listed as not available unless `governance`
-    allows unmasked personal data (D-29).
+    The result depends on `governance` (D-29): a personal dimension without a masking rule is
+    listed as not available unless the policy allows unmasked personal data. Under
+    `apply_masks = false` a masked dimension is listed as available but returns the raw value of
+    its column (`customer.birth_year` returns full dates), which can be much finer than its name.
 
     Raises `BROKEN_REFERENCE` if the metric's inputs or measures do not resolve.
     """
@@ -473,9 +475,14 @@ def plan_request(
     )
     filters = tuple(_planned_filter(model, available, f, governance) for f in request.filters)
 
-    guard = _guard(model, dimensions, governance)
+    date_entities = _personal_date_entities(
+        model, request, [measures[leaf.name] for leaf in leaves]
+    )
+    guard = _guard(model, dimensions, governance, date_entities)
+    _check_guardable_dates(model, guard, date_entities)
     inputs = tuple(
-        _plan_input(model, leaf, *measures[leaf.name], dimensions, filters) for leaf in leaves
+        _plan_input(model, leaf, *measures[leaf.name], dimensions, filters, guard)
+        for leaf in leaves
     )
     touched = {i.measure_entity for i in inputs}
     for plan_input in inputs:
@@ -621,11 +628,23 @@ def _check_official_dates(
             selected and not governance.may_return_raw(date.masking is not None)
         ):
             ref = f"{entity.name}.{date.name}"
-            raise QueryError(
-                ErrorCode.PERSONAL_DATA_REFUSED,
+            message = (
                 f"The official date of {measure.name} ({ref}) is personal data, so this metric "
                 "cannot be grouped by time or limited to a time range. Ask without grain, "
-                "time_start, and time_end, or choose another metric.",
+                "time_start, and time_end, or choose another metric."
+            )
+            if governance.mode != "strict":
+                message = _date_refusal(
+                    measure.name,
+                    ref,
+                    governance,
+                    needs_filter=filtered and not governance.allow_personal_filters,
+                    needs_raw=selected and not governance.may_return_raw(date.masking is not None),
+                    has_mask=date.masking is not None,
+                )
+            raise QueryError(
+                ErrorCode.PERSONAL_DATA_REFUSED,
+                message,
                 {
                     "dimension": ref,
                     "use": "time",
@@ -633,6 +652,33 @@ def _check_official_dates(
                     "available_dimensions": [],
                 },
             )
+
+
+def _date_refusal(
+    measure: str,
+    ref: str,
+    governance: GovernancePolicy,
+    *,
+    needs_filter: bool,
+    needs_raw: bool,
+    has_mask: bool,
+) -> str:
+    """The refusal for a personal official date under a policy that is not `strict`: it says
+    which use is refused and which rule would allow it."""
+    parts = []
+    if needs_filter:
+        parts.append(
+            "a time range, or the month-end selection of a balance, filters on it "
+            "(the rule allow_personal_filters would allow that)"
+        )
+    if needs_raw:
+        rule = "apply_masks = false" if has_mask else "allow_unmasked_personal"
+        parts.append(f"a grain returns it (the rule {rule} would allow that)")
+    return (
+        f"The official date of {measure} ({ref}) is personal data, and under the governance mode "
+        f"{governance.mode} of this server {' and '.join(parts)}. The server configuration, not "
+        "the request, sets the rules. Ask without what is refused, or choose another metric."
+    )
 
 
 def _check_grain(model: Model, metric: Metric, grain: str | None) -> None:
@@ -711,6 +757,12 @@ def _refuse_personal(
         message = (
             f"{ref} is personal data and has no masked form, so it cannot be returned. "
             "Choose a dimension that is not personal."
+        )
+    if governance.mode != "strict":
+        rule = "allow_personal_filters" if use == "filter" else "allow_unmasked_personal"
+        message += (
+            f" The governance mode of this server is {governance.mode}; the rule {rule} would "
+            "allow this, and the server configuration (not the request) sets it."
         )
     raise QueryError(
         ErrorCode.PERSONAL_DATA_REFUSED,
@@ -816,19 +868,68 @@ def _type_fits(dimension_type: str, value: object) -> bool:
     return isinstance(value, (str, int, float))
 
 
+def _personal_date_entities(
+    model: Model, request: QueryRequest, measures: Sequence[tuple[Entity, Measure]]
+) -> tuple[str, ...]:
+    """The entities whose personal official date the request's grain returns. The policy let the
+    grain through (`_check_official_dates`), so the date is released; it is guarded like a
+    selected personal dimension of that entity."""
+    if request.grain is None:
+        return ()
+    found: dict[str, None] = {}
+    for entity, measure in measures:
+        date = next((d for d in entity.dimensions if d.name == measure.time_dimension), None)
+        if date is not None and model.effective_sensitivity(entity, date) == "personal":
+            found[entity.name] = None
+    return tuple(found)
+
+
+def _check_guardable_dates(
+    model: Model,
+    guard: Sequence[GuardedEntity],
+    date_entities: Sequence[str],
+) -> None:
+    """The records of an entity are counted by its primary key. When the key itself holds a
+    personal column (the snapshot date of a balance table), the count would read it, so the
+    minimum group size cannot be applied to a grain on that date: PERSONAL_DATA_REFUSED."""
+    personal = personal_data.personal_columns(model)
+    for guarded in guard:
+        if guarded.entity not in date_entities:
+            continue
+        table = model.entities[guarded.entity].source.table.lower()
+        if any((table, key.lower()) in personal for key in guarded.primary_key):
+            raise QueryError(
+                ErrorCode.PERSONAL_DATA_REFUSED,
+                f"The minimum group size cannot be applied to a grain on the personal date of "
+                f"{guarded.label}, because the records are counted by a key that holds personal "
+                "data. Ask without a grain, or choose another metric.",
+                {
+                    "dimension": guarded.entity,
+                    "use": "time",
+                    "masked_form_available": False,
+                    "available_dimensions": [],
+                },
+            )
+
+
 def _guard(
-    model: Model, dimensions: Sequence[PlannedDimension], governance: GovernancePolicy
+    model: Model,
+    dimensions: Sequence[PlannedDimension],
+    governance: GovernancePolicy,
+    date_entities: Sequence[str] = (),
 ) -> tuple[GuardedEntity, ...]:
     """The entities whose records are counted: one for each entity holding a selected personal
-    dimension (masked or raw), in the order the dimensions were asked for. None when the policy
-    has no minimum group size."""
+    dimension (masked or raw), in the order the dimensions were asked for, then the entities
+    whose personal official date a grain returns. None when the policy has no minimum group
+    size."""
     if governance.min_group_size == 0:
         return ()
     found: dict[str, GuardedEntity] = {}
-    for dimension in dimensions:
-        if dimension.personal and dimension.entity not in found:
-            entity = model.entities[dimension.entity]
-            found[entity.name] = GuardedEntity(
+    names = [d.entity for d in dimensions if d.personal] + list(date_entities)
+    for name in names:
+        if name not in found:
+            entity = model.entities[name]
+            found[name] = GuardedEntity(
                 entity.name,
                 entity.label,
                 tuple(entity.primary_key),
@@ -847,6 +948,7 @@ def _plan_input(
     measure: Measure,
     dimensions: Sequence[PlannedDimension],
     filters: Sequence[PlannedFilter],
+    guard: Sequence[GuardedEntity] = (),
 ) -> InputPlan:
     paths: dict[str, JoinPath] = {}
 
@@ -879,6 +981,8 @@ def _plan_input(
             definition_filters.append(planned)
     for dimension in dimensions:
         reach(dimension.entity)
+    for guarded in guard:
+        reach(guarded.entity)  # a record count needs the entity on this input's path too
     for flt in filters:
         reach(flt.entity)
     return InputPlan(

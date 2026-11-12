@@ -96,8 +96,11 @@ field) sets how strictly the compiler protects personal data for the whole deplo
 
 Setting `allow_personal_filters`, `apply_masks`, or `allow_unmasked_personal` while the mode is
 not `custom` is an error, and so is a `min_group_size` of 1, a negative one, or 0 outside
-`custom`. Outside `strict`, every compile response carries a warning that names the mode and each
-relaxed rule. `makna validate` always checks in `strict` mode. Relaxing the rules does not
+`custom`. When the policy relaxes at least one rule, every compile response carries a warning that
+names the mode and each relaxed rule. With `allow_personal_filters`, the minimum group size does
+not apply to filters: a filter on an identifier can select one person's records. With
+`apply_masks = false` a masked dimension returns the raw value of its column (`customer.birth_year`
+returns full birth dates), which can be much finer than its name. `makna validate` always checks in `strict` mode. Relaxing the rules does not
 replace access control in the engine: restrict or mask personal data there too.
 
 ## Migrations

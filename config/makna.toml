@@ -58,8 +58,9 @@ dimension = 256
 [governance]
 team = "data-governance"
 # "strict" (default): every protection applies. "custom": relax only the rules set below.
-# "off": relax every rule. Outside "strict", every compile response carries a warning that names
-# the mode and each relaxed rule.
+# "off": relax every rule. When the policy relaxes at least one rule, every compile response
+# carries a warning that names the mode and each relaxed rule ("custom" with nothing relaxed has
+# none). With allow_personal_filters, the minimum group size does not apply to filters.
 mode = "strict"
 # Groups built from fewer than this many records of the entity holding a personal dimension are
 # left out. Allowed in "strict" (at least 2) and "custom" (0 turns the rule off, otherwise at

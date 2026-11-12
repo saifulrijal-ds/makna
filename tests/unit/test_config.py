@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from makna.config import ConfigError, Settings, load_search_runtime, load_settings
 from makna.model.governance import RULES, GovernancePolicy
@@ -277,3 +278,34 @@ def test_an_unknown_governance_key_is_refused(tmp_path: Path) -> None:
 def test_the_environment_cannot_set_the_mode(tmp_path: Path) -> None:
     env = {**GOOD_ENV, "MAKNA_GOVERNANCE_MODE": "off", "MAKNA_MODE": "off"}
     assert load_settings(env, tmp_path / "none.toml").governance.mode == "strict"
+
+
+# ---- fix round 1: typed values, immutable settings, hints -------------------------------------
+
+
+@pytest.mark.parametrize("value", ['"no"', '"yes"', '"false"', "0", "1", '"on"'])
+@pytest.mark.parametrize(
+    "rule", ["allow_personal_filters", "apply_masks", "allow_unmasked_personal"]
+)
+def test_a_custom_rule_must_be_a_real_boolean(tmp_path: Path, value: str, rule: str) -> None:
+    refused(tmp_path, f'mode = "custom"\n{rule} = {value}', rule)
+
+
+@pytest.mark.parametrize("value", ['"10"', "10.0", "true", "false"])
+def test_the_minimum_must_be_a_real_integer(tmp_path: Path, value: str) -> None:
+    refused(tmp_path, f'mode = "custom"\nmin_group_size = {value}', "min_group_size")
+
+
+def test_the_governance_settings_cannot_be_changed_after_loading(tmp_path: Path) -> None:
+    settings = governance(tmp_path, 'mode = "strict"')
+    with pytest.raises(ValidationError):
+        settings.governance.mode = "off"  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        settings.governance.apply_masks = False  # type: ignore[misc]
+    assert settings.governance.policy() == GovernancePolicy.strict(10)
+
+
+def test_the_minimum_hint_about_zero_appears_only_in_custom(tmp_path: Path) -> None:
+    assert "or 0" not in refused(tmp_path, 'mode = "strict"\nmin_group_size = 1', "min_group_size")
+    assert "or 0" not in refused(tmp_path, 'mode = "off"\nmin_group_size = 1', "min_group_size")
+    assert "or 0" in refused(tmp_path, 'mode = "custom"\nmin_group_size = 1', "min_group_size")

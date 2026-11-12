@@ -22,9 +22,12 @@ The four rules:
 - `allow_unmasked_personal`: when true, a personal dimension with no masking rule may be selected;
   it returns the raw value.
 
-An inconsistent policy cannot exist: the constructors `strict`, `custom`, and `off` build the
-three modes, and the type refuses any combination that does not belong to its mode, however it
-is built.
+Every normal way of building a policy is checked: the constructors `strict`, `custom`, and
+`off`, direct construction, and `dataclasses.replace` all refuse a combination that does not
+belong to its mode. The type is frozen, but Python cannot stop deliberate tampering
+(`object.__setattr__`, a doctored pickle). The compiler therefore decides from the four rule
+values, never from `mode` alone, and `relaxed()` reads the values, so tampering shows in the
+warning.
 """
 
 from __future__ import annotations

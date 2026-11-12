@@ -292,7 +292,10 @@ def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
 
 _RELAXED_MEANING = {
     "min_group_size": "no group is left out for being small",
-    "allow_personal_filters": "filters on personal dimensions are allowed",
+    "allow_personal_filters": (
+        "filters on personal dimensions are allowed; the minimum group size does not apply to "
+        "filters, so a filter can select one person's records"
+    ),
     "apply_masks": "masked personal dimensions are returned unmasked",
     "allow_unmasked_personal": "personal dimensions without a masking rule are returned unmasked",
 }

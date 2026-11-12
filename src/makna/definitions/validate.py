@@ -44,6 +44,7 @@ from makna.model.definitions import (
     Metric,
     RuleRef,
 )
+from makna.model.functions import first_disallowed_function
 
 ExtraCheck = Callable[[DefinitionSet], list[Issue]]
 
@@ -359,6 +360,16 @@ class _Checker:
         banned = _forbidden(tree)
         if banned is not None:
             self.add("V05", f"{what}: expression contains {banned}", *where)
+            return
+        unknown = first_disallowed_function(tree)
+        if unknown is not None:
+            self.add(
+                "V05",
+                f"{what}: expression calls the function {unknown}, which is not on the list of "
+                "functions a definition may use (makna.model.functions). To request it, ask the "
+                "maintainers to add it, with the reason it is pure and reads no state",
+                *where,
+            )
 
     def v11_masking_fits(self, dim: Dimension, index: int) -> None:
         if dim.masking is None:
