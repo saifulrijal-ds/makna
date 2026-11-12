@@ -4,7 +4,8 @@ name: restructured_outstanding_principal
 label: Restructured Outstanding Principal
 description: >-
   Principal still owed at a month end on contracts whose repayment schedule
-  has been restructured at least once.
+  has been restructured at least once. Positions written off at that month end
+  are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -17,6 +18,7 @@ type: simple
 measure: contract_snapshot.outstanding_principal
 filters:
   - {rule: contract.restructured}
+  - {rule: contract_snapshot.in_book}
 join_paths:
   branch: [contract_snapshot.contract, contract.servicing_branch]
 format: {kind: currency, unit: IDR, decimals: 0}
@@ -30,4 +32,6 @@ example_requests:
     request: {dimensions: [product.financing_scheme], time_start: "2026-06-01", time_end: "2026-07-01"}
 caveats: >-
   A contract stays in this amount after restructuring, even when it is paying
-  again. Available at month ends only. Reported by servicing branch.
+  again. The flag is the contract's current one, so positions before the
+  restructuring date of a contract that was restructured later are counted as
+  restructured too. Available at month ends only. Reported by servicing branch.

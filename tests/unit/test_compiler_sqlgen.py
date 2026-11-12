@@ -35,7 +35,7 @@ def test_a_balance_over_six_months_with_no_grain_uses_one_snapshot_date(
     last_month_end = run_sql(
         lending_db,
         "SELECT SUM(outstanding_principal) FROM contract_monthly_snapshots "
-        "WHERE snapshot_date = DATE '2026-06-30'",
+        "WHERE snapshot_date = DATE '2026-06-30' AND days_past_due <= 210",
     )
     all_six = run_sql(
         lending_db,
@@ -65,6 +65,7 @@ def test_a_balance_with_quarter_grain_uses_the_last_month_end_of_each_quarter(
                  (DATE '2026-01-01', DATE '2026-03-31'),
                  (DATE '2026-04-01', DATE '2026-06-30')) AS quarters(q, last_month_end)
         JOIN contract_monthly_snapshots s ON s.snapshot_date = quarters.last_month_end
+        WHERE s.days_past_due <= 210
         GROUP BY q ORDER BY q
         """,
     )
@@ -89,6 +90,7 @@ def test_a_quarter_cut_short_by_the_range_uses_its_last_snapshot_inside_the_rang
           VALUES (DATE '2026-01-01', DATE '2026-03-31'), (DATE '2026-04-01', DATE '2026-04-30')
         ) AS quarters(q, last_in_range)
         JOIN contract_monthly_snapshots s ON s.snapshot_date = quarters.last_in_range
+        WHERE s.days_past_due <= 210
         GROUP BY q ORDER BY q
         """,
     )

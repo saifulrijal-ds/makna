@@ -5,7 +5,9 @@ label: Non-Performing Financing (NPF)
 description: >-
   Financing that is more than 90 days past due, which corresponds to
   collectibility classes 3, 4, and 5. The term is used for both the amount
-  and the ratio; ask which one is meant.
+  and the ratio; ask which one is meant. In everyday use "kredit macet" means
+  NPF (more than 90 days past due). The collectibility class "Macet" is class 5
+  only, more than 180 days past due.
 domain: lending
 owner: {team: credit-risk}
 status: approved

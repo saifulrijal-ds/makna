@@ -4,7 +4,8 @@ name: par30_ratio
 label: PAR 30 Ratio
 description: >-
   Share of outstanding principal that is more than 30 days past due at a month
-  end, also called portfolio at risk (PAR 30).
+  end, also called portfolio at risk (PAR 30). Positions written off at that
+  month end are in neither part.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved

@@ -3,7 +3,7 @@ kind: glossary_term
 name: restructuring
 label: Restructuring
 description: >-
-  Replacing the unpaid part of a contract's repayment schedule with an easier one, usually because the customer struggles to pay. The old schedule rows stay in the data and are marked as not current. A contract that has been restructured stays flagged as restructured.
+  Replacing the unpaid part of a contract's repayment schedule with an easier one, usually because the customer struggles to pay. The old schedule rows stay in the data and are marked as not current. A contract that has been restructured stays flagged as restructured. The flag is the contract's current one and is not dated: the restructured measures count positions from before the restructuring date as restructured too.
 domain: lending
 owner: {team: credit-risk}
 status: approved

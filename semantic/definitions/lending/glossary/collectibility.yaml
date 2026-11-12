@@ -3,7 +3,7 @@ kind: glossary_term
 name: collectibility
 label: Collectibility
 description: >-
-  The asset quality class of a contract, from 1 (current) to 5 (loss), derived from days past due at a month end. Classes 3, 4, and 5 are non-performing. The bands are 0 to 10 days, 11 to 90, 91 to 120, 121 to 180, and over 180.
+  The asset quality class of a contract, from 1 (current) to 5 (loss), derived from days past due at a month end. Classes 3, 4, and 5 are non-performing. The bands are 0 to 10 days, 11 to 90, 91 to 120, 121 to 180, and over 180. The label "Macet" is class 5 only (over 180 days); in everyday use "kredit macet" means NPF, which is more than 90 days past due.
 domain: lending
 owner: {team: credit-risk}
 status: approved
