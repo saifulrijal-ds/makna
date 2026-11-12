@@ -69,31 +69,35 @@ def _number(value: float) -> exp.Expr:
 
 
 def columns_read(dimension: Dimension) -> tuple[str, ...]:
-    """Lower-case names of the columns a dimension's expression reads.
+    """Names of the columns a dimension's expression reads, as written.
 
     A dimension with no `expr` reads the column of its own name. An expression that does not
     parse reads the dimension's own name: validation (V05) rejects such files, and a broken
     expression elsewhere must not stop a request that never uses it.
     """
     if dimension.expr is None:
-        return (dimension.name.lower(),)
+        return (dimension.name,)
     try:
         tree = sqlglot.parse_one(dimension.expr, into=exp.Condition)
     except SqlglotError:
-        return (dimension.name.lower(),)
-    return tuple(dict.fromkeys(c.name.lower() for c in tree.find_all(exp.Column)))
+        return (dimension.name,)
+    return tuple(dict.fromkeys(c.name for c in tree.find_all(exp.Column)))
 
 
 def personal_columns(model: Model) -> frozenset[tuple[str, str]]:
-    """`(table, column)` for every column read by a dimension whose effective sensitivity is
-    personal, anywhere in the model, selected or not. `table` is the entity's `source.table`,
-    lower case."""
+    """`(table, column)`, lower case, for every column that is personal in either way: read by
+    a dimension whose effective sensitivity is personal (selected or not), or tagged personal by
+    the catalog itself (`model.derived_sensitivity`), whether or not any dimension reads it.
+    `table` is the entity's `source.table`."""
     found: set[tuple[str, str]] = set()
     for entity in model.entities.values():
         table = entity.source.table.lower()
         for dimension in entity.dimensions:
             if model.effective_sensitivity(entity, dimension) == "personal":
-                found.update((table, name) for name in columns_read(dimension))
+                found.update((table, name.lower()) for name in columns_read(dimension))
+    for (table, column), level in model.derived_sensitivity.items():
+        if level == "personal":
+            found.add((table.lower(), column.lower()))
     return frozenset(found)
 
 
@@ -123,9 +127,10 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
 
     Personal columns are those in `plan.personal_columns`: all columns read by any dimension of
     the model whose effective sensitivity is personal. A reference is allowed only inside a mask
-    (`mask_expression`) or `COUNT(...)`/`COUNT(DISTINCT ...)`, and only in the select list or the
-    GROUP BY of its query: never in WHERE, HAVING, ORDER BY, or a join condition. `MIN`, `MAX`,
-    and other aggregates do not count, because they return one person's value. `SELECT *` over a
+    (`mask_expression`) or as the whole, bare argument of `COUNT(col)` or `COUNT(DISTINCT col)`
+    (not `COUNT(CASE WHEN col < x ...)`, which would reveal a test on one person's value),
+    and only in the select list or the GROUP BY of its query: never in WHERE, HAVING, ORDER BY,
+    or a join condition. `MIN`, `MAX`, and other aggregates do not count, because they return one person's value. `SELECT *` over a
     table that holds a personal column fails too.
 
     Raises `GovernanceError`. It does not plan again and does not read the model.
@@ -210,10 +215,22 @@ def _allowed(node: exp.Expr) -> bool:
     for parent in _ancestors(node):
         if isinstance(parent, exp.Select):
             return covered and child.arg_key in _ALLOWED_CLAUSES
-        if not covered and (isinstance(parent, exp.Count) or is_mask(parent)):
+        if not covered and is_mask(parent):
+            covered = True
+        elif not covered and isinstance(parent, exp.Count):
+            if not _is_counted_bare(parent, node):
+                return False  # an expression around the column reveals a value about it
             covered = True
         child = parent
     return covered
+
+
+def _is_counted_bare(count: exp.Count, node: exp.Expr) -> bool:
+    """True if `node` is the whole argument of `COUNT(node)` or `COUNT(DISTINCT node)`."""
+    argument = count.this
+    if isinstance(argument, exp.Distinct):
+        return len(argument.expressions) == 1 and argument.expressions[0] is node
+    return argument is node
 
 
 def is_mask(node: exp.Expr) -> bool:

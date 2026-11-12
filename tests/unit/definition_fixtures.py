@@ -430,6 +430,23 @@ def v12_filter_on_personal_column_of_a_sum(files: Files) -> None:
     )
 
 
+def v12_count_over_an_expression_of_a_personal_column(files: Files) -> None:
+    measures = _entity(files, "customer")["measures"]
+    measures.append(
+        _measure(
+            "early_signups",
+            "count",
+            "registered_date",
+            expr="CASE WHEN email < 'm' THEN 1 END",
+        )
+    )
+
+
+def v12_count_with_a_filter_on_a_personal_column(files: Files) -> None:
+    measures = _entity(files, "customer")["measures"]
+    measures.append(_measure("mailed", "count", "registered_date", filter="email <> ''"))
+
+
 # --- V13 ---------------------------------------------------------------------------------
 
 
@@ -595,7 +612,12 @@ FIXTURES: dict[str, list[Mutation]] = {
         v10_date_filter_with_text,
     ],
     "V11": [v11_truncate_date_on_categorical, v11_bucket_on_time, v11_redact_on_numeric],
-    "V12": [v12_sum_over_personal_column, v12_filter_on_personal_column_of_a_sum],
+    "V12": [
+        v12_sum_over_personal_column,
+        v12_filter_on_personal_column_of_a_sum,
+        v12_count_over_an_expression_of_a_personal_column,
+        v12_count_with_a_filter_on_a_personal_column,
+    ],
     "V13": [
         v13_approved_metric_depends_on_draft_metric,
         v13_in_review_metric_depends_on_draft_entity,

@@ -22,10 +22,13 @@ from .compiler_support import lending, request, shop
 METRIC = "outstanding_principal"
 
 
-def with_derived(model: Model, **levels: str) -> Model:
-    """`model` with catalog-derived levels; keys are written `customer__email` for brevity."""
-    derived = {key.replace("__", ".", 1): level for key, level in levels.items()}
+def with_derived(model: Model, levels: dict[str, str]) -> Model:
+    """`model` with catalog-derived column levels; keys are written `<engine_fqn>.<column>`."""
+    derived = {(k.rsplit(".", 1)[0], k.rsplit(".", 1)[1]): v for k, v in levels.items()}
     return dataclasses.replace(model, derived_sensitivity=derived)
+
+
+CUSTOMERS = "lending.core.customers"
 
 
 def refusal(model: Model, **fields: object) -> QueryError:
@@ -69,7 +72,7 @@ def test_a_masked_personal_dimension_can_be_selected() -> None:
 
 
 def test_a_dimension_declared_internal_with_a_personal_derived_level_is_personal() -> None:
-    model = with_derived(lending(), customer__customer_segment="personal")
+    model = with_derived(lending(), {f"{CUSTOMERS}.customer_segment": "personal"})
     error = refusal(model, dimensions=["customer.customer_segment"])
     assert error.code == ErrorCode.PERSONAL_DATA_REFUSED
     flt = {"dimension": "customer.customer_segment", "op": "=", "value": "mass"}
@@ -82,7 +85,7 @@ def test_the_same_dimension_is_fine_without_the_derived_level() -> None:
 
 
 def test_available_dimensions_list_the_derived_level_and_the_missing_mask() -> None:
-    model = with_derived(lending(), customer__customer_segment="personal")
+    model = with_derived(lending(), {f"{CUSTOMERS}.customer_segment": "personal"})
     listed = available_dimensions(model, model.metrics[METRIC])
     option = next(o for o in listed.options if o.ref == "customer.customer_segment")
     assert option.sensitivity == "personal"
@@ -92,7 +95,9 @@ def test_available_dimensions_list_the_derived_level_and_the_missing_mask() -> N
 
 
 def test_a_derived_level_never_loosens_the_declared_one() -> None:
-    model = with_derived(lending(), customer__birth_year="public", customer__email="internal")
+    model = with_derived(
+        lending(), {f"{CUSTOMERS}.birth_date": "public", f"{CUSTOMERS}.email": "internal"}
+    )
     assert model.effective_sensitivity(*_found(model, "customer.birth_year")) == "personal"
     assert refusal(model, dimensions=["customer.email"]).code == ErrorCode.PERSONAL_DATA_REFUSED
 
@@ -102,19 +107,34 @@ def test_a_dimension_without_its_own_level_takes_the_entity_level_then_the_deriv
     entity, dimension = _found(model, "region.region_name")
     assert dimension.sensitivity is None
     assert model.effective_sensitivity(entity, dimension) == entity.sensitivity
-    tightened = with_derived(model, region__region_name="confidential")
+    tightened = with_derived(model, {"shop.core.regions.region_name": "confidential"})
     assert tightened.effective_sensitivity(entity, dimension) == "confidential"
 
 
 def test_a_derived_level_with_a_mask_in_the_definition_is_masked_not_refused() -> None:
-    model = with_derived(shop(), order__item_count="personal")  # bucket mask, not personal in YAML
+    model = with_derived(
+        shop(), {"shop.core.orders.item_count": "personal"}
+    )  # bucket mask, not personal in YAML
     plan = plan_request(model, request("revenue", dimensions=["order.item_count"]))
     assert plan.dimensions[0].sensitivity == "personal"
 
 
 def test_an_unknown_derived_level_is_rejected_when_the_model_is_built() -> None:
     with pytest.raises(ValueError, match="sensitivity"):
-        Model.build([], [], derived_sensitivity={"customer.email": "secret"})
+        Model.build([], [], derived_sensitivity={(CUSTOMERS, "email"): "secret"})
+
+
+def test_a_derived_level_applies_to_every_dimension_that_reads_the_column() -> None:
+    # `registered_date` reads `registered_at`; the catalog tags the column, not the dimension.
+    model = with_derived(lending(), {f"{CUSTOMERS}.registered_at": "personal"})
+    error = refusal(model, dimensions=["customer.registered_date"])
+    assert error.code == ErrorCode.PERSONAL_DATA_REFUSED
+
+
+def test_a_derived_level_on_another_table_does_not_touch_the_dimension() -> None:
+    model = with_derived(lending(), {"lending.core.contracts.city": "personal"})
+    plan = plan_request(model, request(METRIC, dimensions=["customer.city"]))
+    assert plan.dimensions[0].sensitivity == "internal"
 
 
 # ---- order of errors (section 7.7) ----------------------------------------------------
@@ -128,7 +148,7 @@ def test_unknown_comes_before_personal() -> None:
 def test_personal_refusal_comes_before_not_available() -> None:
     # `new_customer_count` is measured on customer, which reaches no contract. A personal
     # contract dimension is refused as personal data, not reported as "not available".
-    model = with_derived(lending(), contract__contract_status="personal")
+    model = with_derived(lending(), {"lending.core.contracts.contract_status": "personal"})
     error = _plan_error(model, "new_customer_count", dimensions=["contract.contract_status"])
     assert error.code == ErrorCode.PERSONAL_DATA_REFUSED
 

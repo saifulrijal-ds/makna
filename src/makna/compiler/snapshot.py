@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from makna.compiler.governance import columns_read
 from makna.model.definitions import Dimension, Entity, Measure, Metric, Relationship, Rule
 from makna.model.sensitivity import rank, stricter
 
@@ -24,7 +25,7 @@ class ReferenceIssue:
     message: str
 
 
-def _frozen_mapping[T](items: Mapping[str, T]) -> Mapping[str, T]:
+def _frozen_mapping[K, T](items: Mapping[K, T]) -> Mapping[K, T]:
     return MappingProxyType(dict(items))
 
 
@@ -32,15 +33,18 @@ def _frozen_mapping[T](items: Mapping[str, T]) -> Mapping[str, T]:
 class Model:
     """Entities and metrics by name, plus the open reference issues by entity name.
 
-    `derived_sensitivity` maps a dimension, written `entity.dimension`, to the level derived from
-    the catalog tags on the columns its expression reads (section 7.6). The caller computes it
-    (the indexer stores it); the compiler never reads a catalog.
+    `derived_sensitivity` maps a physical column to the level the catalog derives from its tags
+    (section 7.6): the key is `(engine_fqn, column)`, the catalog's own identification, where
+    `engine_fqn` is written as an entity's `source.table` is (`catalog.schema.table`). The caller
+    reads these from the catalog (the sync stores `derived_sensitivity` per column); the compiler
+    never reads a catalog. Keys are matched exactly, so they must come from the catalog and not be
+    typed by hand. A dimension is as sensitive as the strictest column its expression reads.
     """
 
     entities: Mapping[str, Entity]
     metrics: Mapping[str, Metric]
     reference_issues: Mapping[str, tuple[ReferenceIssue, ...]] = field(default_factory=dict)
-    derived_sensitivity: Mapping[str, str] = field(default_factory=dict)
+    derived_sensitivity: Mapping[tuple[str, str], str] = field(default_factory=dict)
 
     @classmethod
     def build(
@@ -48,7 +52,7 @@ class Model:
         entities: Iterable[Entity],
         metrics: Iterable[Metric],
         reference_issues: Mapping[str, Iterable[ReferenceIssue]] | None = None,
-        derived_sensitivity: Mapping[str, str] | None = None,
+        derived_sensitivity: Mapping[tuple[str, str], str] | None = None,
     ) -> Model:
         """Index the objects by name. When a name appears twice, the first one is kept.
 
@@ -73,11 +77,14 @@ class Model:
         )
 
     def effective_sensitivity(self, entity: Entity, dimension: Dimension) -> str:
-        """The stricter of the dimension's level (the entity's, if it sets none) and the level
-        derived from catalog tags (section 7.6)."""
-        declared = dimension.sensitivity or entity.sensitivity
-        derived = self.derived_sensitivity.get(f"{entity.name}.{dimension.name}")
-        return declared if derived is None else stricter(declared, derived)
+        """The stricter of the dimension's level (the entity's, if it sets none) and the levels
+        derived from catalog tags on the columns its expression reads (section 7.6)."""
+        level: str = dimension.sensitivity or entity.sensitivity
+        for column in columns_read(dimension):
+            derived = self.derived_sensitivity.get((entity.source.table, column))
+            if derived is not None:
+                level = stricter(level, derived)
+        return level
 
     # ---- lookups: each returns None when the name does not resolve -------------------
 

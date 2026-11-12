@@ -92,6 +92,39 @@ def test_the_error_is_internal_not_a_caller_error() -> None:
     assert not isinstance(caught.value, QueryError)
 
 
+# ---- only the bare column may be counted ------------------------------------------------
+
+
+def test_a_count_of_an_expression_over_a_personal_column_fails() -> None:
+    predicate = exp.Case(
+        ifs=[
+            exp.If(
+                this=exp.LT(this=col("birth_date"), expression=exp.Null()),
+                true=exp.Literal.number(1),
+            )
+        ]
+    )
+    with pytest.raises(GovernanceError):
+        verify(select(exp.Count(this=predicate)), plan())
+
+
+def test_a_distinct_count_of_a_comparison_fails() -> None:
+    comparison = exp.GT(this=col("birth_date"), expression=exp.Literal.number(1))
+    with pytest.raises(GovernanceError):
+        verify(select(exp.Count(this=exp.Distinct(expressions=[comparison]))), plan())
+
+
+def test_a_count_of_a_function_of_a_personal_column_fails() -> None:
+    with pytest.raises(GovernanceError):
+        verify(select(exp.Count(this=exp.Lower(this=col("email")))), plan())
+
+
+def test_a_distinct_count_of_two_expressions_fails() -> None:
+    both = exp.Distinct(expressions=[col("email"), col("province")])
+    with pytest.raises(GovernanceError):
+        verify(select(exp.Count(this=both)), plan())
+
+
 # ---- every personal column of the model, not only the selected ones ---------------------
 
 
@@ -110,7 +143,7 @@ def test_ordinary_columns_of_the_same_table_pass() -> None:
 def test_a_column_made_personal_by_the_catalog_is_checked() -> None:
     ordinary = plan()
     verify(select(col("province")), ordinary)
-    derived = plan(with_derived(lending(), customer__province="personal"))
+    derived = plan(with_derived(lending(), {"lending.core.customers.province": "personal"}))
     with pytest.raises(GovernanceError, match="province"):
         verify(select(col("province")), derived)
 
