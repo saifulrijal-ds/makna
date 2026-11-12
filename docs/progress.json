@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-11",
+  "updated": "2026-11-12",
   "statuses": [
     "not_started",
     "in_progress",
@@ -235,7 +235,7 @@
         "WP-10"
       ],
       "suggested_model": "Sonnet 5.5",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": "WP-12",

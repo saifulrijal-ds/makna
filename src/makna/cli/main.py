@@ -10,11 +10,14 @@ from pathlib import Path
 
 from makna.catalog.base import ConnectorError
 from makna.catalog.file import FileConnector
-from makna.catalog.references import open_issues
+from makna.catalog.references import load_view, open_issues
 from makna.catalog.sync import sync_catalog
-from makna.config import ConfigError, load_search_runtime, load_tag_map
+from makna.config import ConfigError, load_engine_runtime, load_search_runtime, load_tag_map
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
 from makna.definitions.validate import validate
+from makna.engine.base import EngineError
+from makna.engine.compare import catalog_schemas, compare
+from makna.engine.postgres import PostgresConnector
 from makna.index import indexer
 from makna.index.db import database_url_from_env, make_engine
 from makna.model.definitions import Entity, GlossaryTerm
@@ -55,8 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000, help="port to listen on")
     catalog = commands.add_parser(
         "catalog",
-        help="sync the catalog copy and list reference issues",
-        description="Catalog commands. Both need MAKNA_DATABASE_URL in the environment.",
+        help="sync the catalog copy, list reference issues, compare with the engine",
+        description="Catalog commands. All need MAKNA_DATABASE_URL in the environment.",
     )
     catalog_commands = catalog.add_subparsers(dest="catalog_command", metavar="<command>")
     sync = catalog_commands.add_parser(
@@ -87,6 +90,20 @@ def build_parser() -> argparse.ArgumentParser:
         "issues",
         help="list the open reference issues",
         description="Print one line per open reference issue: 'CODE object part: message'.",
+    )
+    catalog_commands.add_parser(
+        "compare",
+        help="compare the catalog copy with the tables and columns of the engine",
+        description=(
+            "Read the synced catalog copy (MAKNA_DATABASE_URL) and the engine's tables "
+            "(MAKNA_ENGINE_URL, a read-only account), and print one line per difference: "
+            "'missing_table|missing_column schema.table[.column]: in the catalog, not in the "
+            "engine' or 'extra_table|extra_column ...: in the engine, not in the catalog'. "
+            "Only names are compared, in the schemas the catalog has tables in. Prints which "
+            "engine database it read, without the password. Exits 0 if there are no "
+            "differences, 1 if there are differences, 2 if a setting is missing or a database "
+            "cannot be read."
+        ),
     )
     index = commands.add_parser(
         "index",
@@ -223,6 +240,61 @@ def _catalog_issues() -> int:
     return 0
 
 
+def _catalog_compare() -> int:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        runtime = load_engine_runtime()
+        if runtime.engine_url is None:
+            print(
+                "makna catalog compare: Missing environment variable: MAKNA_ENGINE_URL",
+                file=sys.stderr,
+            )
+            return 2
+        engine = make_engine(database_url_from_env())
+    except (RuntimeError, ConfigError) as error:
+        print(f"makna catalog compare: {error}", file=sys.stderr)
+        return 2
+    connector = PostgresConnector(
+        runtime.engine_url.get_secret_value(),
+        statement_timeout_seconds=runtime.engine.statement_timeout_seconds,
+    )
+    try:
+        with engine.connect() as connection:
+            catalog = {fqn: list(columns) for fqn, columns in load_view(connection).tables.items()}
+        if not catalog:
+            print(
+                "makna catalog compare: the catalog copy has no tables; "
+                "run `makna catalog sync` first",
+                file=sys.stderr,
+            )
+            return 2
+        engine_tables = [
+            table for schema in catalog_schemas(catalog) for table in connector.list_tables(schema)
+        ]
+    except SQLAlchemyError as error:
+        print(f"makna catalog compare: cannot read the catalog copy: {error}", file=sys.stderr)
+        return 2
+    except EngineError as error:
+        print(f"makna catalog compare: {error}", file=sys.stderr)
+        return 2
+    finally:
+        engine.dispose()
+    differences = compare(catalog, engine_tables)
+    print(f"engine: {connector.target}")
+    print(f"catalog tables: {len(catalog)}, engine tables read: {len(engine_tables)}")
+    for difference in differences:
+        side = (
+            "in the catalog, not in the engine"
+            if difference.kind.startswith("missing")
+            else "in the engine, not in the catalog"
+        )
+        print(f"{difference.kind} {difference.name}: {side}")
+    if not differences:
+        print("no differences")
+    return 1 if differences else 0
+
+
 def _index_build(definitions: Path | None) -> int:
     from sqlalchemy.exc import SQLAlchemyError
 
@@ -351,7 +423,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _catalog_sync(args.file, args.definitions)
         if args.catalog_command == "issues":
             return _catalog_issues()
-        print("makna catalog: choose sync or issues", file=sys.stderr)
+        if args.catalog_command == "compare":
+            return _catalog_compare()
+        print("makna catalog: choose sync, issues or compare", file=sys.stderr)
         return 2
     if args.command == "index":
         if args.index_command == "build":
