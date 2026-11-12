@@ -9,11 +9,14 @@ is fixed so that a reader (and a test) can rely on it:
 3. for each input, the filters and rules that are part of its definition;
 4. the filters the request added;
 5. the join path behind every dimension or filter that lives on another entity;
-6. for each personal dimension, that it is masked and how.
+6. for each masked personal dimension, that it is masked and how;
+7. when the governance policy relaxes a rule (D-29), one sentence that names the mode and each
+   relaxed rule.
 
-A balance metric adds a warning, and so does a personal dimension: groups built from fewer than
-the minimum number of records are left out, and the result column that says how many is named.
-Nothing here changes what the SQL does.
+A balance metric adds a warning, and so does a personal dimension while the policy has a minimum
+group size: groups built from fewer than the minimum number of records are left out, and the
+result column that says how many is named. A relaxed policy adds one more warning that says the
+same as sentence 7. Nothing here changes what the SQL does.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from makna.compiler.graph import JoinStep
 from makna.compiler.plan import InputPlan, PlannedDimension, PlannedFilter, PlannedRule, QueryPlan
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Scalar
+from makna.model.governance import GovernancePolicy
 
 _OPS = {
     "=": "is",
@@ -55,9 +59,14 @@ def explain(model: Model, plan: QueryPlan) -> Explanation:
     sentences.extend(_request_filter_sentences(plan))
     sentences.extend(_join_sentences(model, plan))
     sentences.extend(_mask_sentence(model, d) for d in plan.dimensions if d.masked)
+    relaxed = relaxed_rules_text(plan.governance)
+    if relaxed is not None:
+        sentences.append(_relaxed_sentence(relaxed))
     warnings = [w for item in plan.inputs if (w := _balance_warning(model, plan, item))]
     if plan.guard:
         warnings.append(_group_size_warning(plan))
+    if relaxed is not None:
+        warnings.append(_relaxed_warning(relaxed))
     return Explanation(tuple(sentences), tuple(warnings))
 
 
@@ -279,6 +288,39 @@ def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
 
 # --------------------------------------------------------------------------------------
 # Warnings
+
+
+_RELAXED_MEANING = {
+    "min_group_size": "no group is left out for being small",
+    "allow_personal_filters": "filters on personal dimensions are allowed",
+    "apply_masks": "masked personal dimensions are returned unmasked",
+    "allow_unmasked_personal": "personal dimensions without a masking rule are returned unmasked",
+}
+
+
+def relaxed_rules_text(policy: GovernancePolicy) -> str | None:
+    """`mode custom relaxes min_group_size = 0 (...) and apply_masks = false (...)`, or None when
+    the policy relaxes nothing. It names the mode and each relaxed rule with its value."""
+    relaxed = policy.relaxed()
+    if not relaxed:
+        return None
+    rules = [f"{name} = {str(value).lower()} ({_RELAXED_MEANING[name]})" for name, value in relaxed]
+    return f"mode {policy.mode} relaxes {_list(rules)}"
+
+
+def _relaxed_sentence(text: str) -> str:
+    return _sentence(
+        f"The governance setting of this server is {text}, so the personal-data protection "
+        "that applies by default is reduced for this result"
+    )
+
+
+def _relaxed_warning(text: str) -> str:
+    return _sentence(
+        f"Governance {text}. The server configuration sets this, not the request. Personal "
+        "data protection is reduced: check that the people and agents who can read this result "
+        "may see the data it can contain"
+    )
 
 
 def _group_size_warning(plan: QueryPlan) -> str:

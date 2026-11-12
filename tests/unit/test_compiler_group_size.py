@@ -21,8 +21,9 @@ import pytest
 
 from makna.compiler.compile import compile_request
 from makna.compiler.governance import GROUPS_LEFT_OUT
-from makna.compiler.plan import DEFAULT_MIN_GROUP_SIZE, plan_request
+from makna.compiler.plan import plan_request
 from makna.compiler.sqlgen import build_tree
+from makna.model.governance import DEFAULT_MIN_GROUP_SIZE, GovernancePolicy
 
 from .compiler_support import lending, request
 from .duckdb_support import run_sql, run_tree
@@ -35,7 +36,9 @@ BIRTH_YEAR = "CAST(date_trunc('year', cu.birth_date) AS DATE)"
 
 def groups(con: duckdb.DuckDBPyConnection, metric: str, min_size: int, **fields: Any) -> Any:
     """Run a request and return (key tuples with values, the `__groups_left_out` column)."""
-    plan = plan_request(lending(), request(metric, **fields), min_group_size=min_size)
+    plan = plan_request(
+        lending(), request(metric, **fields), governance=GovernancePolicy.strict(min_size)
+    )
     rows = run_tree(con, build_tree(lending(), plan))
     names = [c.name for c in plan.columns]
     return plan, names, rows
@@ -72,15 +75,13 @@ def test_the_default_minimum_is_ten_like_the_configuration() -> None:
 @pytest.mark.parametrize("bad", [0, 1, -1])
 def test_a_minimum_below_two_is_rejected(bad: int) -> None:
     with pytest.raises(ValueError, match="min_group_size"):
-        plan_request(lending(), request("new_customer_count"), min_group_size=bad)
-    with pytest.raises(ValueError, match="min_group_size"):
-        compile_request(lending(), request("new_customer_count"), min_group_size=bad)
+        GovernancePolicy.strict(bad)
 
 
 def test_the_minimum_goes_into_the_sql_and_the_warning() -> None:
     response = compile_request(
         lending(), request("new_customer_count", dimensions=["customer.birth_year"]),
-        min_group_size=7,
+        governance=GovernancePolicy.strict(7),
     )  # fmt: skip
     assert ">= 7" in response.sql
     [warning] = [w for w in response.warnings if GROUPS_LEFT_OUT in w]
@@ -265,7 +266,7 @@ def test_a_ratio_drops_a_group_when_either_input_has_too_few_records(
     plan = plan_request(
         lending(),
         request("npf_ratio", dimensions=["customer.birth_year", "customer.province"]),
-        min_group_size=minimum,
+        governance=GovernancePolicy.strict(minimum),
     )
     rows = run_tree(lending_full_db, build_tree(lending(), plan))
     assert {tuple(r[:2]) for r in rows} == wanted
@@ -297,16 +298,22 @@ def test_each_entity_with_a_personal_dimension_is_counted_and_all_must_be_large_
 ) -> None:
     model = redacting("branch.region_name")
     fields = {"dimensions": ["customer.birth_year", "branch.region_name"]}
-    plan = plan_request(model, request("outstanding_principal", **fields), min_group_size=2)
+    plan = plan_request(
+        model, request("outstanding_principal", **fields), governance=GovernancePolicy.strict(2)
+    )
     assert [g.entity for g in plan.guard] == ["customer", "branch"]
     rows = run_tree(lending_db, build_tree(model, plan))
-    response = compile_request(model, request("outstanding_principal", **fields), min_group_size=2)
+    response = compile_request(
+        model, request("outstanding_principal", **fields), governance=GovernancePolicy.strict(2)
+    )
     assert response.sql.count("COUNT(DISTINCT") == 2
     assert all(row[1] == "***" for row in rows)
     assert [c.name for c in plan.columns][-1] == GROUPS_LEFT_OUT
     # A branch is a group of one when only one branch is behind the group: with the minimum
     # above the branch count nothing is left, and every group is counted as left out.
-    plan = plan_request(model, request("outstanding_principal", **fields), min_group_size=10**6)
+    plan = plan_request(
+        model, request("outstanding_principal", **fields), governance=GovernancePolicy.strict(10**6)
+    )
     assert run_tree(lending_db, build_tree(model, plan)) == []
 
 
@@ -317,7 +324,7 @@ def test_an_entity_with_a_composite_key_is_counted_by_the_whole_key(
     plan = plan_request(
         model,
         request("outstanding_principal", dimensions=["contract_snapshot.collectibility"]),
-        min_group_size=2,
+        governance=GovernancePolicy.strict(2),
     )
     assert plan.guard[0].primary_key == ("snapshot_date", "contract_id")
     rows = run_tree(lending_db, build_tree(model, plan))

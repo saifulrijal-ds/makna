@@ -23,6 +23,7 @@ from makna.compiler.sqlgen import build_tree
 from makna.definitions.loader import load_definitions
 from makna.definitions.validate import validate
 from makna.model.definitions import Dimension, Filter, Measure
+from makna.model.governance import GovernancePolicy
 from makna.model.request import ErrorCode, QueryError
 from makna.services.examples import check_example_requests
 
@@ -203,11 +204,13 @@ def test_makna_validate_does_not_crash_on_such_a_dimension(tmp_path: Path) -> No
 @pytest.mark.parametrize("bad", [1, 0, -3])
 def test_a_minimum_group_size_below_two_is_rejected(bad: int) -> None:
     with pytest.raises(ValueError, match="at least 2"):
-        plan_request(lending(), request("new_customer_count"), min_group_size=bad)
+        GovernancePolicy.strict(bad)
 
 
 def test_two_is_accepted() -> None:
-    assert plan_request(lending(), request("new_customer_count"), min_group_size=2)
+    assert plan_request(
+        lending(), request("new_customer_count"), governance=GovernancePolicy.strict(2)
+    )
 
 
 # ---- fix 6: the warning does not promise what it cannot ---------------------------------
@@ -279,7 +282,7 @@ def test_the_number_left_out_by_a_ratio_equals_a_reference_count(
     plan = plan_request(
         lending(),
         request("npf_ratio", dimensions=["customer.birth_year", "customer.province"]),
-        min_group_size=minimum,
+        governance=GovernancePolicy.strict(minimum),
     )
     rows = run_tree(lending_full_db, build_tree(lending(), plan))
     assert {row[-1] for row in rows} == {len(small)}

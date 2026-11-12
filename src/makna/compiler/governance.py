@@ -13,6 +13,14 @@ and then only in the select list or the GROUP BY of its own query. A mask-shaped
 definition gets no exemption. The check catches mistakes in the generator itself; it is not a
 second planner and does not look at the model.
 
+The governance policy of the plan (D-29) widens what is accepted, and nothing else. Under `strict`
+the rules above apply as they are. Under `custom`, a raw personal column is also accepted where
+an enabled rule allows it: in the select list and GROUP BY for the columns of dimensions the
+policy lets return raw (`allow_unmasked_personal` for a dimension with no masking rule,
+`apply_masks = false` for one with a rule), and anywhere inside a WHERE for
+`allow_personal_filters`. Under `off`, nothing personal is checked. Every other case still fails,
+in particular `MIN`, `MAX`, `SUM`, and `AVG` of a personal column.
+
 All SQL is built as sqlglot nodes. No text is formatted or concatenated.
 """
 
@@ -26,6 +34,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
 from makna.model.definitions import Dimension, MaskBucket, Masking, MaskRedact, MaskTruncateDate
+from makna.model.governance import GovernancePolicy
 
 if TYPE_CHECKING:
     from makna.compiler.plan import QueryPlan
@@ -109,6 +118,24 @@ def personal_columns(model: Model) -> frozenset[tuple[str, str]]:
     return frozenset(found)
 
 
+def raw_returnable_columns(model: Model, policy: GovernancePolicy) -> frozenset[tuple[str, str]]:
+    """`(table, column)`, lower case, of the personal columns the select list and GROUP BY may
+    return unmasked under `policy`: those every personal dimension reading them may return raw
+    (`GovernancePolicy.may_return_raw`). A column the catalog tags personal that no dimension
+    reads is not in the set, so nothing may return it. Empty under `strict`."""
+    allowed: set[tuple[str, str]] = set()
+    refused: set[tuple[str, str]] = set()
+    for entity in model.entities.values():
+        table = entity.source.table.lower()
+        for dimension in entity.dimensions:
+            if model.effective_sensitivity(entity, dimension) != "personal":
+                continue
+            ok = policy.may_return_raw(dimension.masking is not None)
+            target = allowed if ok else refused
+            target.update((table, name.lower()) for name in columns_read(dimension))
+    return frozenset(allowed - refused)
+
+
 # --------------------------------------------------------------------------------------
 # The final check
 
@@ -144,17 +171,21 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     or a join condition. `MIN`, `MAX`, and other aggregates do not count, because they return one
     person's value. `SELECT *` over a table that holds a personal column fails too.
 
+    The plan's governance policy can widen this (see the module docstring): under `custom` a
+    raw personal column is accepted where an enabled rule allows it, and under `off` nothing
+    personal is checked.
+
     Raises `GovernanceError`. It does not plan again and does not read the model.
     """
     personal = plan.personal_columns
-    if not personal:
+    if not personal or plan.governance.mode == "off":
         return
     masked = {d.column: d.dimension.masking for d in plan.dimensions if d.masked}
     for node in tree.find_all(exp.Column, exp.Star):
         if isinstance(node, exp.Star) and isinstance(node.parent, (exp.Column, exp.Count)):
             continue  # `t.*` is checked as a column; `COUNT(*)` reads no value
         for table, column in _personal_reads(node, personal):
-            if not _allowed(node, masked):
+            if not _allowed(node, masked) and not _raw_allowed(node, (table, column), plan):
                 raise _violation(column, table, _where(node))
 
 
@@ -239,6 +270,32 @@ def _allowed(node: exp.Expr, masked: _Masked) -> bool:
             covered = True
         child = parent
     return covered
+
+
+def _raw_allowed(node: exp.Expr, pair: tuple[str, str], plan: QueryPlan) -> bool:
+    """True if the policy of the plan lets this raw personal column stand where it is.
+
+    - Anywhere inside a WHERE (a request filter, a time range, a balance's month-end selection,
+      a filter of a definition): when `allow_personal_filters`.
+    - In the select list or GROUP BY of its own query, in an expression that is not inside an
+      aggregate: when the column is one of the plan's `raw_columns`, that is, every personal
+      dimension that reads it may be returned raw. Inside an aggregate (`MIN`, `MAX`, `SUM`, a
+      `COUNT` of an expression) it never is, because that returns or tests one person's value.
+    - Nowhere else: not in HAVING, ORDER BY, or a join condition.
+    """
+    ancestors = _ancestors(node)
+    if any(isinstance(a, exp.Where) for a in ancestors):
+        return plan.governance.allow_personal_filters
+    if not isinstance(node, exp.Column) or pair not in plan.raw_columns:
+        return False
+    child: exp.Expr = node
+    for parent in ancestors:
+        if isinstance(parent, (exp.AggFunc, exp.Window)):
+            return False
+        if isinstance(parent, exp.Select):
+            return child.arg_key in _ALLOWED_CLAUSES
+        child = parent
+    return False
 
 
 def _is_planned_mask(mask: exp.Expr, masked: _Masked) -> bool:

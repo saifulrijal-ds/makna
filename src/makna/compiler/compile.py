@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from makna.compiler.explain import explain
 from makna.compiler.governance import verify
-from makna.compiler.plan import DEFAULT_MIN_GROUP_SIZE, QueryPlan, plan_request
+from makna.compiler.plan import QueryPlan, plan_request
 from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import Dialect, build_tree, to_sql
+from makna.model.governance import STRICT, GovernancePolicy
 from makna.model.request import CompileResponse, MetricRef, QueryRequest
 
 
@@ -39,13 +40,12 @@ def compile_request(
     dialect: Dialect = "postgres",
     *,
     enforce_status: bool = True,
-    min_group_size: int = DEFAULT_MIN_GROUP_SIZE,
+    governance: GovernancePolicy = STRICT,
 ) -> CompileResponse:
     """Plan `request` and compile the plan, or raise one `QueryError`.
 
-    `min_group_size` is the `[governance]` setting of `config/makna.toml`; the caller passes it.
+    `governance` is the policy built from the `[governance]` setting of `config/makna.toml`
+    (D-29); the caller passes it. The default is `strict` with a minimum group size of 10.
     """
-    plan = plan_request(
-        model, request, enforce_status=enforce_status, min_group_size=min_group_size
-    )
+    plan = plan_request(model, request, enforce_status=enforce_status, governance=governance)
     return compile_plan(model, plan, dialect)

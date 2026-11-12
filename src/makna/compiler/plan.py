@@ -9,8 +9,10 @@ reads it and decides nothing new. Any failure is one `QueryError` and nothing is
 `available_dimensions` is the same logic seen from the other side: which dimensions a metric
 can be grouped or filtered by (section 7.4). The indexer stores its result.
 
-Not here: sensitivity and masking (WP-10). Personal dimensions plan like any other and carry
-their sensitivity and masking, so the governance step can refuse or mask them.
+Personal data (WP-10, WP-10B): the planner applies the `GovernancePolicy` it is given (D-29). A
+personal dimension is refused, masked, or returned raw as the policy says, a filter on one is
+refused or planned as the policy says, and the record counts for the minimum group size are added
+only when the policy has one. Under the default `strict` policy nothing is relaxed.
 """
 
 from __future__ import annotations
@@ -23,11 +25,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-from makna.compiler import governance
+from makna.compiler import governance as personal_data
 from makna.compiler.graph import JoinPath, JoinStep, path_names, resolve_path
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Dimension, Entity, Grain, Measure, Metric, RuleRef, Scalar
 from makna.model.definitions import Filter as DefinitionFilter
+from makna.model.governance import STRICT, GovernancePolicy
 from makna.model.request import (
     FILTER_OPS,
     MAX_LIMIT,
@@ -38,8 +41,6 @@ from makna.model.request import (
     ResultColumn,
 )
 
-DEFAULT_MIN_GROUP_SIZE = 10
-MIN_GROUP_SIZE_FLOOR = 2
 GRAINS: tuple[str, ...] = get_args(Grain)
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
@@ -124,15 +125,17 @@ class PlannedDimension:
     name: str
     dimension: Dimension
     sensitivity: str
+    masked: bool = False
+    """True when SQL generation puts the dimension's masking rule around it: a personal dimension
+    that has a rule, while the policy applies masks. A personal dimension that is not masked is
+    returned raw, which the policy must allow."""
 
     @property
     def column(self) -> str:
         return f"{self.entity}__{self.name}"
 
     @property
-    def masked(self) -> bool:
-        """True for a personal dimension: planning refuses one without a masking rule, so a
-        planned personal dimension always has a mask that SQL generation applies."""
+    def personal(self) -> bool:
         return self.sensitivity == "personal"
 
 
@@ -212,11 +215,18 @@ class QueryPlan:
     time_end: datetime.date | None
     limit: int
     columns: tuple[ResultColumn, ...]
-    min_group_size: int = DEFAULT_MIN_GROUP_SIZE
+    governance: GovernancePolicy = STRICT
     guard: tuple[GuardedEntity, ...] = ()
-    """Empty unless a personal dimension is selected."""
+    """Empty unless a personal dimension is selected and the policy has a minimum group size."""
     personal_columns: frozenset[tuple[str, str]] = frozenset()
     """`(table, column)` read by any personal dimension of the model, for `governance.verify`."""
+    raw_columns: frozenset[tuple[str, str]] = frozenset()
+    """The personal columns the policy lets the select list and GROUP BY return unmasked, for
+    `governance.verify`. Empty under `strict`."""
+
+    @property
+    def min_group_size(self) -> int:
+        return self.governance.min_group_size
 
 
 # --------------------------------------------------------------------------------------
@@ -306,13 +316,18 @@ def allowed_grains(model: Model, metric: Metric) -> tuple[str, ...]:
 # Available dimensions (section 7.4)
 
 
-def available_dimensions(model: Model, metric: Metric) -> AvailableDimensions:
+def available_dimensions(
+    model: Model, metric: Metric, *, governance: GovernancePolicy = STRICT
+) -> AvailableDimensions:
     """The dimensions `metric` can be grouped or filtered by.
 
     Simple metric: the dimensions of the measure's entity and of every entity it reaches by the
     path rule. Ratio or derived metric: of an entity every simple input reaches, and only when
     all inputs enter it through the same final relationship. Entities that need a join choice the
     metric does not make are left out and reported in `excluded` (and `warnings`).
+
+    A personal dimension without a masking rule is listed as not available unless `governance`
+    allows unmasked personal data (D-29).
 
     Raises `BROKEN_REFERENCE` if the metric's inputs or measures do not resolve.
     """
@@ -335,7 +350,7 @@ def available_dimensions(model: Model, metric: Metric) -> AvailableDimensions:
         if len({p.steps[-1] if p.steps else None for p in paths}) > 1:
             excluded.append(_inconsistent(entity.name, paths))
             continue
-        options.extend(_options(model, entity, tuple(paths)))
+        options.extend(_options(model, entity, tuple(paths), governance))
     return AvailableDimensions(tuple(options), tuple(excluded))
 
 
@@ -386,11 +401,17 @@ def _inconsistent(entity: str, paths: list[InputPath]) -> ExcludedEntity:
     )
 
 
-def _options(model: Model, entity: Entity, paths: tuple[InputPath, ...]) -> list[DimensionOption]:
+def _options(
+    model: Model, entity: Entity, paths: tuple[InputPath, ...], governance: GovernancePolicy
+) -> list[DimensionOption]:
     found: list[DimensionOption] = []
     for dimension in entity.dimensions:
         sensitivity = model.effective_sensitivity(entity, dimension)
-        unmasked = sensitivity == "personal" and dimension.masking is None
+        unmasked = (
+            sensitivity == "personal"
+            and dimension.masking is None
+            and not governance.allow_unmasked_personal
+        )
         found.append(
             DimensionOption(
                 ref=f"{entity.name}.{dimension.name}",
@@ -419,22 +440,17 @@ def plan_request(
     request: QueryRequest,
     *,
     enforce_status: bool = True,
-    min_group_size: int = DEFAULT_MIN_GROUP_SIZE,
+    governance: GovernancePolicy = STRICT,
 ) -> QueryPlan:
     """Plan `request` against `model`, or raise one `QueryError`.
 
     `enforce_status=False` skips the check that the metric and its inputs are approved. It is for
     the example-request check (V19), which runs before a metric is approved.
 
-    `min_group_size` is the `[governance]` setting of `config/makna.toml`. The compiler does not
-    read configuration; the caller passes it. It must be at least 2
-    (`ValueError` otherwise): 1 keeps every group.
+    `governance` is the policy of the deployment (D-29), built from the `[governance]` setting
+    of `config/makna.toml`. The compiler does not read configuration; the caller passes it. The
+    default is `strict` with a minimum group size of 10.
     """
-    if min_group_size < MIN_GROUP_SIZE_FLOOR:
-        raise ValueError(
-            f"min_group_size must be at least {MIN_GROUP_SIZE_FLOOR}, not {min_group_size}: "
-            "a group of one is a single record, so a smaller minimum would switch the rule off"
-        )
     metric = model.metrics.get(request.metric)
     if metric is None:
         raise _unknown_metric(model, request.metric)
@@ -448,15 +464,16 @@ def plan_request(
     _check_limit(request.limit)
     start, end = _time_range(request.time_start, request.time_end)
     _check_grain(model, metric, request.grain)
-    _check_official_dates(model, request, [measures[leaf.name] for leaf in leaves])
+    _check_official_dates(model, request, [measures[leaf.name] for leaf in leaves], governance)
 
-    available = available_dimensions(model, metric)
+    available = available_dimensions(model, metric, governance=governance)
     dimensions = tuple(
-        _planned_dimension(model, available, ref) for ref in dict.fromkeys(request.dimensions)
+        _planned_dimension(model, available, ref, governance)
+        for ref in dict.fromkeys(request.dimensions)
     )
-    filters = tuple(_planned_filter(model, available, f) for f in request.filters)
+    filters = tuple(_planned_filter(model, available, f, governance) for f in request.filters)
 
-    guard = _guard(model, dimensions)
+    guard = _guard(model, dimensions, governance)
     inputs = tuple(
         _plan_input(model, leaf, *measures[leaf.name], dimensions, filters) for leaf in leaves
     )
@@ -480,9 +497,10 @@ def plan_request(
         time_end=end,
         limit=request.limit,
         columns=_columns(metric, closure, request.grain, dimensions, guard),
-        min_group_size=min_group_size,
+        governance=governance,
         guard=guard,
-        personal_columns=governance.personal_columns(model),
+        personal_columns=personal_data.personal_columns(model),
+        raw_columns=personal_data.raw_returnable_columns(model, governance),
     )
 
 
@@ -579,18 +597,29 @@ def _time_range(
 
 
 def _check_official_dates(
-    model: Model, request: QueryRequest, measures: list[tuple[Entity, Measure]]
+    model: Model,
+    request: QueryRequest,
+    measures: list[tuple[Entity, Measure]],
+    governance: GovernancePolicy,
 ) -> None:
     """PERSONAL_DATA_REFUSED when an input's official date is personal and the request would use
-    it: a grain, a time range, or a balance (which always reads its snapshot date). A personal
-    date cannot be returned or filtered on, and a catalog that starts tagging a date personal
-    closes this door at once (fail closed; section 7.6)."""
-    used = request.grain is not None or request.time_start or request.time_end
+    it in a way the policy does not allow. A time range, and a balance (which always keeps the
+    month-end rows of its snapshot date), filter on the date. A grain selects the date. A
+    personal date cannot be returned or filtered on under `strict`, and a catalog that starts
+    tagging a date personal closes this door at once (fail closed; section 7.6). The policy
+    decides as it does for a dimension: filtering needs `allow_personal_filters`, and selecting
+    needs the date to be returnable raw (`apply_masks` false if it has a masking rule,
+    `allow_unmasked_personal` if not)."""
+    ranged = bool(request.time_start or request.time_end)
     for entity, measure in measures:
         date = next((d for d in entity.dimensions if d.name == measure.time_dimension), None)
         if date is None or model.effective_sensitivity(entity, date) != "personal":
             continue
-        if used or measure.semi_additive == "last":
+        filtered = ranged or measure.semi_additive == "last"
+        selected = request.grain is not None
+        if (filtered and not governance.allow_personal_filters) or (
+            selected and not governance.may_return_raw(date.masking is not None)
+        ):
             ref = f"{entity.name}.{date.name}"
             raise QueryError(
                 ErrorCode.PERSONAL_DATA_REFUSED,
@@ -658,10 +687,17 @@ def _refuse_personal(
     dimension: Dimension,
     sensitivity: str,
     use: Literal["group", "filter"],
+    governance: GovernancePolicy,
 ) -> None:
     """PERSONAL_DATA_REFUSED (section 7.6) for a personal dimension that is filtered on, or
-    grouped by without a masking rule. A masked personal dimension may be grouped by."""
-    if sensitivity != "personal" or (use == "group" and dimension.masking is not None):
+    grouped by without a masking rule, unless the policy allows it (D-29: `allow_personal_filters`
+    and `allow_unmasked_personal`). A personal dimension with a masking rule may be grouped by
+    under every policy."""
+    if sensitivity != "personal":
+        return
+    if use == "filter" and governance.allow_personal_filters:
+        return
+    if use == "group" and (dimension.masking is not None or governance.allow_unmasked_personal):
         return
     masked = dimension.masking is not None
     instead = [o.ref for o in available.options if o.available and o.sensitivity != "personal"]
@@ -688,22 +724,26 @@ def _refuse_personal(
     )
 
 
-def _planned_dimension(model: Model, available: AvailableDimensions, ref: str) -> PlannedDimension:
+def _planned_dimension(
+    model: Model, available: AvailableDimensions, ref: str, governance: GovernancePolicy
+) -> PlannedDimension:
     """Checks in this order: the dimension exists, it is not refused as personal data, the
-    metric can reach it (section 7.7)."""
+    metric can reach it (section 7.7). A personal dimension with a masking rule is masked while
+    the policy applies masks; otherwise it is returned raw, which the policy has allowed."""
     entity, dimension = _find(model, available, ref)
     sensitivity = model.effective_sensitivity(entity, dimension)
-    _refuse_personal(available, ref, dimension, sensitivity, "group")
+    _refuse_personal(available, ref, dimension, sensitivity, "group", governance)
     _check_reachable(available, ref, entity)
-    return PlannedDimension(ref, entity.name, dimension.name, dimension, sensitivity)
+    masked = sensitivity == "personal" and dimension.masking is not None and governance.apply_masks
+    return PlannedDimension(ref, entity.name, dimension.name, dimension, sensitivity, masked)
 
 
 def _planned_filter(
-    model: Model, available: AvailableDimensions, flt: RequestFilter
+    model: Model, available: AvailableDimensions, flt: RequestFilter, governance: GovernancePolicy
 ) -> PlannedFilter:
     entity, dimension = _find(model, available, flt.dimension)
     sensitivity = model.effective_sensitivity(entity, dimension)
-    _refuse_personal(available, flt.dimension, dimension, sensitivity, "filter")
+    _refuse_personal(available, flt.dimension, dimension, sensitivity, "filter", governance)
     _check_reachable(available, flt.dimension, entity)
     value = _checked_value(flt, dimension)
     return PlannedFilter(flt.dimension, entity.name, flt.op, value, dimension, sensitivity)
@@ -776,18 +816,23 @@ def _type_fits(dimension_type: str, value: object) -> bool:
     return isinstance(value, (str, int, float))
 
 
-def _guard(model: Model, dimensions: Sequence[PlannedDimension]) -> tuple[GuardedEntity, ...]:
+def _guard(
+    model: Model, dimensions: Sequence[PlannedDimension], governance: GovernancePolicy
+) -> tuple[GuardedEntity, ...]:
     """The entities whose records are counted: one for each entity holding a selected personal
-    dimension, in the order the dimensions were asked for."""
+    dimension (masked or raw), in the order the dimensions were asked for. None when the policy
+    has no minimum group size."""
+    if governance.min_group_size == 0:
+        return ()
     found: dict[str, GuardedEntity] = {}
     for dimension in dimensions:
-        if dimension.masked and dimension.entity not in found:
+        if dimension.personal and dimension.entity not in found:
             entity = model.entities[dimension.entity]
             found[entity.name] = GuardedEntity(
                 entity.name,
                 entity.label,
                 tuple(entity.primary_key),
-                governance.RECORDS_PREFIX + entity.name,
+                personal_data.RECORDS_PREFIX + entity.name,
             )
     return tuple(found.values())
 
@@ -892,11 +937,11 @@ def _columns(
     )
     columns.append(ResultColumn(name=metric.name, role="metric", unit=_unit(metric)))
     if guard:
-        columns.append(ResultColumn(name=governance.GROUPS_LEFT_OUT, role="governance"))
+        columns.append(ResultColumn(name=personal_data.GROUPS_LEFT_OUT, role="governance"))
     names = [c.name for c in columns]
     repeated = sorted({n for n in names if names.count(n) > 1})
     if repeated:
-        raise governance.GovernanceError(
+        raise personal_data.GovernanceError(
             f"internal error: result columns would share the name {', '.join(repeated)}; "
             "entity, dimension, and metric names must not combine to the same column name"
         )
