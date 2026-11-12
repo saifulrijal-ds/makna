@@ -76,6 +76,14 @@ min_group_size = 10
 # allow_unmasked_personal = false   # true: a personal dimension with no masking rule may be
 #                                   #       selected and returns the raw value
 
+# The engine connector (freshness check, catalog compare). MAKNA_ENGINE_URL holds the read-only
+# connection URL. A query that runs longer than this is cancelled by the engine and reported as
+# an error. 30 seconds is ample for the one MAX() the freshness check runs on an indexed or
+# partitioned fact table, and short enough that a refresh over every measure cannot hang on a
+# table that is being rebuilt. Raise it for a very large table without a usable index.
+[engine]
+statement_timeout_seconds = 30
+
 [sensitivity.tag_map]
 "PII.Sensitive" = "personal"
 "PersonalData.Personal" = "personal"

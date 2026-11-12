@@ -63,7 +63,10 @@
       time_start: "2026-06-01"
       time_end: "2026-07-01"
     answer_columns: [branch__region_name, npf_ratio]
-  notes: "Synonym \"kredit macet\"; two-hop join to the servicing branch."
+  notes: >-
+    Synonym "kredit macet", which in everyday use means NPF (more than 90 days past due), not
+    only the collectibility class Macet (class 5). Two-hop join to the servicing branch. The
+    contracts written off at the month end are not in the ratio (WP-04B, D-31).
 
 - id: G05
   question: "Show the monthly NPF ratio trend for car-backed financing in the first half of 2026."
@@ -97,7 +100,9 @@
       time_start: "2026-06-01"
       time_end: "2026-07-01"
     answer_columns: [contract_snapshot__dpd_bucket, outstanding_principal]
-  notes: "Dimension on the measure's own entity."
+  notes: >-
+    Dimension on the measure's own entity. The bucket dpd_over_180 leaves out the contracts
+    written off at the month end (WP-04B, D-31), which are more than 210 days past due.
 
 - id: G07
   question: "Berapa sisa pokok per kuartal sepanjang 2025?"
@@ -208,7 +213,11 @@
     request:
       metric: restructured_ratio
     answer_columns: [restructured_ratio]
-  notes: "A definition filter across a join (contract flag on snapshot rows)."
+  notes: >-
+    A definition filter across a join (contract flag on snapshot rows). The flag is the
+    contract's current one, so positions before its restructured_date count as restructured
+    too; the sample data cannot show it at 2026-06-30 (D-31). Contracts written off at the
+    month end are in neither part.
 
 - id: G14
   question: "Disbursement by branch last month"
@@ -517,7 +526,9 @@
       metric: restructured_outstanding_principal
       dimensions: [product.product_category]
     answer_columns: [product__product_category, restructured_outstanding_principal]
-  notes: "Metric filter across a join plus a dimension on another joined entity; latest month end."
+  notes: >-
+    Metric filter across a join plus a dimension on another joined entity; latest month end.
+    The flag is the contract's current one (D-31).
 
 - id: G34
   question: "How many open contracts did we have by customer segment at the end of 2025?"
@@ -711,7 +722,9 @@
           time_start: "2026-06-01"
           time_end: "2026-07-01"
         answer_columns: [restructured_ratio]
-  notes: "The restructured balance or its share of the portfolio."
+  notes: >-
+    The restructured balance or its share of the portfolio. The flag is the contract's current
+    one, so positions before its restructured_date count as restructured too (D-31).
 
 - id: G45
   question: "How many applications last quarter?"

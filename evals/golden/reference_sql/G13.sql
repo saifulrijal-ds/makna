@@ -3,6 +3,8 @@
 -- restructured position is a snapshot row whose CONTRACT has is_restructured = true (rule
 -- contract.restructured, a flag on the contracts table reached through
 -- contract_monthly_snapshots.contract_id). Ratio = restructured principal / all principal.
+-- In the book (rule in_book): the write-off position, days_past_due > 210, is left out. A
+-- contract is written off AT the month end of that position, so it is still a snapshot row.
 WITH agg AS (
   SELECT
     COALESCE(SUM(s.outstanding_principal) FILTER (WHERE c.is_restructured), 0)
@@ -11,6 +13,7 @@ WITH agg AS (
   FROM core.contract_monthly_snapshots AS s
   LEFT JOIN core.contracts AS c ON c.contract_id = s.contract_id
   WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM core.contract_monthly_snapshots)
+    AND COALESCE(s.days_past_due, 0) <= 210
 )
 SELECT
   restructured_outstanding_principal,

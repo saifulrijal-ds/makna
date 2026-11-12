@@ -136,6 +136,33 @@ committed CSV in `evals/golden/expected/`. After a deliberate change to the gene
 definition, rewrite the CSVs with `uv run python -m evals.golden.freeze` (it needs the same
 variable) and review the diff.
 
+### The engine connector and the compiled SQL (WP-11)
+
+The engine tier also holds the connector tests (`tests/engine/test_postgres_connector.py`:
+tables of `core`, the newest `snapshot_date`, the statement timeout, a read-only connection)
+and the compiled-SQL tests (`tests/engine/test_compiled_sql.py`). The latter compile with the
+product compiler for `postgres`, run the SQL on the sample data, and compare it with
+hand-written reference queries (the five cases of `spikes/compiler/run_on_postgres.py`) and with
+the columns of `docs/ARCHITECTURE.md` section 7.2 (every approved sample metric, at its default
+grain). The CI `stack` job also runs `makna catalog compare` in the `app` container, which must
+print "no differences". Locally, a database that is not called `lending` cannot resolve the
+three-part names the compiler writes (`lending.core.<table>`); the test helper then removes the
+`lending` qualifier from the tables and changes nothing else. In the stack and in CI the SQL
+runs exactly as printed.
+
+**Open points of `spikes/compiler/README.md` ("What is not proven"), and what the engine tier
+shows.** The proof is the CI `stack` job on PostgreSQL 17; a run on a local PostgreSQL 16.2
+holding the same data (seed 20261111, scale 1.0) gave the same result and is supporting
+evidence only.
+
+| Open point | Result |
+|---|---|
+| SQL not executed on Trino; the first package with a target engine runs the five cases. | Trino is put aside (D-22). The five cases, compiled by the product compiler for `postgres`, run on the sample database and equal their reference queries (`test_a_spike_case_compiled_by_the_product_equals_its_reference_query`). Nothing had to change in the compiler. |
+| sqlglot prints the unit as `'MONTH'` in upper case; confirm it is accepted. | Confirmed: `DATE_TRUNC('MONTH', ...)` and `DATE_TRUNC('QUARTER', ...)` run on PostgreSQL (cases 1, 2 and 4). |
+| `SUBSTRING`-based partial masking ran on DuckDB only. | No longer applies: partial masking was removed from the design (review R-4). |
+| The minimum group size rule is not in the spike. | Not exercised here: none of the five cases or the no-dimension metric runs selects a personal dimension. It is covered by the compiler unit tests on DuckDB, and its PostgreSQL behaviour was checked by hand in WP-10 (`docs/notes/postgres-rejects-a-bare-string-constant-in-group-by.md`). |
+| Performance on large tables was not measured. | Still not measured. On the scale 1.0 sample (about 81,000 snapshot rows) each compiled case ran in well under a second locally. |
+
 Any PostgreSQL holding the generated data in schema `core` will do, for example one loaded
 with `data.lending_loader.load_all` (the reference SQL names tables as `core.<table>`, which
 resolves in a database of any name).

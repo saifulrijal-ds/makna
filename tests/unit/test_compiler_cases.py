@@ -55,6 +55,7 @@ CASES: list[tuple[str, dict[str, Any], str]] = [
           JOIN contracts c ON c.contract_id = s.contract_id
           LEFT JOIN branches b ON b.branch_id = c.servicing_branch_id
           WHERE s.snapshot_date IN (DATE '2025-12-31', DATE '2026-03-31', DATE '2026-06-30')
+            AND s.days_past_due <= 210
         ), agg AS (
           SELECT CAST(date_trunc('quarter', snapshot_date) AS DATE) AS q, region_name,
                  COALESCE(SUM(outstanding_principal) FILTER (WHERE days_past_due > 90), 0) AS npf,
@@ -80,7 +81,8 @@ CASES: list[tuple[str, dict[str, Any], str]] = [
           FROM contract_monthly_snapshots s
           JOIN contracts c ON c.contract_id = s.contract_id
           JOIN products p ON p.product_id = c.product_id
-          WHERE s.snapshot_date = DATE '2026-06-30' AND p.product_category = 'car_backed'
+          WHERE s.snapshot_date = DATE '2026-06-30' AND s.days_past_due <= 210
+            AND p.product_category = 'car_backed'
         ), agg AS (
           SELECT COALESCE(SUM(outstanding_principal) FILTER (WHERE days_past_due > 90), 0) AS npf,
                  COALESCE(SUM(outstanding_principal), 0) AS total
@@ -143,7 +145,7 @@ CASES: list[tuple[str, dict[str, Any], str]] = [
         """
         SELECT dpd_bucket, SUM(outstanding_principal)
         FROM contract_monthly_snapshots
-        WHERE snapshot_date = DATE '2026-06-30'
+        WHERE snapshot_date = DATE '2026-06-30' AND days_past_due <= 210
         GROUP BY 1 ORDER BY 1
         """,
     ),
@@ -222,7 +224,7 @@ SELECT b.region_name, SUM(s.outstanding_principal)
 FROM contract_monthly_snapshots s
 JOIN contracts c ON c.contract_id = s.contract_id
 LEFT JOIN branches b ON b.branch_id = c.servicing_branch_id
-WHERE s.snapshot_date = DATE '2026-06-30' AND c.is_restructured
+WHERE s.snapshot_date = DATE '2026-06-30' AND s.days_past_due <= 210 AND c.is_restructured
 GROUP BY 1 ORDER BY 1
 """
 

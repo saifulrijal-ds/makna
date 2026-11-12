@@ -147,7 +147,7 @@ FROM contract_monthly_snapshots s
 JOIN contracts c ON c.contract_id = s.contract_id
 JOIN customers cu ON cu.customer_id = c.customer_id
 LEFT JOIN branches b ON b.branch_id = c.servicing_branch_id
-WHERE s.days_past_due > 90 AND s.snapshot_date = {LATEST}
+WHERE s.days_past_due > 90 AND s.days_past_due <= 210 AND s.snapshot_date = {LATEST}
 GROUP BY 1, 2, 3
 """
 
@@ -196,7 +196,8 @@ def test_the_same_metric_by_region_alone_is_not_suppressed(
         f"""SELECT b.region_name, SUM(s.outstanding_principal)
         FROM contract_monthly_snapshots s JOIN contracts c ON c.contract_id = s.contract_id
         LEFT JOIN branches b ON b.branch_id = c.servicing_branch_id
-        WHERE s.days_past_due > 90 AND s.snapshot_date = {LATEST} GROUP BY 1 ORDER BY 1""",
+        WHERE s.days_past_due > 90 AND s.days_past_due <= 210 AND s.snapshot_date = {LATEST}
+        GROUP BY 1 ORDER BY 1""",
     )
     assert GROUPS_LEFT_OUT not in names
     assert [r[0] for r in rows] == [r[0] for r in reference]
@@ -231,7 +232,7 @@ SELECT {key} AS y, cu.province AS p,
 FROM contract_monthly_snapshots s
 JOIN contracts c ON c.contract_id = s.contract_id
 JOIN customers cu ON cu.customer_id = c.customer_id
-WHERE s.snapshot_date = {latest} {extra}
+WHERE s.snapshot_date = {latest} AND s.days_past_due <= 210 {extra}
 GROUP BY 1, 2
 """
 

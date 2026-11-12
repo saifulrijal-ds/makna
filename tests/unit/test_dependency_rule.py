@@ -40,6 +40,7 @@ ALLOWED_MAKNA: dict[str, frozenset[str] | None] = {
     # The composition root mounts the interfaces; it is the only module that may import both.
     "app": frozenset({"services", "web", "mcp", "model", "config"}),
     "compiler": frozenset({"model"}),
+    "engine": frozenset({"model"}),
     "catalog": frozenset({"model", "index"}),
     "index": frozenset({"model"}),
     "search": frozenset({"model"}),
@@ -149,6 +150,9 @@ def test_every_package_of_the_architecture_exists() -> None:
         ("compiler/net.py", "from urllib.request import urlopen\n", "urllib.request"),
         ("compiler/net.py", "import socket\n", "socket"),
         ("compiler/x.py", "from makna.search import hybrid\n", "makna.search"),
+        ("engine/x.py", "from makna.compiler import plan\n", "makna.compiler"),
+        ("engine/x.py", "from makna.config import Settings\n", "makna.config"),
+        ("engine/x.py", "from makna.catalog import base\n", "makna.catalog"),
         ("model/x.py", "from makna.config import Settings\n", "makna.config"),
         ("catalog/x.py", "from makna.definitions import loader\n", "makna.definitions"),
         ("catalog/x.py", "from makna.compiler import plan\n", "makna.compiler"),
@@ -182,4 +186,5 @@ def test_allowed_imports_pass(tmp_path: Path) -> None:
     _write(tmp_path, "catalog/a.py", "from makna.model import m\nfrom makna.index import tables\n")
     _write(tmp_path, "index/a.py", "from makna.model import m\nfrom . import b\n")
     _write(tmp_path, "search/a.py", "from makna.model.search import S\nfrom . import b\n")
+    _write(tmp_path, "engine/a.py", "from makna.model import m\nfrom . import b\n")
     assert check_dependency_rule(tmp_path) == []

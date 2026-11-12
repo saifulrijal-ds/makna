@@ -4,7 +4,8 @@ name: restructured_ratio
 label: Restructured Ratio
 description: >-
   Share of outstanding principal that sits in restructured contracts at a
-  month end.
+  month end. Contracts that leave the book at that month end (more than 210
+  days past due) are left out of both parts.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -25,4 +26,8 @@ example_questions:
 example_requests:
   - question: "Restructured share of the portfolio by region, quarter by quarter, from Q4 2025"
     request: {dimensions: [branch.region_name], grain: quarter, time_start: "2025-10-01", time_end: "2026-07-01"}
-caveats: Gross ratio based on principal. Available at month ends only. Reported by servicing branch.
+caveats: >-
+  Gross ratio based on principal. The restructured flag is the contract's current
+  one, so positions before the restructuring date of a contract that was
+  restructured later are counted as restructured too. Available at month ends
+  only. Reported by servicing branch.

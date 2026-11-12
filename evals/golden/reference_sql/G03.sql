@@ -3,6 +3,8 @@
 -- snapshot_date); NPF means days_past_due > 90 (rule non_performing); ratio is
 -- non-performing principal divided by all outstanding principal, computed after summing.
 -- Same table for both inputs, so no join. One row.
+-- In the book (rule in_book): the write-off position, days_past_due > 210, is left out. A
+-- contract is written off AT the month end of that position, so it is still a snapshot row.
 WITH agg AS (
   SELECT
     COALESCE(SUM(s.outstanding_principal) FILTER (WHERE s.days_past_due > 90), 0)
@@ -10,6 +12,7 @@ WITH agg AS (
     COALESCE(SUM(s.outstanding_principal), 0) AS outstanding_principal
   FROM core.contract_monthly_snapshots AS s
   WHERE s.snapshot_date = (SELECT MAX(snapshot_date) FROM core.contract_monthly_snapshots)
+    AND COALESCE(s.days_past_due, 0) <= 210
 )
 SELECT
   npf_outstanding_principal,

@@ -107,6 +107,14 @@ class GovernanceSettings(BaseModel):
         )
 
 
+class EngineSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # How long one query of the engine connector may run (the freshness aggregate, table
+    # introspection) before the engine cancels it. See `makna.engine.postgres`.
+    statement_timeout_seconds: int = Field(default=30, ge=1)
+
+
 class SensitivitySettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -139,6 +147,7 @@ class Settings(BaseModel):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
     sensitivity: SensitivitySettings = Field(default_factory=SensitivitySettings)
+    engine: EngineSettings = Field(default_factory=EngineSettings)
 
 
 _ENV_FIELDS = (
@@ -255,3 +264,30 @@ def load_tag_map(config_path: Path | str | None = None) -> dict[str, str]:
         return dict(SensitivitySettings.model_validate(values.get("sensitivity", {})).tag_map)
     except ValidationError as error:
         raise ConfigError(f"Invalid settings: sensitivity: {error}") from error
+
+
+class EngineRuntime(BaseModel):
+    """What the engine connector needs: the read-only URL and the statement timeout.
+
+    Operator commands (`makna catalog compare`) use this, so they do not require
+    `MAKNA_SECRET_KEY`. `engine_url` is None when `MAKNA_ENGINE_URL` is not set.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    engine_url: SecretStr | None = None
+    engine: EngineSettings = Field(default_factory=EngineSettings)
+
+
+def load_engine_runtime(
+    env: Mapping[str, str] | None = None, config_path: Path | str | None = None
+) -> EngineRuntime:
+    """`MAKNA_ENGINE_URL` and the `[engine]` settings of `config/makna.toml`."""
+    if env is None:
+        import os
+
+        env = os.environ
+    try:
+        return EngineRuntime.model_validate(_collect_values(env, config_path))
+    except ValidationError as error:
+        raise ConfigError(_problems(error)) from error

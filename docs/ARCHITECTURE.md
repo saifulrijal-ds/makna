@@ -285,10 +285,18 @@ Makna never runs a caller's query (D-21). It talks to the target engine only for
 class EngineConnector(Protocol):
     dialect: str                    # sqlglot dialect name: "postgres" (MVP) or "duckdb" (tests)
     def list_tables(self, schema: str) -> list[EngineTable]: ...                    # name, columns(name, native_type)
-    def latest_value(self, table: str, expr: exp.Expression) -> date | None: ...    # SELECT MAX(expr): the freshness check
+    def latest_value(self, table: str, expr: exp.Expr) -> date | None: ...          # SELECT MAX(expr): the freshness check
 ```
 
 The PostgreSQL connector uses `psycopg`. The freshness query is built as a sqlglot tree like every other query. Engine introspection is used by `makna catalog compare`, which reports tables and columns that the catalog and the engine disagree on; it is not a second source of metadata. A Trino connector can be added behind the same interface later (CON-7, D-22).
+
+Details settled in WP-11:
+
+- The expression type is `sqlglot.exp.Expr`, as in the compiler (not `exp.Expression`). `dialect` is a read-only property. `EngineTable` is `(schema, name, columns)` and `EngineColumn` is `(name, native_type)`, where `native_type` is the engine's own text from `format_type` (for example `character varying(20)`, `numeric(18,2)`); `list_tables` returns base and partitioned tables, with columns in table order. Errors are `EngineError` (`makna.engine.base`); no message or log record holds the password (`redact_url` and `scrub`, used everywhere the URL is shown).
+- `table` is `schema.table` or `catalog.schema.table`, as an `engine_fqn` is. The catalog part is dropped: a connection reads one database, and PostgreSQL accepts the qualifier only when it equals the database's name. `latest_value` returns the date of a timestamp result, and None when the table is empty or the expression is NULL everywhere.
+- Every connection is opened read-only and with the statement timeout of `[engine] statement_timeout_seconds` in `config/makna.toml` (30 seconds by default: ample for the one aggregate of the freshness check on an indexed or partitioned fact table, short enough that a refresh over every measure cannot hang on a table that is being rebuilt). A query that runs over it fails with an `EngineError` that names the timeout. The connector has no other statement than the introspection query and the `MAX` tree.
+- `makna catalog compare` reads the synced catalog copy in the `makna` database (the active tables of `catalog_dataset`, as `makna catalog issues` reads its issues) and the engine's tables in the schemas the catalog has tables in. It compares table and column names without regard to case, not types (a catalog says `varchar` where PostgreSQL says `character varying`), and ignores the catalog part of `engine_fqn`. It prints which engine it read (the URL without the password) and one line per difference: `missing_table`, `missing_column` (the catalog has it, the engine does not), `extra_table`, `extra_column` (the other way round). Exit status 0: no differences; 1: differences; 2: a setting is missing or a database cannot be read. The comparison itself is a pure function (`makna.engine.compare.compare`).
+- D-21 is enforced by `tests/unit/test_engine_not_called_by_interfaces.py`: no module of `makna.services`, `makna.mcp` or `makna.web` imports `makna.engine` or calls a connector, except the modules in its allowlist, which is empty until the freshness service exists. `makna.engine` may import `makna.model` only (the dependency rule), and a scan keeps SQL text from being built by string formatting in it.
 
 ### 6.4 Database tables
 

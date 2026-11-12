@@ -12,7 +12,7 @@ from makna.config import ConfigError, load_tag_map
 
 def test_catalog_without_a_command_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["catalog"]) == 2
-    assert "choose sync or issues" in capsys.readouterr().err
+    assert "choose sync, issues or compare" in capsys.readouterr().err
 
 
 def test_catalog_commands_need_the_database_url(
@@ -22,6 +22,19 @@ def test_catalog_commands_need_the_database_url(
     assert main(["catalog", "issues"]) == 2
     assert main(["catalog", "sync"]) == 2
     assert capsys.readouterr().err.count("MAKNA_DATABASE_URL") == 2
+
+
+def test_compare_needs_the_engine_url_and_the_database_url(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MAKNA_ENGINE_URL", raising=False)
+    monkeypatch.setenv("MAKNA_DATABASE_URL", "postgresql://u:p@localhost/none")
+    assert main(["catalog", "compare"]) == 2
+    assert "MAKNA_ENGINE_URL" in capsys.readouterr().err
+    monkeypatch.setenv("MAKNA_ENGINE_URL", "postgresql://ro:pw@localhost/lending")
+    monkeypatch.delenv("MAKNA_DATABASE_URL")
+    assert main(["catalog", "compare"]) == 2
+    assert "MAKNA_DATABASE_URL" in capsys.readouterr().err
 
 
 def test_the_tag_map_is_read_without_the_secrets(tmp_path: Path) -> None:

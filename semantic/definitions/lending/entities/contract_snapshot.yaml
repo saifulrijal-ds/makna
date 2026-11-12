@@ -6,6 +6,9 @@ description: >-
   The position of every disbursed contract at each month end: how much
   principal is still owed and how many days it is past due. One row per
   contract per month end. Balances here must not be added up across months.
+  A contract that is written off keeps its row at the month end of the
+  write-off, with more than 210 days past due; the portfolio measures leave
+  that row out (rule in_book), and only the write-off measure counts it.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -31,7 +34,8 @@ dimensions:
       - {value: dpd_31_60}
       - {value: dpd_61_90}
       - {value: dpd_91_180}
-      - {value: dpd_over_180}
+      - value: dpd_over_180
+        description: More than 180 days past due. The write-off positions (more than 210 days past due) sit in this bucket but are left out of the portfolio metrics.
   - name: collectibility
     type: categorical
     description: Asset quality class from 1 (performing) to 5 (loss), derived from days past due.
@@ -41,11 +45,13 @@ dimensions:
       - {value: "2", description: Dalam perhatian khusus (special mention). 11 to 90 days past due.}
       - {value: "3", description: Kurang lancar (substandard). 91 to 120 days past due.}
       - {value: "4", description: Diragukan (doubtful). 121 to 180 days past due.}
-      - {value: "5", description: Macet (loss). More than 180 days past due.}
+      - {value: "5", description: 'Macet (loss). More than 180 days past due. In everyday use "kredit macet" means NPF (more than 90 days past due, classes 3 to 5); the collectibility class Macet is class 5 only.'}
 rules:
   - name: non_performing
     label: Non-performing
-    description: A position more than 90 days past due. Written once and used by every NPF measure and metric.
+    description: >-
+      A position more than 90 days past due (collectibility classes 3, 4, and 5). Written once and used by every NPF measure and metric.
+      In everyday use "kredit macet" means this rule; the collectibility class "Macet" is class 5 only, more than 180 days past due.
     expr: days_past_due > 90
     synonyms: {en: [NPF, NPL, non-performing financing], id: [kredit macet, pembiayaan bermasalah]}
   - name: past_due_30
@@ -58,27 +64,36 @@ rules:
     description: The month-end position at which a contract is written off, more than 210 days past due. A contract is written off at the first month end that meets this and has no later positions, so it selects exactly one row per written-off contract.
     expr: days_past_due > 210
     synonyms: {en: [write-off, charge-off], id: [hapus buku, penghapusbukuan]}
+  - name: in_book
+    label: In the book
+    description: >-
+      A position that counts in the portfolio at its month end: every position except the write-off position
+      (more than 210 days past due). A contract is written off at the month end of that position and has no later
+      position, but its write-off row is still a row of the table, so the portfolio metrics apply this rule and
+      leave it out. A missing days-past-due value counts as in the book.
+    expr: COALESCE(days_past_due, 0) <= 210
+    synonyms: {en: [in the portfolio, active book, not written off], id: [dalam portofolio, belum dihapus buku]}
 measures:
   - name: outstanding_principal
     agg: sum
     expr: outstanding_principal
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed at the snapshot date.
+    description: Principal still owed at the snapshot date. Counts every row, including the write-off position; the portfolio metrics apply the rule in_book on top of it.
   - name: npf_outstanding_principal
     agg: sum
     expr: outstanding_principal
     rule: non_performing
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed on contracts more than 90 days past due at the snapshot date.
+    description: Principal still owed on contracts more than 90 days past due at the snapshot date. Counts the write-off position too; the NPF metric applies the rule in_book on top of it.
   - name: par30_outstanding_principal
     agg: sum
     expr: outstanding_principal
     rule: past_due_30
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed on contracts more than 30 days past due at the snapshot date.
+    description: Principal still owed on contracts more than 30 days past due at the snapshot date. Counts the write-off position too; the PAR 30 metric applies the rule in_book on top of it.
   - name: written_off_outstanding_principal
     agg: sum
     expr: outstanding_principal
@@ -90,7 +105,7 @@ measures:
     agg: count
     time_dimension: snapshot_date
     semi_additive: last
-    description: Number of contracts with principal still owed at the snapshot date. One row per contract per month end.
+    description: Number of position rows at the snapshot date, one per contract with principal still owed. Counts every row, including the write-off position; the portfolio metrics apply the rule in_book on top of it.
 relationships:
   - name: contract
     to: contract

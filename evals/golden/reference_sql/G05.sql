@@ -2,6 +2,8 @@
 -- Rules: balance metric, month grain, so each month reports its own month-end snapshot
 -- (there is exactly one snapshot date per month); NPF means days_past_due > 90; the product
 -- filter is the contract's product (contract_monthly_snapshots -> contracts -> products).
+-- In the book (rule in_book): the write-off position, days_past_due > 210, is left out. A
+-- contract is written off AT the month end of that position, so it is still a snapshot row.
 WITH agg AS (
   SELECT
     CAST(date_trunc('month', s.snapshot_date) AS DATE) AS metric_time,
@@ -13,6 +15,7 @@ WITH agg AS (
   LEFT JOIN core.products AS p ON p.product_id = c.product_id
   WHERE s.snapshot_date >= DATE '2026-01-01'
     AND s.snapshot_date < DATE '2026-07-01'
+    AND COALESCE(s.days_past_due, 0) <= 210
     AND p.product_category = 'car_backed'
   GROUP BY CAST(date_trunc('month', s.snapshot_date) AS DATE)
 )

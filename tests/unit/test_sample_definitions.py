@@ -513,6 +513,7 @@ def test_the_rules_of_the_document_exist_with_the_stated_condition() -> None:
     rules = doc_rules()
     assert {(e, r) for e, r, _ in rules} == {
         ("contract_snapshot", "non_performing"),
+        ("contract_snapshot", "in_book"),
         ("contract_snapshot", "past_due_30"),
         ("contract_snapshot", "write_off_position"),
         ("contract", "restructured"),
@@ -543,7 +544,10 @@ def test_the_restructured_metric_filters_on_the_contract_rule() -> None:
     metric = approved_metrics()["restructured_outstanding_principal"]
     assert metric.measure == "contract_snapshot.outstanding_principal"
     assert metric.filters is not None
-    assert [f for f in metric.filters] == [RuleRef(rule="contract.restructured")]
+    assert [f for f in metric.filters] == [
+        RuleRef(rule="contract.restructured"),
+        RuleRef(rule="contract_snapshot.in_book"),
+    ]
     # the rule sits on contract, which the snapshot reaches through its one relationship
     snapshot = loaded().entities["contract_snapshot"]
     assert [(r.name, r.to) for r in snapshot.relationships or []] == [("contract", "contract")]
@@ -555,7 +559,7 @@ def test_no_measure_or_metric_filter_repeats_a_condition_that_a_rule_names() -> 
         for entity in loaded().entities.values()
         for rule in entity.rules or []
     ]
-    assert len(rule_trees) == 4
+    assert len(rule_trees) == 5
     for entity in loaded().entities.values():
         for measure in entity.measures or []:
             if measure.filter is None:
@@ -842,6 +846,16 @@ MEASURE_TABLE: list[tuple[str, str, str, str | None, str | None, str | None]] = 
 ]
 
 
+# The metrics that count the book at a month end and so leave out the write-off row (D-31).
+IN_BOOK_METRICS = {
+    "outstanding_principal",
+    "active_contract_count",
+    "npf_outstanding_principal",
+    "par30_outstanding_principal",
+    "restructured_outstanding_principal",
+}
+
+
 def normalised(sql: str | None) -> str | None:
     return None if sql is None else condition(sql).sql(dialect="postgres")
 
@@ -873,9 +887,13 @@ def test_each_simple_metric_computes_what_its_row_says(
     assert normalised(measure.expr) == normalised(expr)
     assert normalised(measure.filter) == normalised(flt)
     assert measure.rule == rule
-    # metric-level filters: only restructured_outstanding_principal has one, a rule reference
+    # metric-level filters are rule references: the portfolio metrics apply in_book (WP-04B,
+    # D-31), restructured_outstanding_principal also the contract rule; no other metric has one
+    in_book = RuleRef(rule="contract_snapshot.in_book")
     if metric_name == "restructured_outstanding_principal":
-        assert metric.filters == [RuleRef(rule="contract.restructured")]
+        assert metric.filters == [RuleRef(rule="contract.restructured"), in_book]
+    elif metric_name in IN_BOOK_METRICS:
+        assert metric.filters == [in_book]
     else:
         assert not metric.filters
 
@@ -965,3 +983,23 @@ def test_the_write_off_rule_selects_exactly_one_row_per_written_off_contract(
     assert scalar(con, written_off) > 0
     assert scalar(con, on_rule) == scalar(con, write_off_rows) == scalar(con, both)
     assert scalar(con, write_off_rows) == scalar(con, written_off)
+
+
+def test_the_snapshot_metrics_apply_in_book_and_only_the_draft_sees_write_offs() -> None:
+    in_book = RuleRef(rule="contract_snapshot.in_book")
+    on_snapshot = {
+        name
+        for name, metric in approved_metrics().items()
+        if metric.type == "simple" and (metric.measure or "").startswith("contract_snapshot.")
+    }
+    assert on_snapshot == IN_BOOK_METRICS
+    for name in on_snapshot:
+        assert in_book in (approved_metrics()[name].filters or []), name
+    draft = loaded().draft_metrics["write_off_amount"]
+    assert draft.measure == "contract_snapshot.written_off_outstanding_principal"
+    assert in_book not in (draft.filters or [])
+    rule = next(
+        r for r in loaded().entities["contract_snapshot"].rules or [] if r.name == "in_book"
+    )
+    # the rule keeps every row except the one write_off_position selects, and handles NULL
+    assert normalised(rule.expr) == normalised("COALESCE(days_past_due, 0) <= 210")
