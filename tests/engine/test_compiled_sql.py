@@ -4,7 +4,9 @@ sample database.
 Criterion 3: the five cases of `spikes/compiler/run_on_postgres.py` give the same rows as their
 hand-written reference queries. The reference queries are copied from `spikes/compiler/
 run_spike.py` (`CASES`), where they were written without the compiler, and only changed to name
-tables as `core.<table>` (see `docs/notes/reference-sql-order-must-not-depend-on-the-locale.md`).
+tables as `core.<table>` (see `docs/notes/reference-sql-order-must-not-depend-on-the-locale.md`)
+and, after WP-04B (D-31), to leave out the write-off position of the balance metrics. That
+condition is written from the contract's status and closing date, not from the rule `in_book`.
 They are not derived from compiler output. Row order is not compared.
 
 Criterion 4: every approved sample metric compiles with no dimensions at its default grain,
@@ -74,7 +76,8 @@ CASES: list[tuple[str, dict[str, Any], str, list[str]]] = [
         """WITH pos AS (
              SELECT s.*, b.region_name FROM core.contract_monthly_snapshots s
              JOIN core.contracts c USING (contract_id) JOIN core.branches b ON b.branch_id = c.servicing_branch_id
-             WHERE s.snapshot_date IN (DATE '2025-12-31', DATE '2026-03-31', DATE '2026-06-30'))
+             WHERE s.snapshot_date IN (DATE '2025-12-31', DATE '2026-03-31', DATE '2026-06-30')
+               AND NOT (c.contract_status = 'written_off' AND c.closed_date = s.snapshot_date))
            SELECT CAST(date_trunc('quarter', snapshot_date) AS DATE), region_name,
                   coalesce(sum(outstanding_principal) FILTER (WHERE days_past_due > 90), 0), sum(outstanding_principal),
                   coalesce(sum(outstanding_principal) FILTER (WHERE days_past_due > 90), 0) / sum(outstanding_principal)
@@ -97,7 +100,8 @@ CASES: list[tuple[str, dict[str, Any], str, list[str]]] = [
         """SELECT coalesce(sum(s.outstanding_principal) FILTER (WHERE s.days_past_due > 90), 0), sum(s.outstanding_principal),
                   coalesce(sum(s.outstanding_principal) FILTER (WHERE s.days_past_due > 90), 0) / sum(s.outstanding_principal)
            FROM core.contract_monthly_snapshots s JOIN core.contracts c USING (contract_id) JOIN core.products p USING (product_id)
-           WHERE s.snapshot_date = DATE '2026-06-30' AND p.product_category = 'car_backed'""",
+           WHERE s.snapshot_date = DATE '2026-06-30' AND p.product_category = 'car_backed'
+             AND NOT (c.contract_status = 'written_off' AND c.closed_date = s.snapshot_date)""",
         ["npf_outstanding_principal", "outstanding_principal", "npf_ratio"],
     ),
     (
@@ -136,8 +140,11 @@ CASES: list[tuple[str, dict[str, Any], str, list[str]]] = [
             "time_start": "2026-01-01",
             "time_end": "2026-07-01",
         },
-        """SELECT dpd_bucket, sum(outstanding_principal) FROM core.contract_monthly_snapshots
-           WHERE snapshot_date = DATE '2026-06-30' GROUP BY 1 ORDER BY 1""",
+        """SELECT s.dpd_bucket, sum(s.outstanding_principal)
+           FROM core.contract_monthly_snapshots s JOIN core.contracts c USING (contract_id)
+           WHERE s.snapshot_date = DATE '2026-06-30'
+             AND NOT (c.contract_status = 'written_off' AND c.closed_date = s.snapshot_date)
+           GROUP BY 1 ORDER BY 1""",
         ["contract_snapshot__dpd_bucket", "outstanding_principal"],
     ),
 ]  # fmt: skip
