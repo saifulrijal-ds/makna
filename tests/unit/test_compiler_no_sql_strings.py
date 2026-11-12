@@ -97,9 +97,13 @@ def _is_text(node: ast.AST) -> bool:
     return literal_text(node) is not None
 
 
-def strict_violations(source: str, name: str) -> list[str]:
+def strict_violations(
+    source: str, name: str, allowed: dict[tuple[str, str], str] | None = None
+) -> list[str]:
     """Every f-string, `%`/`+` with a string operand, `.format`, and string `.join` in `source`
-    that is not inside one of the allowed helpers."""
+    that is not inside one of the allowed helpers (`ALLOWED_HELPERS` unless `allowed` is given;
+    `tests/unit/test_engine_no_sql_strings.py` passes the engine package's own)."""
+    helpers = ALLOWED_HELPERS if allowed is None else allowed
     found: list[str] = []
 
     def visit(node: ast.AST, function: str | None) -> None:
@@ -116,7 +120,7 @@ def strict_violations(source: str, name: str) -> list[str]:
                 how = ".format"
             elif node.func.attr == "join" and _is_text(node.func.value):
                 how = "str.join"
-        if how and (name, function or "") not in ALLOWED_HELPERS:
+        if how and (name, function or "") not in helpers:
             found.append(f"{name}:{getattr(node, 'lineno', '?')} in {function}: {how}")
         for child in ast.iter_child_nodes(node):
             visit(child, function)

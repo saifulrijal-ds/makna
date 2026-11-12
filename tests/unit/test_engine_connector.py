@@ -86,7 +86,8 @@ def test_a_malformed_url_is_an_engine_error_without_the_password(
 
 class FakeCursor:
     def __init__(self, fail: Exception | None, rows: list[tuple[Any, ...]]) -> None:
-        self.fail, self.rows, self.executed = fail, rows, []
+        self.fail, self.rows = fail, rows
+        self.executed: list[tuple[str, Any]] = []
 
     def __enter__(self) -> FakeCursor:
         return self
