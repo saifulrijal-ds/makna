@@ -365,9 +365,10 @@ class _Checker:
         if unknown is not None:
             self.add(
                 "V05",
-                f"{what}: expression calls the function {unknown}, which is not on the list of "
-                "functions a definition may use (makna.model.functions). To request it, ask the "
-                "maintainers to add it, with the reason it is pure and reads no state",
+                f"{what}: expression uses {unknown}, which is not on the list of functions and "
+                "cast types a definition may use (makna.model.functions). To request it, ask the "
+                "maintainers to add it, with the reason it is pure and cannot make the engine "
+                "print a value",
                 *where,
             )
 

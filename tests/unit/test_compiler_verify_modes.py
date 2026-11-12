@@ -24,7 +24,6 @@ from sqlglot import exp
 from makna.compiler.governance import GovernanceError, mask_expression, verify
 from makna.compiler.plan import QueryPlan, plan_request
 from makna.compiler.snapshot import Model
-from makna.compiler.sqlgen import build_tree
 from makna.model.definitions import Dimension, MaskTruncateDate
 from makna.model.governance import STRICT, GovernancePolicy
 from makna.model.request import QueryError
@@ -131,9 +130,9 @@ CASES: dict[str, tuple[Callable[[], exp.Expr], frozenset[str]]] = {
         lambda: select(named(col("full_name"), "something_else")),
         NONE,
     ),
-    "select a column of one dimension under the alias of another": (
+    "select another column under the alias of a dimension": (
         lambda: select(named(col("email"), FULL)),
-        NO_MASK_SELECT,  # the alias is a raw dimension; the column check is per column
+        NONE,
     ),
     "group by the column of a dimension with no mask": (
         lambda: select(named(col("national_id"), "customer__national_id"), count()).group_by(
@@ -145,15 +144,15 @@ CASES: dict[str, tuple[Callable[[], exp.Expr], frozenset[str]]] = {
         lambda: select(count()).group_by(col("birth_date")),
         NONE,
     ),
-    "an expression over a raw column under its alias": (
+    "an expression that is not the dimension's own expression": (
         lambda: select(named(exp.Upper(this=col("full_name")), FULL)),
-        NO_MASK_SELECT,
+        NONE,
     ),
-    "a date truncation of a raw column under the alias of a masked dimension": (
+    "a date truncation that is not the masked dimension's own expression": (
         lambda: select(
             named(exp.TimestampTrunc(this=col("birth_date"), unit=exp.Literal.string("day")), BIRTH)
         ),
-        MASKED_SELECT,
+        NONE,
     ),
     "a raw column in a CTE under its alias": (
         lambda: (
@@ -398,26 +397,6 @@ def test_a_column_one_masked_dimension_reads_is_not_raw_for_an_unmasked_dimensio
         assert ok == accepted, name
 
 
-def test_a_grain_released_by_the_policy_is_accepted_as_metric_time_only() -> None:
-    model = with_derived(lending(), {"lending.core.payments.posting_date": "personal"})
-    policy = GovernancePolicy.custom(allow_unmasked_personal=True, min_group_size=0)
-    the_plan = plan_request(model, request("collected_amount", grain="month"), governance=policy)
-    tree = build_tree(model, the_plan)
-    verify(tree, the_plan)
-
-    def trunc(alias: str) -> exp.Select:
-        payments = exp.table_("payments", db="core", catalog="lending", alias="p")
-        day = exp.TimestampTrunc(this=col("posting_date", "p"), unit=exp.Literal.string("month"))
-        return exp.select(exp.alias_(day, alias)).from_(payments)
-
-    verify(trunc("metric_time"), the_plan)
-    with pytest.raises(GovernanceError):
-        verify(trunc("something_else"), the_plan)
-    ungrained = plan_request(model, request("collected_amount"), governance=policy)
-    with pytest.raises(GovernanceError):
-        verify(trunc("metric_time"), ungrained)
-
-
 def test_the_plan_carries_the_policy_and_the_raw_columns_the_policy_allows() -> None:
     assert plan_for(STRICT).raw_columns == frozenset()
     assert plan_for(POLICIES["filters"]).raw_columns == frozenset()
@@ -442,3 +421,42 @@ def test_the_function_check_runs_under_every_policy() -> None:
         for name in ("set_config", "current_setting", "pg_read_file", "nextval", "random"):
             node = exp.Anonymous(this=name, expressions=[exp.Literal.string("k")])
             assert not passes(exp.select(node), policy), (name, policy.mode)
+
+
+def test_a_raw_column_under_a_planned_alias_must_be_that_dimensions_expression() -> None:
+    """The check matches the expression the plan built, not only the alias."""
+    policy = POLICIES["all_custom"]
+    the_plan = plan_for(policy)
+    verify(select(named(col("full_name"), FULL)), the_plan)
+    for tree in (
+        select(named(col("email"), FULL)),  # another column behind the alias
+        select(named(exp.DPipe(this=col("full_name"), expression=col("national_id")), FULL)),
+        select(named(col("full_name"), "customer__email")),
+        select(named(col("full_name"), "metric_time")),  # no grain in this plan
+        select(named(col("full_name"), FULL), named(col("email"), "customer__phone_number")),
+    ):
+        with pytest.raises(GovernanceError):
+            verify(tree, the_plan)
+
+
+def test_metric_time_is_accepted_only_as_the_grain_applied_to_the_released_date() -> None:
+    model = with_derived(
+        lending(),
+        {
+            "lending.core.payments.posting_date": "personal",
+            "lending.core.payments.payment_date": "personal",
+        },
+    )
+    policy = GovernancePolicy.custom(allow_unmasked_personal=True, min_group_size=0)
+    the_plan = plan_request(model, request("collected_amount", grain="month"), governance=policy)
+    payments = exp.table_("payments", db="core", catalog="lending", alias="p")
+
+    def trunc(column: str, grain: str) -> exp.Select:
+        day = exp.TimestampTrunc(this=col(column, "p"), unit=exp.Literal.string(grain))
+        shown = exp.Cast(this=day, to=exp.DataType.build("date"))
+        return exp.select(exp.alias_(shown, "metric_time")).from_(payments)
+
+    verify(trunc("posting_date", "month"), the_plan)
+    for column, grain in (("payment_date", "month"), ("posting_date", "year")):
+        with pytest.raises(GovernanceError):
+            verify(trunc(column, grain), the_plan)

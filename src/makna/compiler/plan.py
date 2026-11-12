@@ -478,7 +478,7 @@ def plan_request(
     date_entities = _personal_date_entities(
         model, request, [measures[leaf.name] for leaf in leaves]
     )
-    guard = _guard(model, dimensions, governance, date_entities)
+    guard = _guard(model, dimensions, governance, list(date_entities))
     _check_guardable_dates(model, guard, date_entities)
     inputs = tuple(
         _plan_input(model, leaf, *measures[leaf.name], dimensions, filters, guard)
@@ -633,7 +633,7 @@ def _check_official_dates(
                 "cannot be grouped by time or limited to a time range. Ask without grain, "
                 "time_start, and time_end, or choose another metric."
             )
-            if governance.mode != "strict":
+            if governance.relaxed():
                 message = _date_refusal(
                     measure.name,
                     ref,
@@ -758,7 +758,7 @@ def _refuse_personal(
             f"{ref} is personal data and has no masked form, so it cannot be returned. "
             "Choose a dimension that is not personal."
         )
-    if governance.mode != "strict":
+    if governance.relaxed():
         rule = "allow_personal_filters" if use == "filter" else "allow_unmasked_personal"
         message += (
             f" The governance mode of this server is {governance.mode}; the rule {rule} would "
@@ -870,41 +870,45 @@ def _type_fits(dimension_type: str, value: object) -> bool:
 
 def _personal_date_entities(
     model: Model, request: QueryRequest, measures: Sequence[tuple[Entity, Measure]]
-) -> tuple[str, ...]:
+) -> dict[str, str]:
     """The entities whose personal official date the request's grain returns. The policy let the
     grain through (`_check_official_dates`), so the date is released; it is guarded like a
     selected personal dimension of that entity."""
     if request.grain is None:
-        return ()
-    found: dict[str, None] = {}
+        return {}
+    found: dict[str, str] = {}
     for entity, measure in measures:
         date = next((d for d in entity.dimensions if d.name == measure.time_dimension), None)
         if date is not None and model.effective_sensitivity(entity, date) == "personal":
-            found[entity.name] = None
-    return tuple(found)
+            found[entity.name] = f"{entity.name}.{date.name}"
+    return found
 
 
 def _check_guardable_dates(
     model: Model,
     guard: Sequence[GuardedEntity],
-    date_entities: Sequence[str],
+    date_entities: dict[str, str],
 ) -> None:
-    """The records of an entity are counted by its primary key. When the key itself holds a
-    personal column (the snapshot date of a balance table), the count would read it, so the
-    minimum group size cannot be applied to a grain on that date: PERSONAL_DATA_REFUSED."""
+    """The records of an entity are counted by its primary key. When a composite key holds a
+    personal column (the snapshot date of a balance table), the count is a tuple that reads it,
+    which the final check cannot accept, so the minimum group size cannot be applied to a grain
+    on that date: PERSONAL_DATA_REFUSED. A key of one column is counted as a bare
+    `COUNT(DISTINCT key)`, which is accepted."""
     personal = personal_data.personal_columns(model)
     for guarded in guard:
         if guarded.entity not in date_entities:
             continue
         table = model.entities[guarded.entity].source.table.lower()
-        if any((table, key.lower()) in personal for key in guarded.primary_key):
+        if len(guarded.primary_key) > 1 and any(
+            (table, key.lower()) in personal for key in guarded.primary_key
+        ):
             raise QueryError(
                 ErrorCode.PERSONAL_DATA_REFUSED,
                 f"The minimum group size cannot be applied to a grain on the personal date of "
                 f"{guarded.label}, because the records are counted by a key that holds personal "
                 "data. Ask without a grain, or choose another metric.",
                 {
-                    "dimension": guarded.entity,
+                    "dimension": date_entities[guarded.entity],
                     "use": "time",
                     "masked_form_available": False,
                     "available_dimensions": [],

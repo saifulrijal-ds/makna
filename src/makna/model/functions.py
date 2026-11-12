@@ -40,6 +40,19 @@ ALLOWED_NODES: tuple[type[exp.Expr], ...] = tuple(
 ALLOWED_ANONYMOUS: frozenset[str] = frozenset({"btrim", "ltrim", "rtrim", "date_part"})
 
 
+# Types a cast may target. Everything else is refused, `reg*` types and user-defined types
+# included: casting a personal value to a type that can reject it (`CAST(full_name AS INTEGER)`,
+# `CAST(national_id AS regclass)`) makes the engine print the value in its error message.
+ALLOWED_CAST_TYPES: frozenset[object] = frozenset(
+    getattr(exp.DataType.Type, name)
+    for name in (
+        "TINYINT", "SMALLINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE",
+        "TEXT", "VARCHAR", "CHAR", "DATE", "TIMESTAMP", "TIMESTAMPTZ", "BOOLEAN",
+    )
+    if hasattr(exp.DataType.Type, name)
+)  # fmt: skip
+
+
 def function_name(node: exp.Expr) -> str:
     """The name of a function node as written in SQL."""
     if isinstance(node, exp.Func) and not isinstance(node, exp.Anonymous):
@@ -50,18 +63,42 @@ def function_name(node: exp.Expr) -> str:
 def is_allowed_function(node: exp.Expr) -> bool:
     """True if `node` is not a function, or is one on the allow-list. Aggregates and windows are
     not scalar functions and are judged elsewhere."""
+    return node_problem(node) is None
+
+
+def node_problem(node: exp.Expr) -> str | None:
+    """Why `node` may not appear in a definition expression or a finished query, or None.
+
+    - a function that is not on the allow-list (named);
+    - a schema-qualified function name such as `public.btrim(x)`, which calls whatever function
+      of that schema has the name;
+    - a cast to a type that is not on the list of cast types.
+    """
+    if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func):
+        return "the schema-qualified function " + function_name(node.expression)
+    if isinstance(node, exp.Cast):
+        target = node.args.get("to")
+        if not isinstance(target, exp.DataType) or target.this not in ALLOWED_CAST_TYPES:
+            shown = target.sql() if isinstance(target, exp.DataType) else "an unknown type"
+            return "a cast to the type " + shown
     if isinstance(node, exp.Anonymous):
-        return function_name(node) in ALLOWED_ANONYMOUS
-    if not isinstance(node, exp.Func):
-        return True
-    return isinstance(node, ALLOWED_NODES)
+        return (
+            None
+            if function_name(node) in ALLOWED_ANONYMOUS
+            else "the function " + function_name(node)
+        )
+    if isinstance(node, exp.Func) and not isinstance(node, ALLOWED_NODES):
+        return "the function " + function_name(node)
+    return None
 
 
 def first_disallowed_function(tree: exp.Expr) -> str | None:
-    """The name of the first scalar function in `tree` that is not on the allow-list, if any."""
+    """What the first disallowed function, qualified function name, or cast type in `tree` is,
+    as a phrase such as `the function set_config`. Aggregates and windows are skipped."""
     for node in tree.walk():
         if isinstance(node, (exp.AggFunc, exp.Window)):
             continue
-        if not is_allowed_function(node):
-            return function_name(node)
+        problem = node_problem(node)
+        if problem is not None:
+            return problem
     return None

@@ -93,3 +93,24 @@ def test_strict_with_a_minimum_changes_only_the_minimum(minimum: int) -> None:
         else:
             replaced = want["sql"].replace(">= 10", f">= {minimum}").replace("< 10", f"< {minimum}")
             assert got["sql"] == replaced
+
+
+def refusal_of(case: dict[str, Any], **options: Any) -> tuple[str, str, str] | None:
+    model = MODELS[case["model"]]
+    try:
+        compile_request(model, QueryRequest.model_validate(case["request"]), **options)
+    except QueryError as error:
+        return (str(error.code), error.message, json.dumps(error.details, sort_keys=True))
+    except GovernanceError as error:
+        return ("GovernanceError", str(error), "")
+    return None
+
+
+def test_custom_with_nothing_relaxed_refuses_exactly_as_strict_does() -> None:
+    nothing = GovernancePolicy.custom()
+    refused = 0
+    for case in CASES:
+        got = refusal_of(case, governance=nothing)
+        assert got == refusal_of(case, governance=STRICT), case["request"]
+        refused += got is not None
+    assert refused > 300

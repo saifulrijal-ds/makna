@@ -1,0 +1,3 @@
+Engine error text can carry a personal value, so whatever runs compiled SQL must not pass error messages on to agents.
+
+Found by the safety review of WP-10B (2026-11-12, PostgreSQL 16.2). A masked dimension whose expression contains `CASE WHEN CAST(full_name AS INTEGER) > 0 ...` passes V05 and the final check (the column sits inside the planned mask), and the engine fails with `invalid input syntax for type integer: "<a raw full name>"`; `CAST(national_id AS regclass)` prints the identity number. V05 now limits cast targets (no `reg*` types), but a cast to a plain type can still fail on a value, so the limit stays: approved definitions are trusted, and the eval harness (WP-22B) and any adopter tool must treat engine error text as personal data.

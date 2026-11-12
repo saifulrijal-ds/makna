@@ -44,7 +44,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
 from makna.model.definitions import Dimension, MaskBucket, Masking, MaskRedact, MaskTruncateDate
-from makna.model.functions import function_name, is_allowed_function
+from makna.model.functions import node_problem
 from makna.model.governance import GovernancePolicy
 
 if TYPE_CHECKING:
@@ -163,10 +163,11 @@ def _violation(column: str, table: str, where: str) -> GovernanceError:
     )
 
 
-def _function_violation(name: str) -> GovernanceError:
+def _function_violation(problem: str) -> GovernanceError:
     return GovernanceError(
-        f"internal error: the function {name} is not on the list of functions a query may call "
-        "(makna.model.functions), so a value could pass through it unchecked"
+        f"internal error: the query uses {problem}, which is not on the list of functions and "
+        "cast types a query may use (makna.model.functions), so a value could pass through it "
+        "unchecked"
     )
 
 
@@ -197,8 +198,11 @@ def verify(tree: exp.Expr, plan: QueryPlan) -> None:
     Raises `GovernanceError`. It does not plan again and does not read the model.
     """
     for node in tree.walk():
-        if not isinstance(node, exp.AggFunc) and not is_allowed_function(node):
-            raise _function_violation(function_name(node))
+        if isinstance(node, (exp.AggFunc, exp.Window)):
+            continue
+        problem = node_problem(node)
+        if problem is not None:
+            raise _function_violation(problem)
     personal = plan.personal_columns
     if not personal:
         return
@@ -316,9 +320,7 @@ def _raw_allowed(node: exp.Expr, pair: tuple[str, str], plan: QueryPlan) -> bool
         )
     if pair not in plan.raw_columns:
         return False
-    aliases = {d.column for d in plan.dimensions if d.personal and not d.masked}
-    if plan.grain is not None:
-        aliases.add("metric_time")
+    expected = _planned_raw_items(plan)
     child: exp.Expr = node
     item: exp.Expr = node  # the whole select-list or GROUP BY item that holds the column
     for parent in _ancestors(node):
@@ -330,15 +332,63 @@ def _raw_allowed(node: exp.Expr, pair: tuple[str, str], plan: QueryPlan) -> bool
             if not _query_level(parent):
                 return False
             if child.arg_key == "expressions":
-                return isinstance(child, exp.Alias) and child.alias in aliases
+                return isinstance(child, exp.Alias) and _is_planned_item(child, expected)
             if child.arg_key == "group":
                 return any(
-                    isinstance(other, exp.Alias) and other.alias in aliases and other.this == item
+                    isinstance(other, exp.Alias)
+                    and other.this == item
+                    and _is_planned_item(other, expected)
                     for other in parent.expressions
                 )
             return False
         child = parent
     return False
+
+
+def _normalized(expression: exp.Expr) -> exp.Expr:
+    """`expression` without table qualifiers and quoting, so that the text a definition holds
+    can be compared with the column bound to a table alias in the query."""
+    copy = expression.copy()
+    for column in copy.find_all(exp.Column):
+        column.set("table", None)
+        column.this.set("quoted", False)
+    return copy
+
+
+def _planned_raw_items(plan: QueryPlan) -> dict[str, list[exp.Expr]]:
+    """The expressions the plan built for each alias that may hold a raw personal column: for a
+    dimension selected raw, the dimension's own expression; for `metric_time`, the grain applied
+    to the official date of an input. The query's item must equal one of them."""
+    found: dict[str, list[exp.Expr]] = {}
+    for planned in plan.dimensions:
+        if planned.personal and not planned.masked:
+            text = planned.dimension.expr or planned.dimension.name
+            found[planned.column] = [_normalized(_parse_condition(text))]
+    if plan.grain is not None:
+        found["metric_time"] = [
+            _normalized(
+                exp.Cast(
+                    this=exp.TimestampTrunc(
+                        this=_parse_condition(item.time_dimension.expr or item.time_dimension.name),
+                        unit=exp.Literal.string(plan.grain),
+                    ),
+                    to=exp.DataType.build("date"),
+                )
+            )
+            for item in plan.inputs
+        ]
+    return found
+
+
+def _parse_condition(text: str) -> exp.Expr:
+    try:
+        return sqlglot.parse_one(text, into=exp.Condition)
+    except SqlglotError:
+        return exp.column(text)
+
+
+def _is_planned_item(item: exp.Alias, expected: dict[str, list[exp.Expr]]) -> bool:
+    return item.alias in expected and _normalized(item.this) in expected[item.alias]
 
 
 def _query_level(select: exp.Select) -> bool:

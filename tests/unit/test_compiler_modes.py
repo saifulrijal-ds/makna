@@ -494,3 +494,43 @@ def test_the_warning_and_the_sentence_say_filters_ignore_the_minimum_group_size(
     for text in (warning, sentence):
         assert "minimum group size does not apply to filters" in text
         assert "one person's records" in text
+
+
+# ---- fix round 2 -----------------------------------------------------------------------------
+
+
+def test_the_key_refusal_names_the_date_dimension_and_only_a_composite_key_is_refused() -> None:
+    both = GovernancePolicy.custom(allow_personal_filters=True, allow_unmasked_personal=True)
+    error = refusal(both, "outstanding_principal", personal_dates(), grain="month")
+    assert error.details["dimension"] == "contract_snapshot.snapshot_date"
+    # a key of one column is counted as a bare COUNT(DISTINCT key), which the final check accepts
+    model = with_derived(
+        lending(),
+        {
+            "lending.core.customers.registered_at": "personal",
+            "lending.core.customers.customer_id": "personal",
+        },
+    )
+    response = compile_with(ONLY_UNMASKED, "new_customer_count", model, grain="day")
+    assert GROUPS_LEFT_OUT in [c.name for c in response.columns]
+
+
+def test_custom_with_nothing_relaxed_refuses_with_the_strict_text_and_details() -> None:
+    nothing = GovernancePolicy.custom()
+    cases: list[tuple[str, Model | None, dict[str, Any]]] = [
+        ("new_customer_count", None, {"filters": [PERSONAL_FILTER]}),
+        ("new_customer_count", None, {"dimensions": ["customer.full_name"]}),
+        ("collected_amount", personal_dates(), {"grain": "month"}),
+        ("collected_amount", personal_dates(), {"time_start": "2026-01-01"}),
+        ("outstanding_principal", personal_dates(), {}),
+    ]
+    for metric, model, fields in cases:
+        strict = refusal(STRICT, metric, model, **fields)
+        custom = refusal(nothing, metric, model, **fields)
+        assert (custom.code, custom.message, custom.details) == (
+            strict.code,
+            strict.message,
+            strict.details,
+        )
+    relaxed = refusal(ONLY_MINIMUM, "new_customer_count", filters=[PERSONAL_FILTER])
+    assert "allow_personal_filters" in relaxed.message  # a relaxed policy names the rule
