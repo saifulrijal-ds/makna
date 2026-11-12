@@ -68,11 +68,13 @@ def customer_key_sql(model: Model, ref: str) -> str:
 def value_for(rng: random.Random, dimension: Dimension) -> Any:
     if dimension.values:
         return rng.choice(dimension.values).value
-    return {
-        "numeric": lambda: rng.choice([0, 1, 12, 36.5]),
-        "time": lambda: rng.choice(["2026-03-01", "2025-12-31"]),
-        "boolean": lambda: rng.choice([True, False]),
-    }.get(dimension.type, lambda: rng.choice(["Jakarta", "x", "Java"]))()
+    if dimension.type == "numeric":
+        return rng.choice([0, 1, 12, 36.5])
+    if dimension.type == "time":
+        return rng.choice(["2026-03-01", "2025-12-31"])
+    if dimension.type == "boolean":
+        return rng.choice([True, False])
+    return rng.choice(["Jakarta", "x", "Java"])
 
 
 def random_request(
