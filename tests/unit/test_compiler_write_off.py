@@ -37,6 +37,10 @@ REFERENCES = {
         "SUM(s.outstanding_principal) FILTER (WHERE s.days_past_due > 30)"
     ),
     "active_contract_count": "COUNT(*)",
+    "restructured_outstanding_principal": (
+        "SUM(s.outstanding_principal) FILTER (WHERE EXISTS ("
+        "SELECT 1 FROM contracts r WHERE r.contract_id = s.contract_id AND r.is_restructured))"
+    ),
 }
 
 
@@ -110,7 +114,37 @@ def test_a_contract_written_off_at_a_month_end_is_not_in_that_month_ends_figure(
         without = reference(lending_db, metric, month_end, in_book=True)
         including = reference(lending_db, metric, month_end, in_book=False)
         assert same_rows(got, without), (metric, month_end, got, without)
+        if metric == "restructured_outstanding_principal":
+            continue  # no written-off contract is restructured; the next test makes one
         assert not same_rows(got, including), (metric, month_end, "the write-off row is counted")
+
+
+def test_restructured_principal_leaves_the_write_off_row_out_when_the_contract_is_flagged(
+    lending_db: duckdb.DuckDBPyConnection,
+) -> None:
+    """No written-off contract is restructured in the sample data, so flag them for this test
+    (and put the flags back): the restructured amount must still leave the write-off row out."""
+    metric = "restructured_outstanding_principal"
+    lending_db.execute(
+        "CREATE TEMP TABLE flags AS SELECT contract_id, is_restructured FROM contracts "
+        "WHERE contract_status = 'written_off'"
+    )
+    lending_db.execute(
+        "UPDATE contracts SET is_restructured = true WHERE contract_status = 'written_off'"
+    )
+    try:
+        for month_end in write_off_month_ends(lending_db):
+            got = run_tree(lending_db, tree_of(lending(), metric, **month_range(month_end)))
+            without = reference(lending_db, metric, month_end, in_book=True)
+            including = reference(lending_db, metric, month_end, in_book=False)
+            assert same_rows(got, without), (month_end, got, without)
+            assert not same_rows(got, including), (month_end, "the write-off row is counted")
+    finally:
+        lending_db.execute(
+            "UPDATE contracts SET is_restructured = f.is_restructured "
+            "FROM flags f WHERE contracts.contract_id = f.contract_id"
+        )
+        lending_db.execute("DROP TABLE flags")
 
 
 def test_the_npf_ratio_leaves_the_write_off_row_out_of_both_parts(
@@ -148,3 +182,19 @@ def test_the_write_off_row_still_exists_for_the_draft_measure_to_see(
         """,
     )
     assert selected == written_off > 0
+
+
+def test_the_par30_ratio_leaves_the_write_off_row_out_of_both_parts(
+    lending_db: duckdb.DuckDBPyConnection,
+) -> None:
+    for month_end in write_off_month_ends(lending_db):
+        got = run_tree(lending_db, tree_of(lending(), "par30_ratio", **month_range(month_end)))
+        par = reference(lending_db, "par30_outstanding_principal", month_end, in_book=True)[0][0]
+        total = reference(lending_db, "outstanding_principal", month_end, in_book=True)[0][0]
+        par_all = reference(lending_db, "par30_outstanding_principal", month_end, in_book=False)[0][
+            0
+        ]
+        total_all = reference(lending_db, "outstanding_principal", month_end, in_book=False)[0][0]
+        assert len(got) == 1
+        assert float(got[0][-1]) == pytest.approx(float(par) / float(total))
+        assert float(got[0][-1]) != pytest.approx(float(par_all) / float(total_all))

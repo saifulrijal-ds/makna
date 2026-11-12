@@ -35,7 +35,7 @@ dimensions:
       - {value: dpd_61_90}
       - {value: dpd_91_180}
       - value: dpd_over_180
-        description: More than 180 days past due. Includes the write-off positions, which are more than 210 days past due.
+        description: More than 180 days past due. The write-off positions (more than 210 days past due) sit in this bucket but are left out of the portfolio metrics.
   - name: collectibility
     type: categorical
     description: Asset quality class from 1 (performing) to 5 (loss), derived from days past due.
