@@ -122,17 +122,15 @@ def test_a_contract_written_off_at_a_month_end_is_not_in_that_month_ends_figure(
 def test_restructured_principal_leaves_the_write_off_row_out_when_the_contract_is_flagged(
     lending_db: duckdb.DuckDBPyConnection,
 ) -> None:
-    """No written-off contract is restructured in the sample data, so flag them for this test
-    (and put the flags back): the restructured amount must still leave the write-off row out."""
+    """No written-off contract is restructured in the sample data, so flag them for this test,
+    inside a transaction that is rolled back: the restructured amount must still leave the
+    write-off row out."""
     metric = "restructured_outstanding_principal"
-    lending_db.execute(
-        "CREATE TEMP TABLE flags AS SELECT contract_id, is_restructured FROM contracts "
-        "WHERE contract_status = 'written_off'"
-    )
-    lending_db.execute(
-        "UPDATE contracts SET is_restructured = true WHERE contract_status = 'written_off'"
-    )
+    lending_db.execute("BEGIN TRANSACTION")
     try:
+        lending_db.execute(
+            "UPDATE contracts SET is_restructured = true WHERE contract_status = 'written_off'"
+        )
         for month_end in write_off_month_ends(lending_db):
             got = run_tree(lending_db, tree_of(lending(), metric, **month_range(month_end)))
             without = reference(lending_db, metric, month_end, in_book=True)
@@ -140,11 +138,7 @@ def test_restructured_principal_leaves_the_write_off_row_out_when_the_contract_i
             assert same_rows(got, without), (month_end, got, without)
             assert not same_rows(got, including), (month_end, "the write-off row is counted")
     finally:
-        lending_db.execute(
-            "UPDATE contracts SET is_restructured = f.is_restructured "
-            "FROM flags f WHERE contracts.contract_id = f.contract_id"
-        )
-        lending_db.execute("DROP TABLE flags")
+        lending_db.execute("ROLLBACK")
 
 
 def test_the_npf_ratio_leaves_the_write_off_row_out_of_both_parts(
