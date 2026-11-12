@@ -159,7 +159,7 @@ Sources: `https://docs.open-metadata.org/latest/releases/all-releases`; `https:/
 
 **Options rejected.** Hash masking (an unsalted hash of a phone or identity number can be reversed by guessing; a salted one would put the salt in SQL text returned to agents). Relying on engine-side masking only (not every engine has it, and the agent would still see the column exists and try it). Row-level policies are phase 2 (QRY-5).
 
-**What this does not do.** It applies the minimum group size only when a personal dimension is selected. Small groups formed only from non-personal dimensions (for example one contract's amount by branch and day) are not suppressed; a general rule for that is a phase 2 candidate.
+**What this does not do.** It applies the minimum group size only when a personal dimension is selected. Small groups formed only from non-personal dimensions (for example one contract's amount by branch and day) are not suppressed; a general rule for that is a phase 2 candidate. It also does not stop differencing: two requests whose time ranges or non-personal filters differ by one person can reveal that person's masked value (and the metric for that one person), because the rule works on one result at a time. Snapping time ranges to whole periods, refusing `!=` and `not_in` with a personal dimension, query auditing, or noise are phase 2 candidates. The group is also counted on the entity that holds the personal dimension, not on the person: where that entity is not the person (a payment, a contract), one person can supply many records. Both are documented limits, not changes to this decision.
 
 ### DR-6 (answers Q-6): Four roles, owner-team approval, a two-person rule, and read-only agent tokens
 
