@@ -96,3 +96,24 @@ server where the role may create databases and the `vector` extension, for examp
 MAKNA_TEST_DATABASE_URL=postgresql://postgres:makna_dev_postgres@127.0.0.1:5432/postgres \
   uv run pytest -m integration
 ```
+
+The engine tier reads the sample data as the read-only `lending_reader` role through
+`MAKNA_ENGINE_URL` (the same variable the app uses). Against the running stack:
+
+```
+MAKNA_ENGINE_URL=postgresql://lending_reader:makna_dev_reader@127.0.0.1:5432/lending \
+  uv run pytest -m engine
+```
+
+The password is the development default of `MAKNA_LENDING_READER_PASSWORD`; change the URL if
+you changed the variable or the published port. Without `MAKNA_ENGINE_URL` the engine tests
+skip; the CI `stack` job also sets `MAKNA_REQUIRE_ENGINE_DATABASE=1`, which turns a missing URL
+into a failure. The tier now holds the golden reference SQL check (`evals/golden/`, WP-14):
+every file in `evals/golden/reference_sql/` runs on the sample data and must return the
+committed CSV in `evals/golden/expected/`. After a deliberate change to the generator or a
+definition, rewrite the CSVs with `uv run python -m evals.golden.freeze` (it needs the same
+variable) and review the diff.
+
+Any PostgreSQL holding the generated data in schema `core` will do, for example one loaded
+with `data.lending_loader.load_all` (the reference SQL names tables as `core.<table>`, which
+resolves in a database of any name).
