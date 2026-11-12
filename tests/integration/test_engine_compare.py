@@ -132,3 +132,19 @@ def test_an_engine_that_cannot_be_reached_exits_2_and_never_prints_the_password(
     assert code == 2 and out == ""
     assert "makna catalog compare:" in err and "wp11_no_such_database" in err
     assert bogus not in out + err
+
+
+def test_an_empty_catalog_copy_is_an_error_not_no_differences(
+    migrated_url: URL,
+    migrated_engine: Engine,
+    scratch_engine: URL,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A database that was never synced has no catalog tables; "no differences" would be false."""
+    monkeypatch.setenv("MAKNA_DATABASE_URL", plain(migrated_url))
+    monkeypatch.setenv("MAKNA_ENGINE_URL", plain(scratch_engine))
+    code, out, err = run(capsys, "catalog", "compare")
+    assert code == 2
+    assert "no differences" not in out
+    assert "catalog copy has no tables" in err and "makna catalog sync" in err

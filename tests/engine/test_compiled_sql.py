@@ -144,7 +144,7 @@ CASES: list[tuple[str, dict[str, Any], str, list[str]]] = [
 
 
 @pytest.mark.parametrize(
-    ("name", "request_", "reference", "columns"), CASES, ids=lambda v: str(v)[:1]
+    ("name", "request_", "reference", "columns"), CASES, ids=[f"case{c[0][0]}" for c in CASES]
 )
 def test_a_spike_case_compiled_by_the_product_equals_its_reference_query(
     engine_connection: psycopg.Connection[Any],

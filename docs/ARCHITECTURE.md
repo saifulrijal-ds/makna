@@ -285,7 +285,7 @@ Makna never runs a caller's query (D-21). It talks to the target engine only for
 class EngineConnector(Protocol):
     dialect: str                    # sqlglot dialect name: "postgres" (MVP) or "duckdb" (tests)
     def list_tables(self, schema: str) -> list[EngineTable]: ...                    # name, columns(name, native_type)
-    def latest_value(self, table: str, expr: exp.Expression) -> date | None: ...    # SELECT MAX(expr): the freshness check
+    def latest_value(self, table: str, expr: exp.Expr) -> date | None: ...          # SELECT MAX(expr): the freshness check
 ```
 
 The PostgreSQL connector uses `psycopg`. The freshness query is built as a sqlglot tree like every other query. Engine introspection is used by `makna catalog compare`, which reports tables and columns that the catalog and the engine disagree on; it is not a second source of metadata. A Trino connector can be added behind the same interface later (CON-7, D-22).

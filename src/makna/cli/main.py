@@ -262,6 +262,13 @@ def _catalog_compare() -> int:
     try:
         with engine.connect() as connection:
             catalog = {fqn: list(columns) for fqn, columns in load_view(connection).tables.items()}
+        if not catalog:
+            print(
+                "makna catalog compare: the catalog copy has no tables; "
+                "run `makna catalog sync` first",
+                file=sys.stderr,
+            )
+            return 2
         engine_tables = [
             table for schema in catalog_schemas(catalog) for table in connector.list_tables(schema)
         ]
