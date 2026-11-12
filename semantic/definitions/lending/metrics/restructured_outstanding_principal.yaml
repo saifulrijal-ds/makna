@@ -4,8 +4,8 @@ name: restructured_outstanding_principal
 label: Restructured Outstanding Principal
 description: >-
   Principal still owed at a month end on contracts whose repayment schedule
-  has been restructured at least once. Positions written off at that month end
-  are left out.
+  has been restructured at least once. Contracts that leave the book at that
+  month end (more than 210 days past due) are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved

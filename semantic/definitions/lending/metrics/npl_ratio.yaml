@@ -5,8 +5,6 @@ label: NPL Ratio (retired)
 description: >-
   Retired ratio of non-performing loans, kept so that old reports and old
   questions still lead to the current definition. Use the NPF Ratio instead.
-  "Kredit macet" in everyday use means NPF (more than 90 days past due), not
-  only the collectibility class "Macet" (class 5, more than 180 days).
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: deprecated

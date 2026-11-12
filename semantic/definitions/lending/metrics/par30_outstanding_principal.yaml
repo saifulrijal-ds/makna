@@ -4,8 +4,8 @@ name: par30_outstanding_principal
 label: PAR 30 Outstanding Principal
 description: >-
   Principal still owed at a month end on contracts that are more than 30 days
-  past due. This is the amount of portfolio at risk, not the ratio. Positions
-  written off at that month end are left out.
+  past due. This is the amount of portfolio at risk, not the ratio. Contracts
+  that leave the book at that month end (more than 210 days past due) are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved

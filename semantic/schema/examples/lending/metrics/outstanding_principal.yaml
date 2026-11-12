@@ -5,8 +5,8 @@ label: Outstanding Principal
 description: >-
   Principal that customers still owe at a month end. It is a balance, not a
   flow: for a period longer than a month the value is the balance at the last
-  month end in the period, never a sum of months. Contracts written off at
-  that month end are not in the book and are left out.
+  month end in the period, never a sum of months. Contracts that leave the book
+  at that month end (more than 210 days past due) are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
@@ -33,5 +33,5 @@ example_requests:
     request: {dimensions: [branch.region_name], time_start: "2026-03-01", time_end: "2026-04-01"}
 caveats: >-
   Available at month ends only. Reported by servicing branch. A contract more
-  than 210 days past due at a month end is written off at that month end; its
-  write-off position is not counted, so the balance excludes it.
+  than 210 days past due at a month end leaves the book at that month end; its
+  position at that month end is not counted, so the balance excludes it.

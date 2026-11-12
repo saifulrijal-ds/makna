@@ -5,9 +5,7 @@ label: NPF Outstanding Principal
 description: >-
   Principal still owed at a month end on contracts that are more than 90 days
   past due. This is the amount of non-performing financing, not the ratio.
-  Positions written off at that month end are left out. In everyday use
-  "kredit macet" means this (more than 90 days past due); the collectibility
-  class "Macet" is class 5 only, more than 180 days.
+  Contracts that leave the book at that month end (more than 210 days past due) are left out.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved

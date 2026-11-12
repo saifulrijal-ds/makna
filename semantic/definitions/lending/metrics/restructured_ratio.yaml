@@ -4,7 +4,8 @@ name: restructured_ratio
 label: Restructured Ratio
 description: >-
   Share of outstanding principal that sits in restructured contracts at a
-  month end. Positions written off at that month end are left out of both parts.
+  month end. Contracts that leave the book at that month end (more than 210
+  days past due) are left out of both parts.
 domain: lending
 owner: {team: credit-risk, contact: credit-risk@example.com}
 status: approved
