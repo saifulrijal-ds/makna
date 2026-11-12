@@ -533,7 +533,11 @@
       time_start: "2025-12-01"
       time_end: "2026-01-01"
     answer_columns: [customer__customer_segment, active_contract_count]
-  notes: "Customer reached directly from the contract, not through the application."
+  notes: >-
+    Customer reached directly from the contract, not through the application. In the sample
+    data every contract has the same customer and product as its application, so reaching the
+    customer through the application gives the same numbers: this question cannot catch a
+    wrong join path.
 
 - id: G35
   question: "Show the PAR 30 ratio by region for sharia products last quarter."

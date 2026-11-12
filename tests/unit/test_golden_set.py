@@ -26,7 +26,7 @@ from makna.compiler.plan import plan_request
 from makna.compiler.snapshot import Model
 from makna.definitions.loader import load_definitions
 from makna.model.definitions import Metric
-from makna.model.request import QueryError, QueryRequest
+from makna.model.request import QueryError, QueryRequest, RequestFilter
 from makna.services.examples import model_from_definitions
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -153,6 +153,56 @@ def test_the_first_20_are_the_table_of_the_design(questions: list[Question]) -> 
             assert [c.metric for c in q.expected.candidates or ()] == named, qid
 
 
+# The "Expected request" column of EVALS 2.5, typed here so the test does not read the YAML back:
+# (dimensions, filters as (dimension, value), grain, time_start, time_end).
+H1_2026 = ("2026-01-01", "2026-07-01")
+JUNE_2026 = ("2026-06-01", "2026-07-01")
+TableRequest = tuple[
+    tuple[str, ...], tuple[tuple[str, str], ...], str | None, tuple[str, str] | None
+]
+TABLE_REQUESTS: dict[str, TableRequest] = {
+    "G01": ((), (), None, JUNE_2026),
+    "G02": (("branch.region_name",), (), None, H1_2026),
+    "G03": ((), (), None, None),
+    "G04": (("branch.region_name",), (), None, JUNE_2026),
+    "G05": ((), (("product.product_category", "car_backed"),), "month", H1_2026),
+    "G06": (("contract_snapshot.dpd_bucket",), (), None, JUNE_2026),
+    "G07": ((), (), "quarter", ("2025-01-01", "2026-01-01")),
+    "G08": (("branch.region_name",), (), None, ("2026-04-01", "2026-07-01")),
+    "G09": ((), (("product.financing_scheme", "sharia"),), "month", H1_2026),
+    "G10": (("product.product_category",), (), None, ("2026-01-01", "2026-04-01")),
+    "G11": ((), (), None, JUNE_2026),
+    "G12": ((), (("product.financing_scheme", "sharia"),), None, H1_2026),
+    "G13": ((), (), None, None),
+    "G14": (("branch.branch_name",), (), None, JUNE_2026),
+    "G15": (("payment.payment_channel",), (), None, ("2026-05-01", "2026-06-01")),
+    "G16": ((), (), None, None),
+    "G17": ((), (), None, None),
+    "G19": (("payment.payment_channel",), (), None, None),
+}  # fmt: skip
+
+
+def shape(request: QueryRequest) -> tuple[object, ...]:
+    return (
+        tuple(request.dimensions),
+        tuple((f.dimension, f.value) for f in request.filters),
+        request.grain,
+        None if request.time_start is None else (request.time_start, request.time_end),
+    )
+
+
+def test_the_first_20_requests_are_the_table_of_the_design(questions: list[Question]) -> None:
+    by_id = {q.id: q for q in questions}
+    for qid, (dimensions, filters, grain, time) in TABLE_REQUESTS.items():
+        want = (dimensions, filters, grain, time)
+        requests = list(requests_of(by_id[qid]))
+        assert requests, qid
+        for request in requests:  # clarify: every candidate has the same shape
+            assert shape(request) == want, qid
+    for qid in ("G18", "G20"):
+        assert list(requests_of(by_id[qid])) == []
+
+
 # ---- criterion 2: every approved metric is the expected metric of an answer question -----------
 
 
@@ -200,16 +250,35 @@ def test_no_question_repeats_an_example_question(
     assert leaked == []
 
 
+def same_request(a: QueryRequest, b: QueryRequest) -> bool:
+    """Equal apart from the order of dimensions and filters."""
+
+    def key(r: QueryRequest) -> tuple[object, ...]:
+        filters = {(f.dimension, f.op, repr(f.value)) for f in r.filters}
+        return (r.metric, frozenset(r.dimensions), frozenset(filters), r.grain, r.time_start,
+                r.time_end, r.limit)  # fmt: skip
+
+    return key(a) == key(b)
+
+
+def test_the_leak_check_ignores_the_order_of_dimensions_and_filters() -> None:
+    f1 = RequestFilter(dimension="product.product_category", op="=", value="car_backed")
+    f2 = RequestFilter(dimension="product.financing_scheme", op="=", value="sharia")
+    a = QueryRequest(metric="m", dimensions=("a.x", "b.y"), filters=(f1, f2), grain="month")
+    b = QueryRequest(metric="m", dimensions=("b.y", "a.x"), filters=(f2, f1), grain="month")
+    assert a != b
+    assert same_request(a, b)
+    assert not same_request(a, QueryRequest(metric="m", dimensions=("a.x",), filters=(f1, f2)))
+
+
 def test_no_expected_request_repeats_an_example_request(
     questions: list[Question], metrics: dict[str, Metric]
 ) -> None:
     for q in questions:
         for request in requests_of(q):
             for example in metrics[request.metric].example_requests or ():
-                assert request != QueryRequest.from_example(request.metric, example.request), (
-                    q.id,
-                    request.metric,
-                )
+                other = QueryRequest.from_example(request.metric, example.request)
+                assert not same_request(request, other), (q.id, request.metric)
 
 
 # ---- criterion 5: requests plan, and the refusals fail with the right code ---------------------
