@@ -94,7 +94,7 @@ class PostgresConnector:
                 with connection.cursor() as cursor:
                     cursor.execute(statement, params)
                     return [tuple(row) for row in cursor.fetchall()]
-        except errors.QueryCanceled as error:
+        except errors.QueryCanceled:
             message = _timeout_message(self._timeout, self.target)
             log.warning("%s", message)
             raise EngineError(message) from None
