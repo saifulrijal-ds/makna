@@ -170,7 +170,12 @@ def test_a_request_that_cannot_be_redacted_is_stored_as_unloggable_and_the_call_
     with pytest.raises(ServiceError):
         svc.get_definition(users.caller("viewer"), "metric:zzz")
     rows = rows_since(engine, before)
-    assert [r["request"] for r in rows] == [{"unloggable": True}] * 3
+    # only the field that cannot be redacted is lost, the others are kept
+    assert [r["request"]["query"] for r in rows[:1]] == ["[unloggable]"]
+    assert rows[0]["request"]["limit"] == 5
+    assert rows[1]["request"]["metric"] == "[unloggable]"
+    assert rows[1]["request"]["limit"] == 1000 and rows[1]["request"]["filters"] == []
+    assert rows[2]["request"]["id"] == "[unloggable]"
     assert [(r["tool"], r["status"], r["error_code"]) for r in rows] == [
         ("search", "ok", None),
         ("compile_query", "ok", None),
@@ -479,3 +484,140 @@ def test_the_relaxed_policy_is_read_from_the_services_object(
     shown = svc.get_definition(users.caller("viewer"), "metric:npf_ratio")
     assert not shown.unavailable_dimensions
     assert sample_objects()
+
+
+# --- fix round 2 ---------------------------------------------------------------------------------
+
+
+def stored_request(engine: Engine, call: Callable[[], object]) -> dict[str, Any]:
+    before = sup.log_count(engine)
+    try:
+        call()
+    except (QueryError, ServiceError):
+        pass
+    (row,) = rows_since(engine, before)
+    request = row["request"]
+    assert isinstance(request, dict)
+    return request
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        "%00",
+        "%0a%00",
+        "x%2500",
+        "%252500",
+        "\ue000\ue001",
+        "\ue0000\ue001",
+        "\ue0009\ue001",
+        "\U000f0000",
+    ],
+)
+def test_a_caller_cannot_blank_the_stored_request(
+    service_world: tuple[Engine, Users], junk: str
+) -> None:
+    engine, users = service_world
+    svc = sup.services(engine)
+    caller = users.caller("viewer")
+    request = stored_request(engine, lambda: svc.search(caller, f"kredit macet {junk} x", limit=3))
+    assert request != {"unloggable": True}
+    assert request["query"].startswith("kredit macet") and request["limit"] == 3
+    request = stored_request(
+        engine,
+        lambda: svc.compile_query(
+            caller,
+            {
+                "metric": "disbursement_amount",
+                "dimensions": ["product.product_category"],
+                "filters": [{"dimension": "product.product_name", "op": "=", "value": f"a{junk}"}],
+            },
+        ),
+    )
+    assert request["metric"] == "disbursement_amount"
+    assert request["dimensions"] == ["product.product_category"]
+    assert request["filters"][0]["dimension"] == "product.product_name"
+    assert request["filters"][0]["value"].startswith("a")
+
+
+def test_double_encoded_personal_data_is_removed(service_world: tuple[Engine, Users]) -> None:
+    engine, users = service_world
+    svc = sup.services(engine)
+    request = stored_request(
+        engine,
+        lambda: svc.search(
+            users.caller("viewer"), "john%2540example.com 4111%25201111%25201111%25201111 x"
+        ),
+    )
+    assert "john" not in request["query"] and "4111" not in request["query"]
+
+
+def test_one_field_that_cannot_be_stored_costs_only_that_field(
+    service_world: tuple[Engine, Users], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services.redact import redact_value as real
+
+    engine, users = service_world
+
+    def picky(value: Any, limit: int = 500) -> Any:
+        if isinstance(value, str) and "BOOM" in value:
+            raise RuntimeError("no")
+        return real(value, limit)
+
+    monkeypatch.setattr("makna.services.calllog.redact_value", picky)
+    request = stored_request(
+        engine,
+        lambda: sup.services(engine).compile_query(
+            users.caller("viewer"),
+            {"metric": "npf_ratio", "grain": "BOOM", "time_start": "2025-01-01"},
+        ),
+    )
+    assert request["grain"] == "[unloggable]"
+    assert request["metric"] == "npf_ratio" and request["time_start"] == "2025-01-01"
+
+
+def test_a_refusal_with_details_is_internal_when_its_row_cannot_be_written(
+    service_world: tuple[Engine, Users], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, users = service_world
+    svc = sup.services(engine)
+    caller = users.caller("viewer")
+    monkeypatch.setattr(CallLog, "write", lambda self, call: False)
+    for call in (
+        lambda: svc.get_definition(caller, "metric:npf_ratoi"),  # NOT_FOUND with close ids
+        lambda: svc.compile_query(caller, {"metric": "npf_ratio", "dimensions": ["x.y"]}),
+        lambda: svc.search(caller, ""),
+        lambda: svc.compile_query(caller, {"metric": "nope"}),
+    ):
+        with pytest.raises(ServiceError) as raised:
+            call()
+        assert raised.value.code == ServiceErrorCode.INTERNAL
+        assert raised.value.details == {} and "npf" not in raised.value.message
+
+
+def test_get_definition_waits_for_a_rebuild_and_shows_no_values_of_a_newly_personal_dimension(
+    fresh_service_world: tuple[Engine, Users], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    engine, users = fresh_service_world
+    svc = sup.services(engine, GovernancePolicy.custom(allow_unmasked_personal=True))
+    caller = users.caller("viewer")
+    assert svc.get_definition(caller, "dimension:customer.gender").values == ["F", "M"]
+    tagged = export_with_tags(tmp_path / "t.yaml", {("customers", "gender"): ["PII.Sensitive"]})
+    sync_catalog(engine, FileConnector(tagged), tag_map=TAG_MAP)
+    entered, release = slow_build(monkeypatch)
+    holder = threading.Thread(target=lambda: svc.get_definition(caller, "metric:npf_ratio"))
+    holder.start()
+    assert entered.wait(20)
+    outcome: dict[str, Any] = {}
+
+    def read() -> None:
+        outcome["view"] = svc.get_definition(caller, "dimension:customer.gender")
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    reader.join(0.5)
+    assert reader.is_alive()  # it waits; it is not served the old snapshot's values
+    release.set()
+    reader.join(20)
+    holder.join(20)
+    assert outcome["view"].values == []

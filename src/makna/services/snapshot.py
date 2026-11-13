@@ -8,8 +8,7 @@ It is cached per process. Every call reads a small key (the `definitions_version
 the latest successful catalog sync, and the open reference issues) and compares it with the key
 the cached snapshot was built from. When they differ, the snapshot is rebuilt in one
 repeatable-read transaction, so its content and its key belong together. A lock lets one thread
-rebuild; a thread that finds a rebuild running keeps serving the old snapshot until the new one
-is ready.
+rebuild; the other threads wait for it and use the new snapshot, for every service.
 """
 
 from __future__ import annotations
@@ -148,34 +147,27 @@ def _build(connection: Connection, current: CurrentState) -> Snapshot:
 
 
 class SnapshotCache:
-    """The snapshot of one process, rebuilt when the key it was built from is out of date."""
+    """The snapshot of one process, rebuilt by one thread when its key is out of date."""
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
         self._lock = threading.Lock()
         self._snapshot: Snapshot | None = None
 
-    def current(self, *, wait: bool = False) -> tuple[Snapshot, CurrentState]:
+    def current(self) -> tuple[Snapshot, CurrentState]:
         """The snapshot to use for this call, and the index state read for it.
 
-        While another thread rebuilds, a caller gets the old snapshot at once, unless `wait` is
-        set: `compile_query` waits for the rebuild and uses the new snapshot, because a compile
-        must never run with the catalog levels of an older moment (D-30, section 7.6). Whatever
-        a service needs of the catalog (D-30, derived levels, covered tables) it takes from the
-        returned snapshot, never from the state read here.
+        When the stored state is newer than the cached snapshot, the call waits for the rebuild
+        (one thread builds, the others wait on the lock) and uses the new snapshot: one rule for
+        all four services, so none serves facts of an older moment than the state it read. A
+        rebuild takes about 10 ms on the sample model. Whatever a service needs of the catalog
+        (D-30, derived levels, covered tables) it takes from the returned snapshot.
         """
         with self._engine.connect() as connection:
             state = read_state(connection)
         snapshot = self._snapshot
         if snapshot is not None and snapshot.key == state.key:
             return snapshot, state
-        if snapshot is not None and not wait:
-            if self._lock.acquire(blocking=False):
-                try:
-                    return self._rebuild(), state
-                finally:
-                    self._lock.release()
-            return snapshot, state  # another thread is rebuilding: serve the old one meanwhile
         with self._lock:
             snapshot = self._snapshot
             if snapshot is not None and snapshot.key == state.key:

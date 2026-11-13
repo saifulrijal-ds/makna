@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 INVALID = "[invalid]"
 UNLOGGABLE: dict[str, Any] = {"unloggable": True}
+FIELD_UNLOGGABLE = "[unloggable]"
 ID_LIMIT = 200
 MAX_LIST = 50
 
@@ -50,7 +51,10 @@ def _text(value: object, limit: int) -> Any:
     if value is None:
         return None
     if isinstance(value, str):
-        return redact_value(value, limit)
+        try:
+            return redact_value(value, limit)
+        except Exception:
+            return FIELD_UNLOGGABLE  # this field only; the others are kept
     return INVALID
 
 
@@ -70,15 +74,33 @@ def _whole(value: object) -> Any:
     return value if isinstance(value, int) and not isinstance(value, bool) else INVALID
 
 
+def _storable(built: dict[str, Any]) -> dict[str, Any]:
+    """`built` with every field the JSON column cannot take replaced by `[unloggable]`, field by
+    field (and filter by filter), so one bad field does not cost the others."""
+
+    def fine(value: Any) -> bool:
+        try:
+            json.dumps(value, allow_nan=False)
+            return True
+        except Exception:
+            return False
+
+    kept: dict[str, Any] = {}
+    for key, value in built.items():
+        if key == "filters" and isinstance(value, list):
+            kept[key] = [item if fine(item) else FIELD_UNLOGGABLE for item in value]
+        else:
+            kept[key] = value if fine(value) else FIELD_UNLOGGABLE
+    return kept
+
+
 def _never_fails(build: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """Wrap a request builder so that nothing it does can fail the call."""
 
     @functools.wraps(build)
     def safe(*args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            built = build(*args, **kwargs)
-            json.dumps(built, allow_nan=False)  # the JSON column takes nothing else
-            return built
+            return _storable(build(*args, **kwargs))
         except Exception:
             return dict(UNLOGGABLE)
 
@@ -201,11 +223,14 @@ class CallLog:
                 "op": _text(item.get("op"), 20),
             }
             if item.get("value") is not None:
-                entry["value"] = (
-                    redact_value(item["value"])
-                    if metric_known and _non_personal(model, dimension)
-                    else REDACTED
-                )
+                try:
+                    entry["value"] = (
+                        redact_value(item["value"])
+                        if metric_known and _non_personal(model, dimension)
+                        else REDACTED
+                    )
+                except Exception:
+                    entry["value"] = FIELD_UNLOGGABLE
             filters.append(entry)
         return {
             "metric": _text(metric, ID_LIMIT),

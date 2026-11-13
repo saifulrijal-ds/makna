@@ -1,6 +1,6 @@
 """WP-12 criterion 7 (a change is seen without a restart) and the rebuild rules of the snapshot
 cache: refresh on `definitions_version`, on a catalog sync and on a change of the open reference
-issues; one rebuild under concurrent requests, with the old snapshot serving meanwhile."""
+issues; one rebuild under concurrent requests, which wait for it."""
 
 from __future__ import annotations
 
@@ -200,7 +200,7 @@ def test_a_second_call_with_the_same_key_reuses_the_snapshot(
     assert first is second and len(built) == 1
 
 
-def test_concurrent_requests_rebuild_once_and_the_old_snapshot_serves_meanwhile(
+def test_concurrent_requests_rebuild_once_and_wait_for_it(
     fresh_service_world: tuple[Engine, Users], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     engine, _ = fresh_service_world
@@ -235,15 +235,22 @@ def test_concurrent_requests_rebuild_once_and_the_old_snapshot_serves_meanwhile(
     thread = threading.Thread(target=rebuild)
     thread.start()
     assert entered.wait(10)
-    # while the first thread rebuilds, other callers get the old snapshot at once
-    for _ in range(5):
-        served, _ = cache.current()
-        assert served is old
+    # while the first thread rebuilds, other callers wait and get the new snapshot
+    others: list[object] = []
+    waiters = [threading.Thread(target=lambda: others.append(cache.current()[0])) for _ in range(4)]
+    for waiter in waiters:
+        waiter.start()
+    for waiter in waiters:
+        waiter.join(0.3)
+        assert waiter.is_alive()  # none was served the old snapshot at once
     assert len(builds) == 1
     release.set()
     thread.join(10)
+    for waiter in waiters:
+        waiter.join(10)
     fresh, _ = cache.current()
     assert results["rebuilt"] is fresh and fresh is not old and len(builds) == 1
+    assert len(others) == 4 and all(item is fresh for item in others)
 
 
 def test_the_first_build_waits_for_the_one_in_progress(

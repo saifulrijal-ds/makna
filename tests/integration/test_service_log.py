@@ -182,10 +182,11 @@ def test_a_call_whose_row_cannot_be_written_has_no_answer(
                 call()
             assert raised.value.code == ServiceErrorCode.INTERNAL
             assert raised.value.details == {} and "npf" not in raised.value.message
-        # a refused call keeps its own error
+        # a refusal is no answer either: INTERNAL, with no close ids
         with pytest.raises(ServiceError) as refused:
             svc.get_definition(ghost, "metric:zzz")
-        assert refused.value.code == ServiceErrorCode.NOT_FOUND
+        assert refused.value.code == ServiceErrorCode.INTERNAL
+        assert refused.value.details == {}
     assert sup.log_count(engine) == before  # nothing was stored
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
     assert errors and all("tool_call_log write failed" in e for e in errors)

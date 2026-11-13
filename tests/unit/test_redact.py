@@ -230,3 +230,51 @@ def test_non_finite_and_huge_numbers_are_removed_not_raised() -> None:
     assert redact_value(1e30) == REDACTED
     assert redact_value(2.5) == 2.5
     assert redact_value([float("nan"), 3]) == [REDACTED, 3]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-06-30  1234-5678",
+        "2026-06-30\u20131234 5678",
+        "2026-06-30 - 12345678",
+        "12345678  2026-06-30",
+        "2026-06-30, 2026-07-31",
+        "2026-06-30\u20091234\u20095678",
+        "1234 5678  2026-06-30 12:00",
+    ],
+)
+def test_a_date_does_not_shelter_the_digits_next_to_it(text: str) -> None:
+    out = redact(text)
+    assert not re.search(r"\d{4}", out), out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "x%00y",
+        "%0a%00",
+        "x%2500y",
+        "a\ue000b",
+        "\ue0000\ue001",
+        "2026-06-30 \ue0000\ue001",
+        "\U000f0001",
+    ],
+)
+def test_no_control_or_private_use_character_survives_and_nothing_raises(text: str) -> None:
+    out = redact(text)
+    assert not re.search("[\x00-\x08\x0b\x0c\x0e-\x1f\ue000-\uf8ff\U000f0000-\U0010ffff]", out)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "john%2540example.com",
+        "john&amp;#64;example.com",
+        "john%252540example.com",
+        "4111%25201111%25201111%25201111",
+    ],
+)
+def test_double_encoding_is_decoded_before_matching(text: str) -> None:
+    out = redact(text)
+    assert "john" not in out and "4111" not in out

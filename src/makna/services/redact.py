@@ -48,12 +48,19 @@ _INTERNATIONAL = re.compile(r"\+\s?\d(?:[\s.\-()/_,‐-―−]{0,3}\d){6,}")
 _INDONESIAN = re.compile(r"(?<![\d])\(?0\d{1,3}\)?[\s.\-]?\d{3,4}(?:[\s.\-]?\d{2,5})?(?![\d])")
 _DIGIT_RUN = re.compile(rf"\d(?:{_SEPARATORS}{{0,3}}\d){{8,}}")
 _DATE = re.compile(
-    r"(?<!\d)(?<!\d[\s.\-/_,])"
+    r"(?<!\d)"
     r"(?:19|20|21)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
     r"(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)?"
-    r"(?![\d])(?![\s.\-/_,]\d)"
+    rf"(?!\d)(?!{_SEPARATORS}{{1,3}}\d)"
 )
-_UNSTORABLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
+_AFTER_DIGIT = re.compile(rf"\d{_SEPARATORS}{{0,3}}$")
+# Control characters, unpaired surrogates and every private-use code point: the log column cannot
+# hold some, and the date markers below are private-use characters a caller must not type.
+_UNSTORABLE = re.compile(
+    "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ue000-\uf8ff"
+    "\U000f0000-\U000ffffd\U00100000-\U0010fffd]"
+)
+MAX_DECODE_PASSES = 5
 _INVISIBLE = re.compile(r"[­​-‏‪-‮⁠-⁤﻿]")
 _TAIL = re.compile(r"[\d\s.\-+()/_,‐-―−]+$")
 _HOLD = "{}"
@@ -63,16 +70,23 @@ _PATTERNS = (_EMAIL, _EMAIL_WORDS, _INTERNATIONAL, _DIGIT_RUN, _INDONESIAN)
 
 
 def normalise(text: str) -> str:
-    """Control characters and unpaired surrogates replaced, NFKC, invisible characters dropped,
-    percent escapes and character references decoded."""
-    text = _UNSTORABLE.sub("\ufffd", text)  # the JSON column of the log cannot hold them
+    """Control characters, unpaired surrogates and private-use characters replaced; NFKC;
+    invisible characters dropped; percent escapes and HTML character references decoded until
+    the text stops changing (at most 5 passes, so double encoding is decoded too); and the
+    replacement again after the last decoding, so `%00` cannot bring a NUL back."""
+    text = _UNSTORABLE.sub("\ufffd", text)
+    for _ in range(MAX_DECODE_PASSES):
+        before = text
+        text = unicodedata.normalize("NFKC", text)
+        text = _INVISIBLE.sub("", text)
+        if "%" in text:
+            text = unquote(text)
+        if "&" in text:
+            text = html.unescape(text)
+        if text == before:
+            break
     text = unicodedata.normalize("NFKC", text)
-    text = _INVISIBLE.sub("", text)
-    if "%" in text:
-        text = unquote(text)
-    if "&" in text:
-        text = html.unescape(text)
-    return unicodedata.normalize("NFKC", text)
+    return _UNSTORABLE.sub("\ufffd", text)
 
 
 def redact(text: str) -> str:
@@ -82,6 +96,9 @@ def redact(text: str) -> str:
     held: list[str] = []
 
     def hold(match: re.Match[str]) -> str:
+        # Spared only when no digit leads into it through the separators the digit rule joins.
+        if _AFTER_DIGIT.search(match.string[: match.start()]):
+            return match.group(0)
         held.append(match.group(0))
         return _HOLD.format(len(held) - 1)
 

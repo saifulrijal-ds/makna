@@ -144,22 +144,23 @@ class Services:
     def _logged(self, caller: Caller, tool: str) -> Iterator[CallState]:
         """Time the call and write its `tool_call_log` row, whatever happens in the body.
 
-        A call that would answer but whose row cannot be written is `INTERNAL`: there is no
-        answer without a log row (ARCHITECTURE section 14). A call that is refused or fails
-        keeps its own error when its row cannot be written; the failed write is logged.
+        No answer of any kind without a log row (ARCHITECTURE section 14): a call, refused or not,
+        whose row cannot be written is `INTERNAL` with no details. Only `INTERNAL` itself, when even
+        it cannot be logged, is returned without a row. The failed write is logged.
         """
         call = CallState(caller, tool)
         try:
             yield call
         except ServiceError as error:
-            call.fail(
-                "error" if error.code == ServiceErrorCode.INTERNAL else "refused", str(error.code)
-            )
-            self._calls.write(call)
+            internal = error.code == ServiceErrorCode.INTERNAL
+            call.fail("error" if internal else "refused", str(error.code))
+            if not self._calls.write(call) and not internal:
+                raise ServiceError(ServiceErrorCode.INTERNAL, INTERNAL_MESSAGE) from None
             raise
         except QueryError as error:
             call.fail("refused", str(error.code))
-            self._calls.write(call)
+            if not self._calls.write(call):
+                raise ServiceError(ServiceErrorCode.INTERNAL, INTERNAL_MESSAGE) from None
             raise
         except Exception as error:
             logger.error("service call failed: tool=%s error=%s", tool, type(error).__name__)
@@ -343,9 +344,8 @@ class Services:
                 )
                 parsed = self._parse_request(request)
                 permissions.require(caller, permissions.Permission.COMPILE)
-                # Wait for a rebuild: a compile never runs with the catalog levels of an older
-                # moment, and D-30 and the covered tables come from the snapshot it uses.
-                snapshot, _ = self._cache.current(wait=True)
+                # D-30 and the covered tables come from the snapshot the compile uses.
+                snapshot, _ = self._cache.current()
                 if not snapshot.catalog_synced:
                     # No catalog, so the levels the catalog derives are unknown: keep no value.
                     raise ServiceError(ServiceErrorCode.CATALOG_NOT_SYNCED, NOT_SYNCED_MESSAGE)

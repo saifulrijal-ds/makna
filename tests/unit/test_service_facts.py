@@ -281,9 +281,12 @@ def test_a_builder_that_raises_gives_an_unloggable_request() -> None:
     from makna.services.calllog import CallLog
 
     with mock.patch("makna.services.calllog.redact_value", side_effect=RuntimeError("boom")):
-        assert CallLog.search_request("npf", None, None, False, 5) == {"unloggable": True}
-        assert CallLog.id_request("metric:npf_ratio") == {"unloggable": True}
-        assert CallLog.compile_request({"metric": "npf_ratio"}, None) == {"unloggable": True}
+        # only the field that cannot be redacted is lost
+        found = CallLog.search_request("npf", None, None, False, 5)
+        assert found["query"] == "[unloggable]" and found["limit"] == 5
+        assert CallLog.id_request("metric:npf_ratio")["id"] == "[unloggable]"
+        built = CallLog.compile_request({"metric": "npf_ratio", "limit": 7}, None)
+        assert built["metric"] == "[unloggable]" and built["limit"] == 7
 
 
 def test_allowed_values_of_a_personal_dimension_are_never_listed_in_invalid_filter() -> None:
