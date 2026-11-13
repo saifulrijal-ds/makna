@@ -43,9 +43,10 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
-from makna.model.definitions import Dimension, MaskBucket, Masking, MaskRedact, MaskTruncateDate
+from makna.model.definitions import MaskBucket, Masking, MaskRedact, MaskTruncateDate
 from makna.model.functions import node_problem
 from makna.model.governance import GovernancePolicy
+from makna.model.sensitivity import columns_read
 
 if TYPE_CHECKING:
     from makna.compiler.plan import QueryPlan
@@ -96,22 +97,6 @@ def _number(value: float) -> exp.Expr:
 # Which columns are personal
 
 
-def columns_read(dimension: Dimension) -> tuple[str, ...]:
-    """Names of the columns a dimension's expression reads, as written.
-
-    A dimension with no `expr` reads the column of its own name. An expression that does not
-    parse reads the dimension's own name: validation (V05) rejects such files, and a broken
-    expression elsewhere must not stop a request that never uses it.
-    """
-    if dimension.expr is None:
-        return (dimension.name,)
-    try:
-        tree = sqlglot.parse_one(dimension.expr, into=exp.Condition)
-    except SqlglotError:
-        return (dimension.name,)
-    return tuple(dict.fromkeys(c.name for c in tree.find_all(exp.Column)))
-
-
 def personal_columns(model: Model) -> frozenset[tuple[str, str]]:
     """`(table, column)`, lower case, for every column that is personal in either way: read by
     a dimension whose effective sensitivity is personal (selected or not), or tagged personal by
@@ -153,13 +138,27 @@ def raw_returnable_columns(model: Model, policy: GovernancePolicy) -> frozenset[
 
 class GovernanceError(RuntimeError):
     """The generated SQL breaks a personal-data rule. This is a bug in the generator or in the
-    model, never a mistake in a request, so it is not a `QueryError`."""
+    model, never a mistake in a request, so it is not a `QueryError`.
+
+    When the rule broken is the one about a personal column, `table` and `column` name it (lower
+    case, as the model keys them). They are names, never values. The service layer turns such an
+    error into a structured refusal (R05).
+    """
+
+    def __init__(
+        self, message: str, *, table: str | None = None, column: str | None = None
+    ) -> None:
+        super().__init__(message)
+        self.table = table
+        self.column = column
 
 
 def _violation(column: str, table: str, where: str) -> GovernanceError:
     return GovernanceError(
         f"internal error: the personal column {table}.{column} appears {where}. A personal "
-        "column may appear only inside a mask or a count, in the select list or the group clause."
+        "column may appear only inside a mask or a count, in the select list or the group clause.",
+        table=table,
+        column=column,
     )
 
 

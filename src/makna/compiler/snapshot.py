@@ -12,9 +12,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from makna.compiler.governance import columns_read
 from makna.model.definitions import Dimension, Entity, Measure, Metric, Relationship, Rule
-from makna.model.sensitivity import rank, stricter
+from makna.model.sensitivity import effective_level, rank, stricter
 
 
 @dataclass(frozen=True)
@@ -83,12 +82,7 @@ class Model:
     def effective_sensitivity(self, entity: Entity, dimension: Dimension) -> str:
         """The stricter of the dimension's level (the entity's, if it sets none) and the levels
         derived from catalog tags on the columns its expression reads (section 7.6)."""
-        level: str = dimension.sensitivity or entity.sensitivity
-        for column in columns_read(dimension):
-            derived = self.derived_sensitivity.get((entity.source.table.lower(), column.lower()))
-            if derived is not None:
-                level = stricter(level, derived)
-        return level
+        return effective_level(entity, dimension, self.derived_sensitivity)
 
     # ---- lookups: each returns None when the name does not resolve -------------------
 
