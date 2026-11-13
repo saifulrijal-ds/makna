@@ -24,11 +24,12 @@ from data.generator import DEFAULT_SEED, TABLES, generate, write_parquet
 from data.lending_loader import load_all
 from makna.catalog.file import FileConnector
 from makna.catalog.sync import sync_catalog
-from makna.config import load_search_runtime, load_tag_map
+from makna.config import load_governance_runtime, load_search_runtime, load_tag_map
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
 from makna.index import indexer, migrate
 from makna.index.db import make_engine
 from makna.search.embedding import make_provider
+from makna.services.derive import make_derive
 
 
 class InitError(Exception):
@@ -134,11 +135,13 @@ def build_index_step(context: Context) -> str:
             f"{context.definitions_dir} holds no definition objects; nothing was indexed"
         )
     runtime = load_search_runtime()
+    governance = load_governance_runtime()
+    derive = make_derive(governance.governance.policy(), governance.dialect)
     key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
     provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
     engine = make_engine(context.database_url)
     try:
-        result = indexer.build(engine, provider, objects)
+        result = indexer.build(engine, provider, objects, derive=derive)
     finally:
         engine.dispose()
     if result.total_changes == 0:

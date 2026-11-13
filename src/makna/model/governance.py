@@ -32,6 +32,7 @@ warning.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Literal, get_args
 
@@ -148,6 +149,18 @@ class GovernancePolicy:
         if self.allow_unmasked_personal:
             found.append(("allow_unmasked_personal", True))
         return tuple(found)
+
+    def fingerprint(self) -> str:
+        """A short stable text that changes when any rule value changes.
+
+        The indexer stores it next to the available dimensions it computed under this policy; the
+        service compares it with the running policy (ARCHITECTURE section 5.4).
+        """
+        payload = (
+            f"{self.mode}|{self.min_group_size}|{int(self.allow_personal_filters)}|"
+            f"{int(self.apply_masks)}|{int(self.allow_unmasked_personal)}"
+        )
+        return hashlib.sha256(payload.encode("ascii")).hexdigest()[:16]
 
     def may_return_raw(self, has_mask: bool) -> bool:
         """True if a personal dimension may be returned unmasked: one with a masking rule when

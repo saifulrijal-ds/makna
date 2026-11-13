@@ -66,7 +66,7 @@ def last_summary(engine: Engine) -> dict[str, Any]:
         return summary
 
 
-# --- Acceptance 1 --------------------------------------------------------------------------
+# --- Acceptance 1 ---
 
 
 def test_syncing_the_sample_export_creates_nine_datasets_and_the_columns_of_section_3(
@@ -150,7 +150,7 @@ def test_a_table_missing_from_the_export_is_marked_removed_and_comes_back(
         )
 
 
-# --- Acceptance 4: derived sensitivity ---------------------------------------------------------
+# --- Acceptance 4: derived sensitivity ---
 
 
 def test_a_pii_tagged_column_gets_derived_sensitivity_personal(migrated_engine: Engine) -> None:
@@ -247,7 +247,7 @@ def test_a_still_true_issue_is_not_reopened_or_duplicated(
     assert issues(migrated_engine) == before and before
 
 
-# --- Acceptance 3: each of R01 to R04 opens exactly that issue -----------------------------------
+# --- Acceptance 3: each of R01 to R04 opens exactly that issue ---
 
 
 def test_r01_opens_exactly_r01(migrated_engine: Engine) -> None:
@@ -294,7 +294,7 @@ def test_r04_opens_exactly_r04(migrated_engine: Engine) -> None:
     assert issues(migrated_engine) == [("R04", "glossary_term:nothing", "catalog_term")]
 
 
-# --- Acceptance 6: sample definitions and sample export give zero open issues ------------------
+# --- Acceptance 6: sample definitions and sample export give zero open issues ---
 
 
 def test_the_sample_definitions_and_the_sample_export_have_no_open_reference_issue(
@@ -310,7 +310,7 @@ def test_the_sample_definitions_and_the_sample_export_have_no_open_reference_iss
         assert open_issues(connection) == []
 
 
-# --- Acceptance 5 (database side): a rejected file leaves the database untouched -----------------
+# --- Acceptance 5 (database side): a rejected file leaves the database untouched ---
 
 
 def test_a_file_that_does_not_match_the_format_is_rejected_and_nothing_is_written(
@@ -325,7 +325,7 @@ def test_a_file_that_does_not_match_the_format_is_rejected_and_nothing_is_writte
     assert count(migrated_engine, sync_run) == 1
 
 
-# --- Fix round 1 ---------------------------------------------------------------------------------
+# --- Fix round 1 ---
 
 
 def _without_table(tmp_path: Path, table: str) -> Path:

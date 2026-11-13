@@ -291,3 +291,30 @@ def load_engine_runtime(
         return EngineRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
         raise ConfigError(_problems(error)) from error
+
+
+class GovernanceRuntime(BaseModel):
+    """What the indexer's derived facts need: the governance policy and the SQL dialect.
+
+    `makna index build` and the development stack's `init` use this, so they do not require
+    `MAKNA_SECRET_KEY`.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    dialect: str = "postgres"
+    governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
+
+
+def load_governance_runtime(
+    env: Mapping[str, str] | None = None, config_path: Path | str | None = None
+) -> GovernanceRuntime:
+    """The `[governance]` settings and the dialect of `config/makna.toml`."""
+    if env is None:
+        import os
+
+        env = os.environ
+    try:
+        return GovernanceRuntime.model_validate(_collect_values(env, config_path))
+    except ValidationError as error:
+        raise ConfigError(_problems(error)) from error

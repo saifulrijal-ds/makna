@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
@@ -119,4 +120,38 @@ def fresh_indexed_engine(empty_database: URL) -> Iterator[Engine]:
     _build_sample_index(empty_database)
     engine = create_engine(empty_database)
     yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def service_world(test_database_url: URL) -> Iterator[tuple[Engine, Any]]:
+    """A database for the service tests: sample catalog and definitions indexed with the service
+    hook under `strict`, four users, and a token. Shared by one module, so tests must not change
+    the definitions, the catalog or the index (they write `tool_call_log` rows only)."""
+    from . import service_support
+
+    name = f"makna_test_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(test_database_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'CREATE DATABASE "{name}"'))
+    url = test_database_url.set(database=name)
+    try:
+        users = service_support.build(url)
+        engine = create_engine(url)
+        yield engine, users
+        engine.dispose()
+    finally:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def fresh_service_world(empty_database: URL) -> Iterator[tuple[Engine, Any]]:
+    """Like `service_world`, private to one test, which may change anything."""
+    from . import service_support
+
+    users = service_support.build(empty_database)
+    engine = create_engine(empty_database)
+    yield engine, users
     engine.dispose()

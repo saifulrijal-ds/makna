@@ -24,7 +24,7 @@ def _connector() -> FileConnector:
     return FileConnector(EXPORT)
 
 
-# --- Acceptance 1 (file side): 9 datasets and the column count of section 3 --------------------
+# --- Acceptance 1 (file side): 9 datasets and the column count of section 3 ---
 
 
 def test_the_sample_export_has_nine_datasets_and_the_columns_of_section_3() -> None:
@@ -63,7 +63,7 @@ def test_the_export_has_eight_glossary_terms_with_synonyms() -> None:
     assert len({t.catalog_id for t in terms}) == 8
 
 
-# --- Acceptance 7 (Q11): section 6.1 exactly, and byte-identical regeneration ------------------
+# --- Acceptance 7 (Q11): section 6.1 exactly, and byte-identical regeneration ---
 
 
 def test_the_committed_export_carries_the_section_6_1_descriptions_exactly() -> None:
@@ -92,7 +92,7 @@ def test_regenerating_the_export_gives_a_byte_identical_file() -> None:
     assert render_export() == render_export()
 
 
-# --- Acceptance 5: a file that does not match the format is rejected, naming the field ----------
+# --- Acceptance 5: a file that does not match the format is rejected, naming the field ---
 
 
 def _text(data: dict[str, Any]) -> str:
@@ -216,7 +216,7 @@ def test_the_connector_fills_the_ordinal(tmp_path: Path) -> None:
     assert [c.ordinal for c in next(connector.list_datasets()).columns] == [0, 7]
 
 
-# --- Acceptance 4 (mapping part): tags map to a derived sensitivity ---------------------------
+# --- Acceptance 4 (mapping part): tags map to a derived sensitivity ---
 
 
 def test_tag_mapping_takes_the_strictest_mapped_level() -> None:
