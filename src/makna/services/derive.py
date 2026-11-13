@@ -99,7 +99,9 @@ def personal_column_issue(
 def _model_of(context: IndexContext) -> Model:
     entities: list[Entity] = []
     metrics: list[Metric] = []
-    for obj in context.objects:
+    # In id order, as the snapshot reads them, so a stored answer lists dimensions in the order a
+    # computed one does.
+    for obj in sorted(context.objects, key=lambda o: o.id):
         official = obj.official
         if official is None or official.status not in STORED_STATUSES:
             continue

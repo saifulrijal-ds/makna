@@ -297,14 +297,8 @@ class Services:
                 raise invalid_input("include_deprecated", "true or false")
             permissions.require(caller, permissions.Permission.READ_APPROVED)
             sees_drafts = permissions.can_see_drafts(caller)
-            snapshot, state = self._cache.current()
             with self._engine.connect() as connection:
-                if (
-                    self._reader.read(
-                        connection, snapshot, state, id, sees_drafts=sees_drafts, detail="brief"
-                    )
-                    is None
-                ):
+                if not self._reader.exists(connection, id, sees_drafts=sees_drafts):
                     raise _not_found(connection, id, sees_drafts)
                 items = list_related(
                     connection,

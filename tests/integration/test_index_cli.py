@@ -173,7 +173,7 @@ def test_the_build_stores_the_dimensions_the_policy_and_the_edges(
     assert code == 0, err
     assert "edges: added " in out and "R05: opened 0, closed 0" in out
     with database.connect() as connection:
-        state = dict(connection.execute(text("SELECT key, value FROM index_state")).all())
+        state = {k: v for k, v in connection.execute(text("SELECT key, value FROM index_state"))}
         stored = connection.execute(
             text(
                 "SELECT derived -> 'dimensions' FROM semantic_object WHERE id = 'metric:npf_ratio'"

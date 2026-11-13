@@ -256,6 +256,21 @@ def test_a_malformed_id_is_invalid_input(service_world: tuple[Engine, Users], ba
     assert raised.value.details["field"] == "id"
 
 
+def test_an_id_of_200_characters_is_looked_up_and_one_of_201_is_refused(
+    service_world: tuple[Engine, Users],
+) -> None:
+    engine, users = service_world
+    svc = sup.services(engine)
+    caller = users.caller("viewer")
+    with pytest.raises(ServiceError) as raised:
+        svc.get_definition(caller, "metric:" + "a" * 193)
+    assert raised.value.code == ServiceErrorCode.NOT_FOUND
+    with pytest.raises(ServiceError) as raised:
+        svc.get_definition(caller, "metric:" + "a" * 194)
+    assert raised.value.code == ServiceErrorCode.INVALID_INPUT
+    assert raised.value.details == {"field": "id", "maximum": 200}
+
+
 def test_detail_must_be_brief_or_full(service_world: tuple[Engine, Users]) -> None:
     engine, users = service_world
     with pytest.raises(ServiceError) as raised:

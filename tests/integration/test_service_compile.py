@@ -288,6 +288,29 @@ def test_compiling_such_a_metric_is_refused_before_generation(
     assert svc.compile_query(users.caller("viewer"), {"metric": "outstanding_principal"})
 
 
+def test_the_request_time_check_catches_what_the_index_has_not_seen_yet(
+    tagged_world: tuple[Engine, Users], caplog: pytest.LogCaptureFixture
+) -> None:
+    """The catalog moved ahead of the index: no R05 is open, and the final check says so."""
+    engine, users = tagged_world
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE reference_issue SET closed_at = now() WHERE code = 'R05'"))
+    svc = sup.services(engine)
+    with caplog.at_level(logging.WARNING):
+        error = refusal(
+            lambda: svc.compile_query(users.caller("viewer"), {"metric": "disbursement_amount"})
+        )
+    assert isinstance(error, QueryError) and error.code == "BROKEN_REFERENCE"
+    (issue,) = error.details["issues"]
+    assert issue["code"] == "R05" and issue["object"] == "metric:disbursement_amount"
+    assert "column disbursement_date of table lending.core.contracts" in issue["message"]
+    assert any(
+        "disbursement_date" in r.getMessage() and "lending.core.contracts" in r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+    )
+
+
 def test_an_input_with_an_open_r05_breaks_the_metric_built_on_it(
     tagged_world: tuple[Engine, Users],
 ) -> None:
