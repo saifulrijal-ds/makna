@@ -114,3 +114,119 @@ def test_redact_value_walks_json_like_values() -> None:
 def test_redact_value_clips_long_text_and_marks_other_objects() -> None:
     assert len(redact_value("x" * 1000, 50)) == 50
     assert redact_value(object()) == REDACTED
+
+
+# --- fix round 1: normalisation, more separators, spelled-out emails, dates ----------------------
+
+CARD = "4111111111111111"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "4111/1111/1111/1111",
+        "4111_1111_1111_1111",
+        "4111,1111,1111,1111",
+        "4111–1111–1111–1111",  # en dash
+        "4111—1111—1111—1111",  # em dash
+        "4111‐1111‐1111‐1111",  # hyphen
+        "4111−1111−1111−1111",  # minus sign
+        "4111 - 1111 - 1111 - 1111",
+        "4111   1111   1111   1111",
+        "4111 1111 1111 1111",
+        "4111 1111 1111 1111",
+        "4111​1111​1111​1111",  # zero-width space
+        "４１１１１１１１１１１１１１１１",
+        "⁴¹¹¹" + "1" * 12,  # superscript digits
+        "4111%201111%201111%201111",
+        "4111 1111/1111 1111",
+        "3201.0101.9001.0001",
+        "NIK 3201 0101 9001 0001",
+        "0812 - 3456 - 7890",
+        "0812/3456/7890",
+        "+62 - 812 - 3456 - 7890",
+        "＋62 812 3456 7890",
+        "(+62) 812-3456-7890",
+    ],
+)
+def test_numbers_are_removed_whatever_the_separator_or_script(text: str) -> None:
+    out = redact(text)
+    assert not re.search(r"\d{4}", out), out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "john.doe at example dot com",
+        "john.doe (at) example.com",
+        "john.doe [at] example [dot] com",
+        "john.doe AT example DOT co DOT id",
+        "john.doe＠example.com",  # full-width at
+        "john.doe﹫example.com",  # small commercial at
+        "john.doe%40example.com",
+        "john.doe&#64;example.com",
+        "john.doe&commat;example.com",
+    ],
+)
+def test_emails_are_removed_in_every_written_form(text: str) -> None:
+    out = redact(f"mail {text} now")
+    assert "john" not in out and "example" not in out, out
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["look at region", "meet at the branch", "arrive at 5.30pm", "what is at stake", "at"],
+)
+def test_the_word_at_alone_is_not_an_email(text: str) -> None:
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-06-30",
+        "2026-06-30 12:00",
+        "2026-06-30T12:00:00",
+        "npf 2026-06-30 12:00 per cabang",
+        "from 2025-10-01 to 2026-07-01",
+    ],
+)
+def test_iso_dates_and_times_stay_readable(text: str) -> None:
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "4111-1111-1111-1111",
+        "2026-06-30-1234-5678",
+        "2026-06-30 1234 5678 9",
+        "12026-06-30 12:00 345",
+        "2026-06-30 12:00 123456789",
+        "1234 2026-06-30 123456",
+        "2026-06-30 12:00:00 123 456 789",
+    ],
+)
+def test_a_card_number_in_the_shape_of_a_date_is_still_caught(text: str) -> None:
+    out = redact(text)
+    assert REDACTED in out
+    # Digits that went with the number are gone: none of the 9-digit run is left
+    assert not re.search(
+        r"\d(?:\D{0,3}\d){8}", re.sub(r"\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?", "", out)
+    )
+
+
+def test_redaction_returns_the_normalised_text() -> None:
+    assert redact("Jawa Barat") == "Jawa Barat"
+    assert redact("ＮＰＦ") == "NPF"
+    assert redact("a​b") == "ab"
+
+
+def test_non_finite_and_huge_numbers_are_removed_not_raised() -> None:
+    assert redact_value(float("inf")) == REDACTED
+    assert redact_value(float("nan")) == REDACTED
+    assert redact_value(-float("inf")) == REDACTED
+    assert redact_value(10**30) == REDACTED
+    assert redact_value(1e30) == REDACTED
+    assert redact_value(2.5) == 2.5
+    assert redact_value([float("nan"), 3]) == [REDACTED, 3]

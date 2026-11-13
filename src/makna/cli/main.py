@@ -311,7 +311,8 @@ def _index_build(definitions: Path | None) -> int:
             print(f"makna index build: no definitions directory ({directory})", file=sys.stderr)
             return 2
         runtime = load_search_runtime()
-        policy = load_governance_runtime().governance.policy()
+        governance = load_governance_runtime()
+        derive = make_derive(governance.governance.policy(), governance.dialect)
         key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
         provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
         engine = make_engine(database_url_from_env())
@@ -338,7 +339,7 @@ def _index_build(definitions: Path | None) -> int:
         engine.dispose()
         return 1
     try:
-        result = indexer.build(engine, provider, objects, derive=make_derive(policy))
+        result = indexer.build(engine, provider, objects, derive=derive)
     except (EmbeddingError, indexer.IndexerError, SQLAlchemyError) as error:
         print(f"makna index build: {error}", file=sys.stderr)
         return 1

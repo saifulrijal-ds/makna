@@ -146,7 +146,7 @@ def test_an_unexpected_exception_is_internal_with_no_text_and_status_error(
         raise RuntimeError(secret)
 
     svc = sup.services(engine)
-    monkeypatch.setattr(service_module, "compile_request", boom)
+    monkeypatch.setattr(service_module, "plan_request", boom)
     with caplog.at_level(logging.INFO):
         with pytest.raises(ServiceError) as raised:
             svc.compile_query(users.caller("viewer"), {"metric": "npf_ratio"})
@@ -163,22 +163,49 @@ def test_an_unexpected_exception_is_internal_with_no_text_and_status_error(
 # --- a failed log write never changes the answer ---
 
 
-def test_a_failed_log_write_is_logged_and_the_answer_is_unchanged(
+def test_a_call_whose_row_cannot_be_written_has_no_answer(
     service_world: tuple[Engine, Users], caplog: pytest.LogCaptureFixture
 ) -> None:
+    """No answer without a log row (section 14): the caller gets INTERNAL, not hits or SQL."""
     engine, users = service_world
     svc = sup.services(engine)
     ghost = Caller(user_id=999_999, role="viewer", channel="mcp")  # no such user: the insert fails
     before = sup.log_count(engine)
     with caplog.at_level(logging.ERROR):
-        found = svc.search(ghost, "kredit macet")
-        with pytest.raises(ServiceError) as raised:
+        for call in (
+            lambda: svc.search(ghost, "kredit macet"),
+            lambda: svc.compile_query(ghost, {"metric": "npf_ratio"}),
+            lambda: svc.get_definition(ghost, "metric:npf_ratio"),
+            lambda: svc.list_related(ghost, "metric:npf_ratio"),
+        ):
+            with pytest.raises(ServiceError) as raised:
+                call()
+            assert raised.value.code == ServiceErrorCode.INTERNAL
+            assert raised.value.details == {} and "npf" not in raised.value.message
+        # a refused call keeps its own error
+        with pytest.raises(ServiceError) as refused:
             svc.get_definition(ghost, "metric:zzz")
-    assert found.hits and raised.value.code == ServiceErrorCode.NOT_FOUND
+        assert refused.value.code == ServiceErrorCode.NOT_FOUND
     assert sup.log_count(engine) == before  # nothing was stored
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert len(errors) == 2 and all("tool_call_log write failed" in e for e in errors)
+    assert errors and all("tool_call_log write failed" in e for e in errors)
     assert not any("kredit" in e or "999999" in e for e in errors)
+
+
+def test_a_failing_writer_gives_internal_and_no_sql(
+    service_world: tuple[Engine, Users], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services.calllog import CallLog
+
+    engine, users = service_world
+    svc = sup.services(engine)
+    monkeypatch.setattr(CallLog, "write", lambda self, call: False)
+    with pytest.raises(ServiceError) as raised:
+        svc.compile_query(users.caller("viewer"), {"metric": "npf_ratio"})
+    assert raised.value.code == ServiceErrorCode.INTERNAL and "SELECT" not in str(raised.value)
+    with pytest.raises(ServiceError) as raised:
+        svc.search(users.caller("viewer"), "npf")
+    assert raised.value.code == ServiceErrorCode.INTERNAL
 
 
 # --- redaction (D-24) ---

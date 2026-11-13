@@ -28,8 +28,9 @@ from typing import Any, Literal
 from pydantic import ValidationError
 from sqlalchemy import Engine
 
-from makna.compiler.compile import compile_request
+from makna.compiler.compile import compile_plan
 from makna.compiler.governance import GovernanceError
+from makna.compiler.plan import QueryPlan, plan_request
 from makna.compiler.snapshot import Model
 from makna.model.definitions import NAME_PATTERN, Entity, Metric
 from makna.model.governance import GovernancePolicy
@@ -46,6 +47,7 @@ from makna.services.derive import personal_column_issue
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
 from makna.services.related import RELATIONS, list_related
 from makna.services.snapshot import Snapshot, SnapshotCache
+from makna.services.text_check import check_deep, check_text
 from makna.services.views import (
     DefinitionView,
     RelatedOutcome,
@@ -101,13 +103,18 @@ class Services:
         self._dialect: Literal["postgres", "duckdb"] = (
             "duckdb" if dialect == "duckdb" else "postgres"
         )
-        self.policy = policy
+        self._policy = policy
         self._search = HybridSearch(engine, provider, search_settings)
         self._cache = SnapshotCache(engine)
         self._calls = CallLog(engine)
         self._warned: set[tuple[str, str]] = set()
         self._warn_lock = threading.Lock()
-        self._reader = DefinitionReader(policy, self._warn_stale_policy)
+        self._reader = DefinitionReader(self, self._warn_stale_policy)
+
+    @property
+    def policy(self) -> GovernancePolicy:
+        """The governance policy of the server configuration, read-only after construction."""
+        return self._policy
 
     @property
     def snapshots(self) -> SnapshotCache:
@@ -135,7 +142,12 @@ class Services:
 
     @contextmanager
     def _logged(self, caller: Caller, tool: str) -> Iterator[CallState]:
-        """Time the call and write its `tool_call_log` row, whatever happens in the body."""
+        """Time the call and write its `tool_call_log` row, whatever happens in the body.
+
+        A call that would answer but whose row cannot be written is `INTERNAL`: there is no
+        answer without a log row (ARCHITECTURE section 14). A call that is refused or fails
+        keeps its own error when its row cannot be written; the failed write is logged.
+        """
         call = CallState(caller, tool)
         try:
             yield call
@@ -143,18 +155,21 @@ class Services:
             call.fail(
                 "error" if error.code == ServiceErrorCode.INTERNAL else "refused", str(error.code)
             )
+            self._calls.write(call)
             raise
         except QueryError as error:
             call.fail("refused", str(error.code))
+            self._calls.write(call)
             raise
         except Exception as error:
             logger.error("service call failed: tool=%s error=%s", tool, type(error).__name__)
             call.fail("error", str(ServiceErrorCode.INTERNAL))
+            self._calls.write(call)
             raise ServiceError(ServiceErrorCode.INTERNAL, INTERNAL_MESSAGE) from None
         else:
             call.status = "ok"
-        finally:
-            self._calls.write(call)
+            if not self._calls.write(call):
+                raise ServiceError(ServiceErrorCode.INTERNAL, INTERNAL_MESSAGE) from None
 
     # --- search --------------------------------------------------------------------------
 
@@ -210,6 +225,7 @@ class Services:
     ) -> str:
         if not isinstance(query, str) or not query.strip():
             raise invalid_input("query", "give the words to search for; it must not be empty")
+        check_text("query", query)
         if len(query) > MAX_QUERY_LENGTH:
             raise invalid_input(
                 "query", f"at most {MAX_QUERY_LENGTH} characters", maximum=MAX_QUERY_LENGTH
@@ -247,10 +263,10 @@ class Services:
                 raise invalid_input("detail", "brief or full", allowed=list(DETAILS))
             permissions.require(caller, permissions.Permission.READ_APPROVED)
             sees_drafts = permissions.can_see_drafts(caller)
-            snapshot, state = self._cache.current()
+            snapshot, _ = self._cache.current()
             with self._engine.connect() as connection:
                 view = self._reader.read(
-                    connection, snapshot, state, id, sees_drafts=sees_drafts, detail=detail
+                    connection, snapshot, id, sees_drafts=sees_drafts, detail=detail
                 )
                 if view is None:
                     raise _not_found(connection, id, sees_drafts)
@@ -322,10 +338,15 @@ class Services:
             parsed: QueryRequest | None = None
             try:
                 call.request = CallLog.compile_request(request, None)
+                check_deep(
+                    "", request.model_dump() if isinstance(request, QueryRequest) else request
+                )
                 parsed = self._parse_request(request)
                 permissions.require(caller, permissions.Permission.COMPILE)
-                snapshot, state = self._cache.current()
-                if not state.catalog_synced:
+                # Wait for a rebuild: a compile never runs with the catalog levels of an older
+                # moment, and D-30 and the covered tables come from the snapshot it uses.
+                snapshot, _ = self._cache.current(wait=True)
+                if not snapshot.catalog_synced:
                     # No catalog, so the levels the catalog derives are unknown: keep no value.
                     raise ServiceError(ServiceErrorCode.CATALOG_NOT_SYNCED, NOT_SYNCED_MESSAGE)
                 call.request = CallLog.compile_request(parsed, snapshot.model)
@@ -367,9 +388,19 @@ class Services:
         else:
             _refuse_broken_metric(model, snapshot, request.metric)
         try:
-            return compile_request(
-                model, request, self._dialect, enforce_status=True, governance=self.policy
-            )
+            plan = plan_request(model, request, enforce_status=True, governance=self._policy)
+            missing = sorted(_plan_tables(model, plan) - snapshot.tables)
+            if missing:
+                # D-30 per table: the catalog levels of a table the plan reads must be there.
+                raise ServiceError(
+                    ServiceErrorCode.CATALOG_NOT_SYNCED,
+                    "The catalog has no data about the table(s) this query reads "
+                    f"({', '.join(missing)}), so Makna cannot check them: column names and "
+                    "personal-data tags come only from the catalog. Ask an administrator to "
+                    "run `makna catalog sync` with an export that covers them.",
+                    {"tables": missing},
+                )
+            return compile_plan(model, plan, self._dialect)
         except GovernanceError as error:
             raise _personal_column_error(error, model, request.metric) from None
 
@@ -453,6 +484,22 @@ def _not_found(connection: Any, object_id: str, sees_drafts: bool) -> ServiceErr
         + " Search for it and use the id exactly as the hit gives it.",
         {"id": object_id, "close_ids": close},
     )
+
+
+def _plan_tables(model: Model, plan: QueryPlan) -> set[str]:
+    """The tables (lower case `engine_fqn`) every entity of the plan reads, joins included."""
+    names: set[str] = {d.entity for d in plan.dimensions} | {f.entity for f in plan.filters}
+    names |= {g.entity for g in plan.guard}
+    for item in plan.inputs:
+        names.add(item.measure_entity)
+        if item.measure_rule is not None:
+            names.add(item.measure_rule.entity)
+        names |= {f.entity for f in item.definition_filters}
+        for entity_path in item.paths:
+            names.add(entity_path.entity)
+            for step in entity_path.steps:
+                names.update((step.entity, step.to))
+    return {model.entities[n].source.table.lower() for n in names if n in model.entities}
 
 
 def _metric_closure(model: Model, name: str) -> list[Metric]:

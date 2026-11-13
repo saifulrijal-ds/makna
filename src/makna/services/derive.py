@@ -23,6 +23,7 @@ from makna.compiler.compile import compile_request
 from makna.compiler.governance import GovernanceError
 from makna.compiler.plan import AvailableDimensions, DimensionOption, available_dimensions
 from makna.compiler.snapshot import Model, ReferenceIssue
+from makna.config import ConfigError
 from makna.index.indexer import Derive, DerivedFacts, IndexContext, IndexIssue
 from makna.model.definitions import Entity, Metric
 from makna.model.governance import GovernancePolicy
@@ -31,7 +32,7 @@ from makna.model.request import QueryError, QueryRequest
 logger = logging.getLogger(__name__)
 
 STORED_STATUSES = ("approved", "deprecated")
-DIALECT: Literal["postgres", "duckdb"] = "postgres"
+SUPPORTED_DIALECTS = ("postgres", "duckdb")
 
 
 def via_label(option: DimensionOption) -> str | None:
@@ -116,8 +117,14 @@ def _model_of(context: IndexContext) -> Model:
     return Model.build(entities, metrics, issues, context.derived_sensitivity)
 
 
-def make_derive(policy: GovernancePolicy) -> Derive:
-    """The `derive` hook for `makna.index.indexer.build`, bound to the running policy."""
+def make_derive(policy: GovernancePolicy, dialect: str = "postgres") -> Derive:
+    """The `derive` hook for `makna.index.indexer.build`, bound to the running policy and the
+    configured dialect (the index-time compile that looks for `R05` prints for it)."""
+    if dialect not in SUPPORTED_DIALECTS:
+        raise ConfigError(
+            f"dialect must be one of {', '.join(SUPPORTED_DIALECTS)}, not {dialect!r}"
+        )
+    target: Literal["postgres", "duckdb"] = "duckdb" if dialect == "duckdb" else "postgres"
 
     def derive(context: IndexContext) -> DerivedFacts:
         model = _model_of(context)
@@ -132,7 +139,7 @@ def make_derive(policy: GovernancePolicy) -> Derive:
             if metric.status != "approved":
                 continue
             try:
-                compile_request(model, QueryRequest(metric=metric.name), DIALECT, governance=policy)
+                compile_request(model, QueryRequest(metric=metric.name), target, governance=policy)
             except QueryError:
                 continue  # refused for another reason, with a code of its own
             except GovernanceError as error:

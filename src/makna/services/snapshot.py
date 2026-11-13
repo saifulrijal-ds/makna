@@ -57,6 +57,10 @@ class Snapshot:
     model: Model
     metric_issues: Mapping[str, tuple[ReferenceIssue, ...]] = field(default_factory=dict)
     """Open `R05` issues by metric name (the compiler's model holds entity issues only)."""
+    catalog_synced: bool = False
+    """D-30 as the snapshot's own moment saw it (a successful sync and a live dataset)."""
+    tables: frozenset[str] = frozenset()
+    """The live `engine_fqn` values, lower case: the tables the catalog covers."""
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,7 @@ class CurrentState:
     key: StateKey
     state: Mapping[str, str]
     catalog_synced: bool
+    tables: frozenset[str] = frozenset()
 
 
 def read_state(connection: Connection) -> CurrentState:
@@ -92,11 +97,18 @@ def read_state(connection: Connection) -> CurrentState:
         .select_from(catalog_dataset)
         .where(catalog_dataset.c.removed_at.is_(None))
     ).scalar_one()
+    tables = frozenset(
+        fqn.lower()
+        for fqn in connection.execute(
+            select(catalog_dataset.c.engine_fqn).where(catalog_dataset.c.removed_at.is_(None))
+        ).scalars()
+    )
     key = StateKey(state.get("definitions_version", ""), marker, issues.hexdigest()[:16])
-    return CurrentState(key, state, bool(has_run) and bool(has_dataset))
+    return CurrentState(key, state, bool(has_run) and bool(has_dataset), tables)
 
 
-def _build(connection: Connection, key: StateKey) -> Snapshot:
+def _build(connection: Connection, current: CurrentState) -> Snapshot:
+    key = current.key
     entities: list[Entity] = []
     metrics: list[Metric] = []
     rows = connection.execute(
@@ -130,6 +142,8 @@ def _build(connection: Connection, key: StateKey) -> Snapshot:
         key,
         model,
         MappingProxyType({name: tuple(found) for name, found in by_metric.items()}),
+        current.catalog_synced,
+        current.tables,
     )
 
 
@@ -141,14 +155,21 @@ class SnapshotCache:
         self._lock = threading.Lock()
         self._snapshot: Snapshot | None = None
 
-    def current(self) -> tuple[Snapshot, CurrentState]:
-        """The snapshot to use for this call, and the index state read for it."""
+    def current(self, *, wait: bool = False) -> tuple[Snapshot, CurrentState]:
+        """The snapshot to use for this call, and the index state read for it.
+
+        While another thread rebuilds, a caller gets the old snapshot at once, unless `wait` is
+        set: `compile_query` waits for the rebuild and uses the new snapshot, because a compile
+        must never run with the catalog levels of an older moment (D-30, section 7.6). Whatever
+        a service needs of the catalog (D-30, derived levels, covered tables) it takes from the
+        returned snapshot, never from the state read here.
+        """
         with self._engine.connect() as connection:
             state = read_state(connection)
         snapshot = self._snapshot
         if snapshot is not None and snapshot.key == state.key:
             return snapshot, state
-        if snapshot is not None:
+        if snapshot is not None and not wait:
             if self._lock.acquire(blocking=False):
                 try:
                     return self._rebuild(), state
@@ -162,11 +183,10 @@ class SnapshotCache:
             return self._rebuild(), state
 
     def _rebuild(self) -> Snapshot:
-        """Build in one repeatable-read transaction and keep the key read inside it, so the
+        """Build in one repeatable-read transaction and keep the state read inside it, so the
         content and the key cannot come from two moments. The caller holds the lock."""
         with self._engine.connect().execution_options(isolation_level="REPEATABLE READ") as c:
-            key = read_state(c).key
-            built = _build(c, key)
+            built = _build(c, read_state(c))
         self._snapshot = built
         return built
 

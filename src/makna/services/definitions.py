@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import Connection, select
 
@@ -40,7 +40,7 @@ from makna.model.sensitivity import effective_level, stricter
 from makna.services import objects
 from makna.services.derive import dimension_options
 from makna.services.objects import ObjectRow
-from makna.services.snapshot import CurrentState, Snapshot
+from makna.services.snapshot import Snapshot
 from makna.services.views import (
     DefinitionView,
     DimensionView,
@@ -158,14 +158,22 @@ def _unit(metric: Metric) -> str | None:
     return metric.format.unit or ("percent" if metric.format.kind == "percent" else None)
 
 
+class PolicyHolder(Protocol):
+    @property
+    def policy(self) -> GovernancePolicy: ...
+
+
 class DefinitionReader:
     """Builds the `DefinitionView` of an id. One per `Services`."""
 
-    def __init__(
-        self, policy: GovernancePolicy, on_stale_policy: Callable[[str, str], None]
-    ) -> None:
-        self._policy = policy
+    def __init__(self, owner: PolicyHolder, on_stale_policy: Callable[[str, str], None]) -> None:
+        self._owner = owner
         self._on_stale_policy = on_stale_policy
+
+    @property
+    def _policy(self) -> GovernancePolicy:
+        """The running policy, read from the services object that owns it."""
+        return self._owner.policy
 
     # --- entry point ---------------------------------------------------------------------
 
@@ -173,7 +181,6 @@ class DefinitionReader:
         self,
         connection: Connection,
         snapshot: Snapshot,
-        state: CurrentState,
         object_id: str,
         *,
         sees_drafts: bool,
@@ -192,7 +199,7 @@ class DefinitionReader:
             return None
         served = row.definition
         if isinstance(served, Metric):
-            return self._metric(connection, snapshot, state, row, served, sees_drafts, detail)
+            return self._metric(connection, snapshot, row, served, sees_drafts, detail)
         if isinstance(served, Entity):
             return self._entity(snapshot, row, served, detail)
         if isinstance(served, GlossaryTerm):
@@ -251,18 +258,22 @@ class DefinitionReader:
 
     # --- metric --------------------------------------------------------------------------
 
-    def _usable_stored(self, row: ObjectRow, state: CurrentState) -> dict[str, Any] | None:
+    def _usable_stored(self, row: ObjectRow, snapshot: Snapshot) -> dict[str, Any] | None:
+        """The stored dimensions, if they were computed under the running policy, for the
+        definitions and the catalog of the snapshot this call uses. The facts and the basis they
+        were computed against are one value of one row, so they cannot come from two builds."""
         derived = row.derived or {}
-        if "dimensions" not in derived:
+        basis = derived.get("basis")
+        if "dimensions" not in derived or not isinstance(basis, dict):
             return None
-        stored_policy = state.state.get("governance_fingerprint")
         running = self._policy.fingerprint()
-        if stored_policy != running:
-            self._on_stale_policy(str(stored_policy), running)
+        stored = str(basis.get("governance_fingerprint"))
+        if stored != running:
+            self._on_stale_policy(stored, running)
             return None
-        if state.state.get("derived_definitions_version") != state.key.definitions_version:
+        if basis.get("definitions_version") != snapshot.key.definitions_version:
             return None
-        if state.state.get("derived_catalog_marker") != state.key.catalog_marker:
+        if basis.get("catalog_marker") != snapshot.key.catalog_marker:
             return None
         return {"dimensions": derived["dimensions"], "excluded": derived.get("excluded", [])}
 
@@ -270,7 +281,6 @@ class DefinitionReader:
         self,
         connection: Connection,
         snapshot: Snapshot,
-        state: CurrentState,
         row: ObjectRow,
         metric: Metric,
         sees_drafts: bool,
@@ -289,7 +299,7 @@ class DefinitionReader:
         if in_model:
             served = model.metrics.get(metric.name, metric)
             members = _closure(model, served)
-            options: dict[str, Any] | None = self._usable_stored(row, state)
+            options: dict[str, Any] | None = self._usable_stored(row, snapshot)
             if options is None:
                 try:
                     options = dimension_options(model, served, self._policy)

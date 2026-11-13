@@ -246,3 +246,120 @@ def test_the_governance_runtime_needs_no_secret(tmp_path: Path) -> None:
 
 def test_the_service_error_class_is_exported() -> None:
     assert issubclass(ServiceError, Exception)
+
+
+# --- fix round 1 ---------------------------------------------------------------------------------
+
+
+def test_a_request_builder_never_fails_the_call() -> None:
+    from makna.services.calllog import CallLog
+
+    class Hostile:
+        def __str__(self) -> str:
+            raise RuntimeError("no")
+
+        __hash__ = None  # type: ignore[assignment]
+
+    nested: list[object] = []
+    nested.append(nested)
+    for bad in (Hostile(), {"filters": [{"dimension": Hostile(), "value": Hostile()}]}):
+        built = CallLog.compile_request(bad, None)
+        assert built in ({"request": "[invalid]"}, {"unloggable": True}) or "filters" in built
+    assert CallLog.compile_request({"metric": "x", "filters": nested}, None)
+    for value in (float("inf"), float("nan"), 10**40, "x" * 10**5):
+        built = CallLog.compile_request(
+            {"metric": "npf_ratio", "filters": [{"dimension": "a.b", "op": "=", "value": value}]},
+            None,
+        )
+        assert built["filters"][0]["value"] == "[REDACTED]"
+    assert CallLog.search_request(Hostile(), Hostile(), Hostile(), Hostile(), Hostile())
+
+
+def test_a_builder_that_raises_gives_an_unloggable_request() -> None:
+    from unittest import mock
+
+    from makna.services.calllog import CallLog
+
+    with mock.patch("makna.services.calllog.redact_value", side_effect=RuntimeError("boom")):
+        assert CallLog.search_request("npf", None, None, False, 5) == {"unloggable": True}
+        assert CallLog.id_request("metric:npf_ratio") == {"unloggable": True}
+        assert CallLog.compile_request({"metric": "npf_ratio"}, None) == {"unloggable": True}
+
+
+def test_allowed_values_of_a_personal_dimension_are_never_listed_in_invalid_filter() -> None:
+    from makna.model.request import QueryError
+
+    derived = {("lending.core.customers", "gender"): "personal"}
+    model = Model.build(
+        list(lending().entities.values()),
+        list(lending().metrics.values()),
+        derived_sensitivity=derived,
+    )
+    request = QueryRequest.model_validate(
+        {
+            "metric": "new_customer_count",
+            "filters": [{"dimension": "customer.gender", "op": "=", "value": "SECRET-X"}],
+        }
+    )
+    relaxed = GovernancePolicy.custom(allow_personal_filters=True)
+    with pytest.raises(QueryError) as raised:
+        compile_request(model, request, governance=relaxed)
+    assert raised.value.code == "INVALID_FILTER"
+    assert raised.value.details["allowed_values"] == []
+    assert "SECRET-X" not in raised.value.message and "'F'" not in raised.value.message
+    # a dimension that is not personal still lists them
+    plain = Model.build(list(lending().entities.values()), list(lending().metrics.values()))
+    with pytest.raises(QueryError) as raised:
+        compile_request(plain, request)
+    assert raised.value.details["allowed_values"] == ["F", "M"]
+
+
+def test_the_formula_line_leaves_out_the_constant_of_a_filter_on_a_personal_dimension() -> None:
+    from makna.model.definitions import Metric, parse_definition
+
+    document = {
+        "apiVersion": "makna/v1",
+        "kind": "metric",
+        "name": "female_customers",
+        "label": "Female Customers",
+        "description": "A metric made for the formula line test, with a filter.",
+        "domain": "lending",
+        "owner": {"team": "test"},
+        "status": "approved",
+        "sensitivity": "internal",
+        "synonyms": {"en": ["x"], "id": ["y"]},
+        "type": "simple",
+        "measure": "customer.customer_count",
+        "filters": [{"dimension": "customer.gender", "op": "=", "value": "F"}],
+        "format": {"kind": "number"},
+    }
+    metric = parse_definition(document)
+    assert isinstance(metric, Metric)
+    objects = sample_objects()
+    plain = indexer.formula_line(metric, indexer._Lookup(objects))
+    assert "gender = F" in plain
+    tagged = indexer.formula_line(
+        metric, indexer._Lookup(objects, {("lending.core.customers", "gender"): "personal"})
+    )
+    assert "gender" in tagged and "= F" not in tagged and "F" not in tagged.split("gender")[1]
+
+
+def test_make_derive_takes_the_configured_dialect() -> None:
+    from makna.services.derive import make_derive
+
+    make_derive(STRICT, "duckdb")
+    with pytest.raises(ConfigError, match="dialect"):
+        make_derive(STRICT, "oracle")
+
+
+def test_the_running_policy_is_read_only_and_one_object() -> None:
+    from sqlalchemy import create_engine
+
+    from makna.search.embedding import HashProvider
+
+    services = Services(
+        create_engine("postgresql+psycopg://u:p@localhost/x"), HashProvider(), policy=STRICT
+    )
+    with pytest.raises(AttributeError):
+        services.policy = GovernancePolicy.off()  # type: ignore[misc]
+    assert services._reader._policy is services.policy

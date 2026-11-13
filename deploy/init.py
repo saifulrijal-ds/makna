@@ -135,12 +135,13 @@ def build_index_step(context: Context) -> str:
             f"{context.definitions_dir} holds no definition objects; nothing was indexed"
         )
     runtime = load_search_runtime()
-    policy = load_governance_runtime().governance.policy()
+    governance = load_governance_runtime()
+    derive = make_derive(governance.governance.policy(), governance.dialect)
     key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
     provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
     engine = make_engine(context.database_url)
     try:
-        result = indexer.build(engine, provider, objects, derive=make_derive(policy))
+        result = indexer.build(engine, provider, objects, derive=derive)
     finally:
         engine.dispose()
     if result.total_changes == 0:

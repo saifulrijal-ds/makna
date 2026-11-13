@@ -1,8 +1,10 @@
 """The tool-call log (ARCHITECTURE section 14, GOV-2, D-24).
 
 One row per service call, on every outcome, written in its own transaction after the call so a
-failed call still leaves its row and a failed write never changes the call's answer (it is
-logged at error level and dropped).
+failed call still leaves its row. A call that has an answer does not keep it when its row cannot
+be written: `write` says whether it was, and the service turns a failure into `INTERNAL`
+(ARCHITECTURE section 14: no answer without a log row). Building the request of the row never
+fails the call: if redacting or serialising it raises, the row holds `{"unloggable": true}`.
 
 What a row holds:
 
@@ -19,12 +21,15 @@ What a row holds:
 
 from __future__ import annotations
 
+import functools
+import json
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from sqlalchemy import Engine, insert
+from sqlalchemy.exc import IntegrityError
 
 from makna.compiler.snapshot import Model
 from makna.index.tables import tool_call_log
@@ -35,6 +40,7 @@ from makna.services.redact import REDACTED, redact_value
 logger = logging.getLogger(__name__)
 
 INVALID = "[invalid]"
+UNLOGGABLE: dict[str, Any] = {"unloggable": True}
 ID_LIMIT = 200
 MAX_LIST = 50
 
@@ -64,6 +70,21 @@ def _whole(value: object) -> Any:
     return value if isinstance(value, int) and not isinstance(value, bool) else INVALID
 
 
+def _never_fails(build: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Wrap a request builder so that nothing it does can fail the call."""
+
+    @functools.wraps(build)
+    def safe(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            built = build(*args, **kwargs)
+            json.dumps(built, allow_nan=False)  # the JSON column takes nothing else
+            return built
+        except Exception:
+            return dict(UNLOGGABLE)
+
+    return safe
+
+
 class CallState:
     """What one call knows about itself while it runs; `CallLog.write` stores it."""
 
@@ -90,32 +111,44 @@ class CallLog:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
-    def write(self, call: CallState) -> None:
-        """Store the row in its own transaction. A failure is logged and never raised."""
-        try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(tool_call_log).values(
-                        channel=call.caller.channel,
-                        user_id=call.caller.user_id,
-                        token_id=call.caller.token_id,
-                        tool=call.tool,
-                        request=call.request,
-                        result=call.result,
-                        status=call.status,
-                        error_code=call.error_code,
-                        duration_ms=call.duration_ms,
+    def write(self, call: CallState) -> bool:
+        """Store the row in its own transaction. Returns whether it was stored; a failure is
+        logged (the class only) and never raised. If the request cannot be stored, the row is
+        stored once more with `{"unloggable": true}` in its place, keeping tool, status and
+        error code."""
+        request = call.request
+        for attempt in (request, UNLOGGABLE):
+            if attempt is UNLOGGABLE and request is None:
+                break
+            try:
+                with self._engine.begin() as connection:
+                    connection.execute(
+                        insert(tool_call_log).values(
+                            channel=call.caller.channel,
+                            user_id=call.caller.user_id,
+                            token_id=call.caller.token_id,
+                            tool=call.tool,
+                            request=attempt,
+                            result=call.result,
+                            status=call.status,
+                            error_code=call.error_code,
+                            duration_ms=call.duration_ms,
+                        )
                     )
+                return True
+            except Exception as error:
+                # The class only: an error text can hold the row's parameters, the query too.
+                logger.error(
+                    "tool_call_log write failed: tool=%s error=%s", call.tool, type(error).__name__
                 )
-        except Exception as error:
-            # The class only: an error text can hold the row's parameters, the query included.
-            logger.error(
-                "tool_call_log write failed: tool=%s error=%s", call.tool, type(error).__name__
-            )
+                if isinstance(error, IntegrityError):
+                    break  # the user or token is gone: another request cannot help
+        return False
 
     # --- what each tool records of its input -------------------------------------------------
 
     @staticmethod
+    @_never_fails
     def search_request(
         query: object,
         kinds: object,
@@ -132,6 +165,7 @@ class CallLog:
         }
 
     @staticmethod
+    @_never_fails
     def id_request(object_id: object, **others: object) -> dict[str, Any]:
         request: dict[str, Any] = {"id": _text(object_id, ID_LIMIT)}
         for name, value in others.items():
@@ -142,6 +176,7 @@ class CallLog:
         return request
 
     @staticmethod
+    @_never_fails
     def compile_request(request: object, model: Model | None) -> dict[str, Any]:
         """The compile request with every filter value that is not known to be non-personal
         replaced. `model` is the approved snapshot, or None when there is none yet (then every
@@ -183,6 +218,7 @@ class CallLog:
         }
 
     @staticmethod
+    @_never_fails
     def refusal_request(request: QueryRequest | None, model: Model | None) -> dict[str, Any]:
         """The record of a call refused with `PERSONAL_DATA_REFUSED`: names the model knows, and
         nothing else (no values, no grain, no dates, no free text)."""

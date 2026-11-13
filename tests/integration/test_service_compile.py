@@ -275,7 +275,7 @@ def test_compiling_such_a_metric_is_refused_before_generation(
     def boom(*args: object, **kwargs: object) -> None:
         raise AssertionError("the compiler must not run for a metric with an open R05 issue")
 
-    monkeypatch.setattr(service_module, "compile_request", boom)
+    monkeypatch.setattr(service_module, "plan_request", boom)
     for metric in ("disbursement_amount", "average_ticket_size"):
         error = refusal(
             lambda metric=metric: svc.compile_query(users.caller("viewer"), {"metric": metric})
@@ -364,7 +364,7 @@ def test_a_governance_error_that_names_no_column_is_internal_and_leaks_nothing(
             "internal error: SELECT national_id FROM customers; value 3201010101900001"
         )
 
-    monkeypatch.setattr(service_module, "compile_request", boom)
+    monkeypatch.setattr(service_module, "plan_request", boom)
     with caplog.at_level(logging.INFO):
         error = refusal(lambda: sup.services(engine).compile_query(users.caller("viewer"), REGION))
     assert isinstance(error, ServiceError) and error.code == ServiceErrorCode.INTERNAL
@@ -440,22 +440,18 @@ def test_stored_and_computed_dimensions_are_the_same_answer(
     caller = users.caller("viewer")
     stored = sup.services(engine)
     first = {m: stored.get_definition(caller, f"metric:{m}").to_dict() for m in SAMPLED}
-    with engine.begin() as connection:
-        marker = connection.execute(
-            text("SELECT value FROM index_state WHERE key = 'derived_catalog_marker'")
-        ).scalar_one()
+    with engine.begin() as connection:  # the stored facts no longer match the catalog marker
         connection.execute(
-            text("UPDATE index_state SET value = 'x' WHERE key = 'derived_catalog_marker'")
+            text(
+                "UPDATE semantic_object SET derived = jsonb_set(derived, '{basis,catalog_marker}', "
+                "'\"x\"') WHERE derived ? 'basis'"
+            )
         )
     try:
         computed = sup.services(engine)
         second = {m: computed.get_definition(caller, f"metric:{m}").to_dict() for m in SAMPLED}
     finally:
-        with engine.begin() as connection:
-            connection.execute(
-                text("UPDATE index_state SET value = :v WHERE key = 'derived_catalog_marker'"),
-                {"v": marker},
-            )
+        sup.index(engine)  # stores the facts again
     assert first == second
 
 

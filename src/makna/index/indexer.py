@@ -205,12 +205,21 @@ class _Lookup:
         return entity, next((m for m in entity.measures or [] if m.name == measure_name), None)
 
 
-def _filter_text(item: Filter | RuleRef) -> str:
+def _filter_text(item: Filter | RuleRef, lookup: _Lookup) -> str:
+    """A definition filter in words. The constant of a filter on a personal dimension (declared
+    or derived from the catalog) is left out."""
     if isinstance(item, RuleRef):
         return _spaced(item.rule.partition(".")[2] or item.rule)
     dimension = _spaced(item.dimension.partition(".")[2] or item.dimension)
     if item.op in ("is_null", "is_not_null"):
         return f"{dimension} {item.op.replace('_', ' ')}"
+    entity_name, _, dimension_name = item.dimension.partition(".")
+    entity = lookup.entities.get(entity_name)
+    found = (
+        next((d for d in entity.dimensions if d.name == dimension_name), None) if entity else None
+    )
+    if entity is not None and found is not None and lookup.level(entity, found) == "personal":
+        return f"{dimension} {item.op}"
     value = ", ".join(map(str, item.value)) if isinstance(item.value, list) else item.value
     return f"{dimension} {item.op} {value}"
 
@@ -242,7 +251,7 @@ def formula_line(metric: Metric, lookup: _Lookup) -> str:
             line += f" on {where}"
         if measure.semi_additive == "last":
             line += ", last value of the period"
-    conditions = [_filter_text(f) for f in metric.filters or []]
+    conditions = [_filter_text(f, lookup) for f in metric.filters or []]
     if conditions:
         line += ", only where " + " and ".join(conditions)
     return line
@@ -842,6 +851,8 @@ def build(
     """
     result = IndexResult()
     with engine.begin() as connection:
+        # The marker first: a sync that commits after it is not claimed as covered by the facts.
+        marker = catalog_marker(connection)
         sensitivity = catalog_sensitivity(connection)
         lookup = _Lookup(objects, sensitivity)
         facts = (
@@ -854,10 +865,16 @@ def build(
             wanted.extend(object_documents(obj, lookup))
         rows = [semantic_row(obj, lookup) for obj in objects]
         if facts is not None:
+            basis = {
+                "governance_fingerprint": facts.state.get("governance_fingerprint", ""),
+                "definitions_version": definitions_version(objects),
+                "catalog_marker": marker,
+            }
             for row in rows:
                 extra = facts.object_facts.get(row["id"])
                 if extra:
-                    row["derived"] = {**(row["derived"] or {}), **extra}
+                    # The basis is stored with the facts, so a reader gets both in one row.
+                    row["derived"] = {**(row["derived"] or {}), **extra, "basis": basis}
         wanted.extend(catalog_documents(connection, _claimed_terms(objects)))
         force = _model_changed(connection, provider)
         result.reembedded_everything = force
@@ -881,11 +898,11 @@ def build(
         if facts is not None:
             # The facts hold for these definitions and this catalog; a reader that sees another
             # `definitions_version` or catalog marker knows they are stale.
-            basis = {
+            state_basis = {
                 "derived_definitions_version": definitions_version(objects),
-                "derived_catalog_marker": catalog_marker(connection),
+                "derived_catalog_marker": marker,
             }
-            for key, value in sorted({**facts.state, **basis}.items()):
+            for key, value in sorted({**facts.state, **state_basis}.items()):
                 _set_state(connection, key, value, result)
         counts = connection.execute(
             select(search_document.c.kind, func.count()).group_by(search_document.c.kind)

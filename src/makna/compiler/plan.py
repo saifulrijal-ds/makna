@@ -797,12 +797,15 @@ def _planned_filter(
     sensitivity = model.effective_sensitivity(entity, dimension)
     _refuse_personal(available, flt.dimension, dimension, sensitivity, "filter", governance)
     _check_reachable(available, flt.dimension, entity)
-    value = _checked_value(flt, dimension)
+    value = _checked_value(flt, dimension, sensitivity == "personal")
     return PlannedFilter(flt.dimension, entity.name, flt.op, value, dimension, sensitivity)
 
 
-def _invalid_filter(flt: RequestFilter, dimension: Dimension, problem: str) -> QueryError:
-    allowed = [v.value for v in dimension.values or []]
+def _invalid_filter(
+    flt: RequestFilter, dimension: Dimension, problem: str, personal: bool = False
+) -> QueryError:
+    # The allowed values of a personal dimension are never listed, whatever made it personal.
+    allowed = [] if personal else [v.value for v in dimension.values or []]
     return QueryError(
         ErrorCode.INVALID_FILTER,
         f"Filter on {flt.dimension}: {problem}.",
@@ -815,37 +818,45 @@ def _invalid_filter(flt: RequestFilter, dimension: Dimension, problem: str) -> Q
     )
 
 
-def _checked_value(flt: RequestFilter, dimension: Dimension) -> Scalar | tuple[Scalar, ...] | None:
+def _checked_value(
+    flt: RequestFilter, dimension: Dimension, personal: bool = False
+) -> Scalar | tuple[Scalar, ...] | None:
     op, value = flt.op, flt.value
     if op not in FILTER_OPS:
         raise _invalid_filter(
-            flt, dimension, f"operator {op!r} is not one of {', '.join(FILTER_OPS)}"
+            flt, dimension, f"operator {op!r} is not one of {', '.join(FILTER_OPS)}", personal
         )
     if op in ("is_null", "is_not_null"):
         if value is not None:
-            raise _invalid_filter(flt, dimension, f"operator {op} takes no value")
+            raise _invalid_filter(flt, dimension, f"operator {op} takes no value", personal)
         return None
     if op in ("in", "not_in"):
         if not isinstance(value, tuple) or not value:
-            raise _invalid_filter(flt, dimension, f"operator {op} needs a non-empty list of values")
+            raise _invalid_filter(
+                flt, dimension, f"operator {op} needs a non-empty list of values", personal
+            )
         values: tuple[Scalar, ...] = value
     else:
         if value is None or isinstance(value, tuple):
-            raise _invalid_filter(flt, dimension, f"operator {op} needs one value")
+            raise _invalid_filter(flt, dimension, f"operator {op} needs one value", personal)
         values = (value,)
     if dimension.type == "boolean" and op in _ORDERING_OPS:
-        raise _invalid_filter(flt, dimension, f"operator {op} does not fit a boolean dimension")
+        raise _invalid_filter(
+            flt, dimension, f"operator {op} does not fit a boolean dimension", personal
+        )
     allowed = [v.value for v in dimension.values or []]
     for item in values:
         if not _type_fits(dimension.type, item):
+            shown = "the value" if personal else f"value {item!r}"
             raise _invalid_filter(
-                flt, dimension, f"value {item!r} does not fit a {dimension.type} dimension"
+                flt, dimension, f"{shown} does not fit a {dimension.type} dimension", personal
             )
         if allowed and not any(
             isinstance(item, bool) == isinstance(a, bool) and item == a for a in allowed
         ):
+            shown = "the value" if personal else f"value {item!r}"
             raise _invalid_filter(
-                flt, dimension, f"value {item!r} is not one of the dimension's values"
+                flt, dimension, f"{shown} is not one of the dimension's values", personal
             )
     return values if isinstance(value, tuple) else value
 
