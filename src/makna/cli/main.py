@@ -12,7 +12,13 @@ from makna.catalog.base import ConnectorError
 from makna.catalog.file import FileConnector
 from makna.catalog.references import load_view, open_issues
 from makna.catalog.sync import sync_catalog
-from makna.config import ConfigError, load_engine_runtime, load_search_runtime, load_tag_map
+from makna.config import (
+    ConfigError,
+    load_engine_runtime,
+    load_governance_runtime,
+    load_search_runtime,
+    load_tag_map,
+)
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
 from makna.definitions.validate import validate
 from makna.engine.base import EngineError
@@ -24,6 +30,7 @@ from makna.model.definitions import Entity, GlossaryTerm
 from makna.model.search import DOCUMENT_KINDS
 from makna.search.embedding import EmbeddingError, make_provider
 from makna.search.hybrid import ROLES, HybridSearch, SearchError
+from makna.services.derive import make_derive
 from makna.services.examples import check_example_requests
 
 DEFAULT_CATALOG_FILE = Path("data/catalog/lending.catalog.yaml")
@@ -304,6 +311,7 @@ def _index_build(definitions: Path | None) -> int:
             print(f"makna index build: no definitions directory ({directory})", file=sys.stderr)
             return 2
         runtime = load_search_runtime()
+        policy = load_governance_runtime().governance.policy()
         key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
         provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
         engine = make_engine(database_url_from_env())
@@ -330,7 +338,7 @@ def _index_build(definitions: Path | None) -> int:
         engine.dispose()
         return 1
     try:
-        result = indexer.build(engine, provider, objects)
+        result = indexer.build(engine, provider, objects, derive=make_derive(policy))
     except (EmbeddingError, indexer.IndexerError, SQLAlchemyError) as error:
         print(f"makna index build: {error}", file=sys.stderr)
         return 1
@@ -351,6 +359,10 @@ def _index_build(definitions: Path | None) -> int:
         f"removed {result.objects_removed}, unchanged {result.objects_unchanged}"
     )
     print("in the index: " + ", ".join(f"{k} {v}" for k, v in sorted(result.by_kind.items())))
+    print(
+        f"edges: added {result.edges_added}, removed {result.edges_removed}; "
+        f"reference issues R05: opened {result.issues_opened}, closed {result.issues_closed}"
+    )
     return 0
 
 

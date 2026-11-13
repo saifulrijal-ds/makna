@@ -9,6 +9,10 @@ Codes:
 - R04  `catalog_term` of a glossary term does not exist in the catalog (matched against the
        catalog id or the name of a catalog glossary term).
 
+`R05` (a metric reads a column the catalog marks personal where personal data is not allowed) is
+found by the indexer, not by this check: it needs the planner. Its rows share the table, and
+`plan_changes` leaves every open issue whose code is not R01 to R04 as it is.
+
 `find_issues` is a pure function of model objects and a `CatalogView`. `plan_changes` compares
 its findings with the open rows of `reference_issue`; `apply_changes` writes the difference.
 An issue is identified by (object, part, code): while it stays true its row stays open and
@@ -30,6 +34,9 @@ from makna.index.tables import catalog_column, catalog_dataset, catalog_glossary
 from makna.index.tables import reference_issue as issue_table
 from makna.model.definitions import Dimension, Entity, GlossaryTerm
 from makna.model.sensitivity import rank
+
+CHECK_CODES = ("R01", "R02", "R03", "R04")
+"""The codes this check finds and therefore may close."""
 
 
 @dataclass(frozen=True)
@@ -250,7 +257,7 @@ def plan_changes(
     for row in connection.execute(
         select(issue_table).where(issue_table.c.closed_at.is_(None)).order_by(issue_table.c.id)
     ):
-        if row.object_id in keep:
+        if row.object_id in keep or row.code not in CHECK_CODES:
             continue
         key = (row.object_id, row.part, row.code)
         current = found.get(key)

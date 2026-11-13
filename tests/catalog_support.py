@@ -118,3 +118,18 @@ def make_term(name: str = "npf", catalog_term: str | None = None) -> GlossaryTer
     parsed = parse_definition(doc)
     assert isinstance(parsed, GlossaryTerm)
     return parsed
+
+
+def export_with_tags(path: Path, tags: dict[tuple[str, str], list[str]]) -> Path:
+    """A copy of the sample export where the named columns carry the given catalog tags
+    (replacing what they had). Keys are `(table name, column name)`."""
+    data = copy.deepcopy(export_data())
+    seen: set[tuple[str, str]] = set()
+    for dataset in data["datasets"]:
+        for column in dataset["columns"]:
+            key = (dataset["name"], column["name"])
+            if key in tags:
+                column["tags"] = list(tags[key])
+                seen.add(key)
+    assert seen == set(tags), f"columns not found: {set(tags) - seen}"
+    return write_export(path, data)
