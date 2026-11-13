@@ -47,7 +47,7 @@ from makna.services.derive import personal_column_issue
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
 from makna.services.related import RELATIONS, list_related
 from makna.services.snapshot import Snapshot, SnapshotCache
-from makna.services.text_check import check_deep, check_text
+from makna.services.text_check import check_deep, check_request_bounds, check_text
 from makna.services.views import (
     DefinitionView,
     RelatedOutcome,
@@ -339,9 +339,10 @@ class Services:
             parsed: QueryRequest | None = None
             try:
                 call.request = CallLog.compile_request(request, None)
-                check_deep(
-                    "", request.model_dump() if isinstance(request, QueryRequest) else request
-                )
+                raw = request.model_dump() if isinstance(request, QueryRequest) else request
+                check_deep("", raw)
+                if isinstance(raw, Mapping):
+                    check_request_bounds(raw)
                 parsed = self._parse_request(request)
                 permissions.require(caller, permissions.Permission.COMPILE)
                 # D-30 and the covered tables come from the snapshot the compile uses.

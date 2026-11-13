@@ -34,7 +34,7 @@ from urllib.parse import unquote
 
 REDACTED = "[REDACTED]"
 
-_SEPARATORS = r"[\s.\-/_,‐-―−]"
+_SEPARATORS = r"[\W_]"  # a character that is neither a letter nor a digit
 _EMAIL = re.compile(r"\S*@\S*")
 _EMAIL_WORDS = re.compile(
     r"[\w.+-]+\s*(?:\(at\)|\[at\]|\bat\b)\s*[a-z0-9-]+"
@@ -43,10 +43,10 @@ _EMAIL_WORDS = re.compile(
     re.IGNORECASE,
 )
 # A plus sign, then at least seven digits with the usual separators.
-_INTERNATIONAL = re.compile(r"\+\s?\d(?:[\s.\-()/_,‐-―−]{0,3}\d){6,}")
+_INTERNATIONAL = re.compile(rf"\+\s?\d(?:{_SEPARATORS}{{0,3}}\d){{6,}}")
 # 0, an area or operator code of one to three digits (bracketed or not), then two groups.
 _INDONESIAN = re.compile(r"(?<![\d])\(?0\d{1,3}\)?[\s.\-]?\d{3,4}(?:[\s.\-]?\d{2,5})?(?![\d])")
-_DIGIT_RUN = re.compile(rf"\d(?:{_SEPARATORS}{{0,3}}\d){{8,}}")
+_DIGIT_RUN = re.compile(rf"\(?\d(?:{_SEPARATORS}{{0,3}}\d){{8,}}")
 _DATE = re.compile(
     r"(?<!\d)"
     r"(?:19|20|21)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
@@ -61,38 +61,53 @@ _UNSTORABLE = re.compile(
     "\U000f0000-\U000ffffd\U00100000-\U0010fffd]"
 )
 MAX_DECODE_PASSES = 5
-_INVISIBLE = re.compile(r"[­​-‏‪-‮⁠-⁤﻿]")
-_TAIL = re.compile(r"[\d\s.\-+()/_,‐-―−]+$")
+_TAIL = re.compile(r"[\d\W_]+$")
 _HOLD = "{}"
 _HELD = re.compile("(\\d+)")
 
 _PATTERNS = (_EMAIL, _EMAIL_WORDS, _INTERNATIONAL, _DIGIT_RUN, _INDONESIAN)
 
 
-def normalise(text: str) -> str:
-    """Control characters, unpaired surrogates and private-use characters replaced; NFKC;
-    invisible characters dropped; percent escapes and HTML character references decoded until
-    the text stops changing (at most 5 passes, so double encoding is decoded too); and the
-    replacement again after the last decoding, so `%00` cannot bring a NUL back."""
+class TooDeep(ValueError):
+    """The text still changed after the last allowed decoding pass."""
+
+
+def _clean(text: str) -> str:
+    """Control characters, unpaired surrogates and private-use characters replaced; invisible,
+    format and combining characters (Unicode Cf, Mn, Me) and noncharacters removed."""
     text = _UNSTORABLE.sub("\ufffd", text)
-    for _ in range(MAX_DECODE_PASSES):
+    return "".join(
+        c
+        for c in text
+        if unicodedata.category(c) not in ("Cf", "Mn", "Me")
+        and not (0xFDD0 <= ord(c) <= 0xFDEF or ord(c) & 0xFFFE == 0xFFFE)
+    )
+
+
+def normalise(text: str) -> str:
+    """Cleaned (see `_clean`), NFKC, percent escapes and HTML character references decoded until
+    the text stops changing, and cleaned again after the last decoding, so `%00` cannot bring a
+    NUL back. Raises `TooDeep` when the text is still changing after `MAX_DECODE_PASSES`."""
+    text = _clean(text)
+    for _ in range(MAX_DECODE_PASSES + 1):
         before = text
-        text = unicodedata.normalize("NFKC", text)
-        text = _INVISIBLE.sub("", text)
+        text = _clean(unicodedata.normalize("NFKC", text))
         if "%" in text:
-            text = unquote(text)
+            text = _clean(unquote(text))
         if "&" in text:
-            text = html.unescape(text)
+            text = _clean(html.unescape(text))
         if text == before:
-            break
-    text = unicodedata.normalize("NFKC", text)
-    return _UNSTORABLE.sub("\ufffd", text)
+            return text
+    raise TooDeep("still encoded after the last decoding pass")
 
 
 def redact(text: str) -> str:
     """The normalised `text` with emails, phone-like numbers, and runs of 9 or more digits
     replaced. ISO dates and times are left alone."""
-    text = normalise(text)
+    try:
+        text = normalise(text)
+    except TooDeep:
+        return REDACTED  # fail closed: encoded deeper than a reader should be asked to decode
     held: list[str] = []
 
     def hold(match: re.Match[str]) -> str:
@@ -126,7 +141,11 @@ def redact_value(value: Any, limit: int = 500) -> Any:
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return redact(clip(value, limit))
+        # Clip, normalise (which can expand text), then clip again: the stored text stays small.
+        try:
+            return redact(clip(normalise(clip(value, limit)), limit))
+        except TooDeep:
+            return REDACTED
     if isinstance(value, int):
         return REDACTED if len(str(abs(value))) >= 9 else value
     if isinstance(value, float):
@@ -137,7 +156,7 @@ def redact_value(value: Any, limit: int = 500) -> Any:
         return [redact_value(item, limit) for item in value[:100]]
     if isinstance(value, dict):
         return {
-            redact(clip(str(key), 100)): redact_value(item, limit)
+            str(redact_value(str(key), 100)): redact_value(item, limit)
             for key, item in list(value.items())[:100]
         }
     return REDACTED

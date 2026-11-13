@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from makna.services import ServiceError, ServiceErrorCode
@@ -40,3 +42,32 @@ def test_a_nested_request_names_the_path() -> None:
         check_deep("", {"bad\x00key": 1})
     assert raised.value.code == ServiceErrorCode.INVALID_INPUT
     check_deep("", {"metric": "x", "limit": 5, "filters": [{"value": 1.5}]})
+
+
+def test_a_compile_request_has_size_bounds() -> None:
+    from makna.services.text_check import check_request_bounds
+
+    check_request_bounds(
+        {
+            "metric": "m",
+            "dimensions": [f"a.b{i}" for i in range(20)],
+            "filters": [{"dimension": "a.b", "op": "in", "value": list(range(100))}] * 20,
+            "grain": "x" * 200,
+        }
+    )
+    cases: list[tuple[dict[str, Any], str]] = [
+        ({"dimensions": ["a.b"] * 21}, "dimensions"),
+        ({"filters": [{"dimension": "a.b", "op": "=", "value": 1}] * 21}, "filters"),
+        (
+            {"filters": [{"dimension": "a.b", "op": "in", "value": list(range(101))}]},
+            "filters.0.value",
+        ),
+        ({"metric": "x" * 201}, "metric"),
+        ({"filters": [{"dimension": "a.b", "op": "=", "value": "y" * 201}]}, "filters.0.value"),
+        ({"dimensions": ["z" * 201]}, "dimensions.0"),
+    ]
+    for request, field in cases:
+        with pytest.raises(ServiceError) as raised:
+            check_request_bounds(request)
+        assert raised.value.code == ServiceErrorCode.INVALID_INPUT
+        assert raised.value.details["field"] == field

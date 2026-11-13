@@ -621,3 +621,93 @@ def test_get_definition_waits_for_a_rebuild_and_shows_no_values_of_a_newly_perso
     reader.join(20)
     holder.join(20)
     assert outcome["view"].values == []
+
+
+# --- fix round 3 ---------------------------------------------------------------------------------
+
+
+def test_an_oversized_compile_request_is_invalid_input_with_a_row(
+    service_world: tuple[Engine, Users],
+) -> None:
+    engine, users = service_world
+    svc = sup.services(engine)
+    caller = users.caller("viewer")
+    for request, field in (
+        ({"metric": "npf_ratio", "dimensions": ["branch.region_name"] * 21}, "dimensions"),
+        (
+            {
+                "metric": "npf_ratio",
+                "filters": [{"dimension": "branch.region_name", "op": "=", "value": "x"}] * 21,
+            },
+            "filters",
+        ),
+        (
+            {
+                "metric": "npf_ratio",
+                "filters": [{"dimension": "branch.region_name", "op": "in", "value": ["a"] * 101}],
+            },
+            "filters.0.value",
+        ),
+        ({"metric": "npf_ratio", "grain": "m" * 201}, "grain"),
+    ):
+        before = sup.log_count(engine)
+        with pytest.raises(ServiceError) as raised:
+            svc.compile_query(caller, request)
+        assert raised.value.code == ServiceErrorCode.INVALID_INPUT
+        assert raised.value.details["field"] == field
+        (row,) = rows_since(engine, before)
+        assert (row["status"], row["error_code"]) == ("refused", "INVALID_INPUT")
+        assert len(json.dumps(row["request"])) < 10_000
+
+
+def test_a_search_of_expanding_characters_stores_a_small_row(
+    service_world: tuple[Engine, Users],
+) -> None:
+    engine, users = service_world
+    request = stored_request(
+        engine, lambda: sup.services(engine).search(users.caller("viewer"), "\ufdfa" * 500)
+    )
+    assert len(request["query"]) <= 500
+
+
+def test_waiters_share_the_failure_of_a_rebuild(
+    fresh_service_world: tuple[Engine, Users], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    engine, users = fresh_service_world
+    svc = sup.services(engine)
+    caller = users.caller("viewer")
+    svc.get_definition(caller, "metric:npf_ratio")
+    tagged = export_with_tags(tmp_path / "t.yaml", {("customers", "city"): ["PII.Sensitive"]})
+    sync_catalog(engine, FileConnector(tagged), tag_map=TAG_MAP)
+    entered, release = threading.Event(), threading.Event()
+    builds: list[int] = []
+
+    def failing(connection: Any, current: Any) -> Any:
+        builds.append(1)
+        entered.set()
+        assert release.wait(20)
+        raise RuntimeError("the rebuild fails")
+
+    monkeypatch.setattr(snapshot_module, "_build", failing)
+    outcomes: list[str] = []
+
+    def call() -> None:
+        try:
+            svc.get_definition(caller, "metric:npf_ratio")
+            outcomes.append("answer")
+        except ServiceError as error:
+            outcomes.append(str(error.code))
+
+    first = threading.Thread(target=call)
+    first.start()
+    assert entered.wait(20)
+    waiters = [threading.Thread(target=call) for _ in range(3)]
+    for waiter in waiters:
+        waiter.start()
+    for waiter in waiters:
+        waiter.join(0.3)
+    release.set()
+    for thread in (first, *waiters):
+        thread.join(20)
+    assert outcomes == ["INTERNAL"] * 4
+    assert len(builds) == 1  # the waiters did not each try again

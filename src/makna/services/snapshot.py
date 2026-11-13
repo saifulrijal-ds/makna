@@ -153,32 +153,45 @@ class SnapshotCache:
         self._engine = engine
         self._lock = threading.Lock()
         self._snapshot: Snapshot | None = None
+        self._attempts = 0
+        self._failure: Exception | None = None
 
     def current(self) -> tuple[Snapshot, CurrentState]:
         """The snapshot to use for this call, and the index state read for it.
 
         When the stored state is newer than the cached snapshot, the call waits for the rebuild
         (one thread builds, the others wait on the lock) and uses the new snapshot: one rule for
-        all four services, so none serves facts of an older moment than the state it read. A
-        rebuild takes about 10 ms on the sample model. Whatever a service needs of the catalog
-        (D-30, derived levels, covered tables) it takes from the returned snapshot.
+        every service that reads the snapshot, so none serves facts of an older moment than the
+        state it read. A rebuild takes about 10 ms on the sample model. Whatever a service needs
+        of the catalog (D-30, derived levels, covered tables) it takes from the returned snapshot.
         """
         with self._engine.connect() as connection:
             state = read_state(connection)
         snapshot = self._snapshot
         if snapshot is not None and snapshot.key == state.key:
             return snapshot, state
+        seen = self._attempts
         with self._lock:
             snapshot = self._snapshot
             if snapshot is not None and snapshot.key == state.key:
                 return snapshot, state
+            if self._attempts != seen and self._failure is not None:
+                # A rebuild failed while this caller waited: share that failure, do not retry.
+                raise self._failure
             return self._rebuild(), state
 
     def _rebuild(self) -> Snapshot:
         """Build in one repeatable-read transaction and keep the state read inside it, so the
         content and the key cannot come from two moments. The caller holds the lock."""
-        with self._engine.connect().execution_options(isolation_level="REPEATABLE READ") as c:
-            built = _build(c, read_state(c))
+        try:
+            with self._engine.connect().execution_options(isolation_level="REPEATABLE READ") as c:
+                built = _build(c, read_state(c))
+        except Exception as error:
+            self._failure = error
+            self._attempts += 1
+            raise
+        self._failure = None
+        self._attempts += 1
         self._snapshot = built
         return built
 

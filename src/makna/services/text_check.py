@@ -45,3 +45,46 @@ def check_deep(field: str, value: Any) -> None:
     elif isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             check_deep(f"{field}.{index}" if field else str(index), item)
+
+
+MAX_DIMENSIONS = 20
+MAX_FILTERS = 20
+MAX_IN_VALUES = 100
+MAX_STRING = 200
+
+
+def check_request_bounds(request: Mapping[str, Any]) -> None:
+    """Size bounds of a compile request (INVALID_INPUT naming the field): at most 20 dimensions,
+    20 filters and 100 values in a list, and no string longer than 200 characters."""
+    dimensions = request.get("dimensions")
+    if isinstance(dimensions, (list, tuple)) and len(dimensions) > MAX_DIMENSIONS:
+        raise invalid_input(
+            "dimensions", f"at most {MAX_DIMENSIONS} dimensions", maximum=MAX_DIMENSIONS
+        )
+    filters = request.get("filters")
+    if isinstance(filters, (list, tuple)):
+        if len(filters) > MAX_FILTERS:
+            raise invalid_input("filters", f"at most {MAX_FILTERS} filters", maximum=MAX_FILTERS)
+        for index, item in enumerate(filters):
+            value = item.get("value") if isinstance(item, Mapping) else None
+            if isinstance(value, (list, tuple)) and len(value) > MAX_IN_VALUES:
+                raise invalid_input(
+                    f"filters.{index}.value",
+                    f"at most {MAX_IN_VALUES} values",
+                    maximum=MAX_IN_VALUES,
+                )
+    _check_lengths("", request)
+
+
+def _check_lengths(field: str, value: Any) -> None:
+    if isinstance(value, str):
+        if len(value) > MAX_STRING:
+            raise invalid_input(
+                field or "request", f"at most {MAX_STRING} characters", maximum=MAX_STRING
+            )
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            _check_lengths(f"{field}.{key}" if field else str(key), item)
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _check_lengths(f"{field}.{index}" if field else str(index), item)

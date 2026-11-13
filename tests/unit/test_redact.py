@@ -278,3 +278,50 @@ def test_no_control_or_private_use_character_survives_and_nothing_raises(text: s
 def test_double_encoding_is_decoded_before_matching(text: str) -> None:
     out = redact(text)
     assert "john" not in out and "4111" not in out
+
+
+# --- fix round 3 -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "4111:1111:1111:1111",
+        "4111|1111;1111'1111",
+        "4111·1111*1111+1111",
+        "2026-06-30:12345678",
+        "4͏111 1111 1111 1111",  # combining grapheme joiner
+        "4́111 1111 1111 1111",  # combining acute
+        "4111\U000e0020 1111 1111 1111",  # tag character
+        "4111￿1111￿1111￿1111",  # noncharacter
+        "4111᠎1111⁪1111￺1111",
+        "4111️1111️1111️1111",  # variation selector
+    ],
+)
+def test_any_non_letter_separator_and_invisible_marks_do_not_hide_a_number(text: str) -> None:
+    assert not re.search(r"\d{4}", redact(text)), redact(text)
+
+
+@pytest.mark.parametrize(
+    "text", ["2026-06-30 12:00", "from 2025-10-01 to 2026-07-01", "look at region"]
+)
+def test_the_sparing_cases_still_hold(text: str) -> None:
+    assert redact(text) == text
+
+
+def test_text_encoded_deeper_than_the_cap_is_redacted_whole() -> None:
+    deep = "john" + "%25" * 6 + "40example.com"
+    assert redact(deep) == REDACTED
+    assert redact_value(deep) == REDACTED
+    assert redact("x%" + "25" * 8 + "00") == REDACTED
+    # within the cap it is decoded and matched
+    assert "john" not in redact("john" + "%25" * 3 + "40example.com")
+    assert redact("100%") == "100%" and redact("a%zzb") == "a%zzb"
+
+
+def test_stored_text_is_clipped_after_normalisation() -> None:
+    stored = redact_value("ﷺ" * 500)
+    assert isinstance(stored, str) and len(stored) <= 500
+    stored = redact_value("ﷺ" * 500, 50)
+    assert isinstance(stored, str) and len(stored) <= 50
+    assert len(str(redact_value(["ﬃ" * 500] * 3))) < 2000
