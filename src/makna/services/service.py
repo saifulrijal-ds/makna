@@ -331,9 +331,10 @@ class Services:
                 parsed = self._parse_request(request)
                 permissions.require(caller, permissions.Permission.COMPILE)
                 snapshot, state = self._cache.current()
-                call.request = CallLog.compile_request(parsed, snapshot.model)
                 if not state.catalog_synced:
+                    # No catalog, so the levels the catalog derives are unknown: keep no value.
                     raise ServiceError(ServiceErrorCode.CATALOG_NOT_SYNCED, NOT_SYNCED_MESSAGE)
+                call.request = CallLog.compile_request(parsed, snapshot.model)
                 response = self._compile(caller, snapshot, parsed)
             except QueryError as error:
                 if error.code == ErrorCode.PERSONAL_DATA_REFUSED:
@@ -394,7 +395,7 @@ class Services:
             )
 
 
-# --- helpers --------------------------------------------------------------------------------
+# --- helpers ---
 
 
 def _owner_id(object_id: str) -> str:

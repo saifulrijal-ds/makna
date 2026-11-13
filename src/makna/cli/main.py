@@ -414,9 +414,11 @@ def _serve(host: str, port: int) -> int:
     import uvicorn
 
     from makna.config import ConfigError, load_settings
+    from makna.services import build_services
 
     try:
-        load_settings()
+        # Fail here, with a clear message, for anything the application would refuse at start.
+        build_services(load_settings()).dispose()
     except ConfigError as error:
         print(f"makna serve: {error}", file=sys.stderr)
         return 2

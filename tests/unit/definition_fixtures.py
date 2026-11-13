@@ -186,7 +186,7 @@ def fixture_dir(mutation: Mutation, root: Path) -> Path:
     return write(files, root)
 
 
-# --- Mutation helpers -------------------------------------------------------------------
+# --- Mutation helpers ---
 
 
 def _move(files: Files, old: str, new: str) -> dict[str, Any]:
@@ -207,7 +207,7 @@ def _named(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
     return next(i for i in items if i["name"] == name)
 
 
-# --- V01 ---------------------------------------------------------------------------------
+# --- V01 ---
 
 
 def v01_metric_without_id_synonym(files: Files) -> None:
@@ -218,7 +218,7 @@ def v01_unknown_key(files: Files) -> None:
     files["shop/glossary/aov.yaml"]["colour"] = "red"
 
 
-# --- V02 ---------------------------------------------------------------------------------
+# --- V02 ---
 
 
 def v02_file_name_differs_from_name(files: Files) -> None:
@@ -238,7 +238,7 @@ def v02_proposal_file_with_approved_status(files: Files) -> None:
     files["shop/glossary/aov.draft.yaml"] = copy.deepcopy(files["shop/glossary/aov.yaml"])
 
 
-# --- V03 ---------------------------------------------------------------------------------
+# --- V03 ---
 
 
 def v03_same_metric_name_in_two_files(files: Files) -> None:
@@ -275,7 +275,7 @@ def v03_entity_name_with_a_double_underscore(files: Files) -> None:
     files["shop/entities/ware__house.yaml"] = twin
 
 
-# --- V04 ---------------------------------------------------------------------------------
+# --- V04 ---
 
 
 def v04_domain_does_not_exist(files: Files) -> None:
@@ -283,7 +283,7 @@ def v04_domain_does_not_exist(files: Files) -> None:
     doc["domain"] = "nowhere"
 
 
-# --- V05 ---------------------------------------------------------------------------------
+# --- V05 ---
 
 
 def v05_dimension_with_aggregate(files: Files) -> None:
@@ -308,7 +308,7 @@ def v05_two_expressions_in_one(files: Files) -> None:
     _entity(files, "region")["dimensions"][0]["expr"] = "region_name; region_id"
 
 
-# --- V06 ---------------------------------------------------------------------------------
+# --- V06 ---
 
 
 def v06_time_dimension_is_not_a_time_dimension(files: Files) -> None:
@@ -319,7 +319,7 @@ def v06_time_dimension_does_not_exist(files: Files) -> None:
     _named(_entity(files, "order")["measures"], "orders")["time_dimension"] = "shipped_date"
 
 
-# --- V07 ---------------------------------------------------------------------------------
+# --- V07 ---
 
 
 def v07_relationship_to_missing_entity(files: Files) -> None:
@@ -328,7 +328,7 @@ def v07_relationship_to_missing_entity(files: Files) -> None:
     del _metric_doc(files, "revenue")["join_paths"]
 
 
-# --- V08 ---------------------------------------------------------------------------------
+# --- V08 ---
 
 
 def v08_simple_measure_does_not_resolve(files: Files) -> None:
@@ -357,7 +357,7 @@ def v08_derived_expression_uses_a_function(files: Files) -> None:
     _metric_doc(files, "average_order_value")["expr"] = "ROUND(revenue / order_count)"
 
 
-# --- V09 ---------------------------------------------------------------------------------
+# --- V09 ---
 
 
 def v09_chain_does_not_start_at_the_measure_entity(files: Files) -> None:
@@ -376,7 +376,7 @@ def v09_relationship_does_not_exist(files: Files) -> None:
     _metric_doc(files, "revenue")["join_paths"]["region"] = ["order.buyer", "customer.home_region"]
 
 
-# --- V10 ---------------------------------------------------------------------------------
+# --- V10 ---
 
 
 def v10_filter_on_personal_dimension(files: Files) -> None:
@@ -411,7 +411,7 @@ def v10_date_filter_with_text(files: Files) -> None:
     ]
 
 
-# --- V11 ---------------------------------------------------------------------------------
+# --- V11 ---
 
 
 def v11_truncate_date_on_categorical(files: Files) -> None:
@@ -428,7 +428,7 @@ def v11_redact_on_numeric(files: Files) -> None:
     _named(_entity(files, "order")["dimensions"], "item_count")["masking"] = {"method": "redact"}
 
 
-# --- V12 ---------------------------------------------------------------------------------
+# --- V12 ---
 
 
 def v12_sum_over_personal_column(files: Files) -> None:
@@ -459,7 +459,7 @@ def v12_count_with_a_filter_on_a_personal_column(files: Files) -> None:
     measures.append(_measure("mailed", "count", "registered_date", filter="email <> ''"))
 
 
-# --- V13 ---------------------------------------------------------------------------------
+# --- V13 ---
 
 
 def v13_approved_metric_depends_on_draft_metric(files: Files) -> None:
@@ -478,7 +478,7 @@ def v13_approved_metric_depends_on_deprecated_metric(files: Files) -> None:
     )
 
 
-# --- V14 ---------------------------------------------------------------------------------
+# --- V14 ---
 
 
 def v14_deprecated_without_reason(files: Files) -> None:
@@ -497,7 +497,7 @@ def v14_replaced_by_is_not_kind_and_name(files: Files) -> None:
     doc["deprecation"] = {"reason": "Merged.", "replaced_by": "aov2"}
 
 
-# --- V15 ---------------------------------------------------------------------------------
+# --- V15 ---
 
 
 def v15_default_grain_not_offered(files: Files) -> None:
@@ -521,14 +521,14 @@ def v15_ratio_over_balance_offers_week(files: Files) -> None:
     doc["time_grains"] = ["week", "month"]
 
 
-# --- V16 ---------------------------------------------------------------------------------
+# --- V16 ---
 
 
 def v16_time_dimension_is_personal(files: Files) -> None:
     _named(_entity(files, "customer")["measures"], "signups")["time_dimension"] = "birth_year"
 
 
-# --- V17 ---------------------------------------------------------------------------------
+# --- V17 ---
 
 
 def v17_personal_dimension_lists_values(files: Files) -> None:
@@ -536,7 +536,7 @@ def v17_personal_dimension_lists_values(files: Files) -> None:
     dim["values"] = [{"value": "a@example.com"}]
 
 
-# --- V18 ---------------------------------------------------------------------------------
+# --- V18 ---
 
 
 def v18_measure_rule_not_on_entity(files: Files) -> None:
@@ -562,7 +562,7 @@ def v18_rule_reads_personal_column(files: Files) -> None:
     ]
 
 
-# --- V20 ---------------------------------------------------------------------------------
+# --- V20 ---
 
 
 def v20_time_copy_of_a_masked_column(files: Files) -> None:

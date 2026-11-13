@@ -151,3 +151,40 @@ def test_build_refuses_a_directory_with_no_definitions_and_leaves_the_index(
     code, _, err = run(capsys, "index", "build", "--definitions", str(empty))
     assert code == 1 and "no definition objects" in err
     assert count(database) == built
+
+
+def test_the_build_stores_the_dimensions_the_policy_and_the_edges(
+    database: Engine,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """WP-12: `makna index build` passes the service layer's hook, with the configured policy."""
+    from sqlalchemy import text
+
+    from makna.model.governance import GovernancePolicy
+
+    config = tmp_path / "makna.toml"
+    config.write_text('[governance]\nmode = "custom"\nallow_personal_filters = true\n')
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "makna.toml").write_text(config.read_text())
+    code, out, err = run(capsys, "index", "build", "--definitions", str(DEFINITIONS))
+    assert code == 0, err
+    assert "edges: added " in out and "R05: opened 0, closed 0" in out
+    with database.connect() as connection:
+        state = dict(connection.execute(text("SELECT key, value FROM index_state")).all())
+        stored = connection.execute(
+            text(
+                "SELECT derived -> 'dimensions' FROM semantic_object WHERE id = 'metric:npf_ratio'"
+            )
+        ).scalar_one()
+    assert (
+        state["governance_fingerprint"]
+        == GovernancePolicy.custom(allow_personal_filters=True).fingerprint()
+    )
+    assert stored and any(d["ref"] == "branch.region_name" for d in stored)
+
+    code, out, err = run(capsys, "index", "build", "--definitions", str(DEFINITIONS))
+    assert code == 0, err
+    assert "edges: added 0, removed 0" in out and "added 0, changed 0, removed 0" in out

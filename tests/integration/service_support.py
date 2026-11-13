@@ -37,9 +37,7 @@ class Users:
     def token(self, role: str = "admin", channel: str = "mcp") -> Caller:
         """A caller that came with the token of the user of `role` (the token's user is the
         admin in these tests, so the default shows that a token never gets more than a viewer)."""
-        return Caller(
-            user_id=self.ids[role], role=role, channel=channel, token_id=self.token_id
-        )
+        return Caller(user_id=self.ids[role], role=role, channel=channel, token_id=self.token_id)
 
 
 def build(

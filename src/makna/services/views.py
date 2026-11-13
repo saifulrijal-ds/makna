@@ -44,7 +44,7 @@ class View(BaseModel):
         return result
 
 
-# --- search -----------------------------------------------------------------------------------
+# --- search ---
 
 
 class SearchHit(View):
@@ -71,7 +71,7 @@ class SearchOutcome(View):
         return result
 
 
-# --- get_definition ---------------------------------------------------------------------------
+# --- get_definition ---
 
 
 class TimeView(View):
@@ -173,7 +173,7 @@ class DefinitionView(View):
     """For curators and above: the object also has a proposal in this state."""
 
 
-# --- list_related -----------------------------------------------------------------------------
+# --- list_related ---
 
 
 class RelatedItem(View):

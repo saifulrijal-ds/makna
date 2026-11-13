@@ -2,7 +2,7 @@
 
 `redact` is a pure function over text. It replaces, with `[REDACTED]`:
 
-- email addresses (a word with an `@` inside it, so partial and odd forms go too);
+- email addresses (any word with an `@` in it, so partial and odd forms go too);
 - phone-like numbers: international forms with a `+` (at least seven digits, with spaces, dots,
   dashes or brackets), and Indonesian forms starting with `0` (mobile and landline, with an
   optional bracketed area code and spaces, dots or dashes);
@@ -21,7 +21,7 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 
-_EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
+_EMAIL = re.compile(r"\S*@\S*")
 # A plus sign, then at least seven digits with the usual separators.
 _INTERNATIONAL = re.compile(r"\+\s?\d(?:[\s.\-()]{0,2}\d){6,}")
 # 0, an area or operator code of one to three digits (bracketed or not), then two groups.

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
@@ -123,7 +124,7 @@ def fresh_indexed_engine(empty_database: URL) -> Iterator[Engine]:
 
 
 @pytest.fixture(scope="module")
-def service_world(test_database_url: URL) -> Iterator[tuple[Engine, object]]:
+def service_world(test_database_url: URL) -> Iterator[tuple[Engine, Any]]:
     """A database for the service tests: sample catalog and definitions indexed with the service
     hook under `strict`, four users, and a token. Shared by one module, so tests must not change
     the definitions, the catalog or the index (they write `tool_call_log` rows only)."""
@@ -146,7 +147,7 @@ def service_world(test_database_url: URL) -> Iterator[tuple[Engine, object]]:
 
 
 @pytest.fixture
-def fresh_service_world(empty_database: URL) -> Iterator[tuple[Engine, object]]:
+def fresh_service_world(empty_database: URL) -> Iterator[tuple[Engine, Any]]:
     """Like `service_world`, private to one test, which may change anything."""
     from . import service_support
 
