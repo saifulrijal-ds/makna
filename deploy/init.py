@@ -3,7 +3,7 @@
 Run it as `python -m deploy.init` (the `init` service of docker-compose.yml does). It lives
 outside `src/makna` because the first steps use the sample-data code in `data/`, which the
 installed product package must not import. Later work packages append their step to `STEPS`
-(demo users, definitions repository). A step is safe to run again:
+(definitions repository). A step is safe to run again:
 the second run of the whole list changes nothing and exits 0.
 """
 
@@ -13,12 +13,13 @@ import argparse
 import os
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from sqlalchemy.exc import SQLAlchemyError
 
 from data.generator import DEFAULT_SEED, TABLES, generate, write_parquet
 from data.lending_loader import load_all
@@ -29,6 +30,7 @@ from makna.definitions.loader import definition_objects, load_definitions, offic
 from makna.index import indexer, migrate
 from makna.index.db import make_engine
 from makna.search.embedding import make_provider
+from makna.services import accounts
 from makna.services.derive import make_derive
 
 
@@ -49,6 +51,9 @@ class Context:
     """The catalog export that `sync-catalog` reads."""
     definitions_dir: Path = Path("semantic/definitions")
     """The definitions the reference check reads, until the definitions repository (WP-18)."""
+    demo_password: str | None = field(default=None, repr=False)
+    """`MAKNA_DEMO_PASSWORD`: the password of the demo users. Without it, no demo user is made.
+    Left out of `repr` so that it cannot reach a log."""
 
 
 @dataclass(frozen=True)
@@ -153,6 +158,56 @@ def build_index_step(context: Context) -> str:
     )
 
 
+@dataclass(frozen=True)
+class DemoUser:
+    email: str
+    display_name: str
+    role: str
+    teams: tuple[str, ...]
+
+
+# One user per role, for the development stack only (D-20: the demo approver is in the
+# governance team). `.example` is a reserved top-level domain.
+DEMO_USERS: tuple[DemoUser, ...] = (
+    DemoUser("viewer@demo.example", "Demo Viewer", "viewer", ("credit-risk",)),
+    DemoUser("curator@demo.example", "Demo Curator", "curator", ("credit-risk",)),
+    DemoUser("approver@demo.example", "Demo Approver", "approver", ("data-governance",)),
+    DemoUser("admin@demo.example", "Demo Admin", "admin", ()),
+)
+
+
+def create_demo_users(context: Context) -> str:
+    """Create the four demo users with the password of `MAKNA_DEMO_PASSWORD`.
+
+    There is no default password: without the variable nothing is created and the step succeeds.
+    A user whose email exists is left exactly as it is (password, role, and teams), and nothing
+    is written for it, so a second run changes nothing.
+    """
+    if not context.demo_password:
+        return "skipped (MAKNA_DEMO_PASSWORD is not set, so no demo user was created)"
+    engine = make_engine(context.database_url)
+    try:
+        created = []
+        for demo in DEMO_USERS:
+            if accounts.get_user(engine, demo.email) is not None:
+                continue
+            accounts.create_user(
+                engine,
+                demo.email,
+                demo.display_name,
+                demo.role,
+                demo.teams,
+                context.demo_password,
+            )
+            created.append(demo.role)
+    except SQLAlchemyError as error:
+        # Not the error text: it carries the SQL parameters, which include a password hash.
+        raise InitError(f"database error ({type(error).__name__})") from None
+    finally:
+        engine.dispose()
+    return f"created {', '.join(created)}" if created else "unchanged"
+
+
 # Later packages append here, in the order the steps must run.
 STEPS: list[Step] = [
     Step("generate-sample-data", generate_sample_data),
@@ -160,6 +215,7 @@ STEPS: list[Step] = [
     Step("migrate", run_migrations),
     Step("sync-catalog", sync_catalog_step),
     Step("build-index", build_index_step),
+    Step("demo-users", create_demo_users),
 ]
 
 
@@ -195,6 +251,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             scale=args.scale,
             database_url=_required("MAKNA_DATABASE_URL"),
             lending_loader_url=_required("MAKNA_LENDING_LOADER_URL"),
+            demo_password=os.environ.get("MAKNA_DEMO_PASSWORD") or None,
         )
     except InitError as error:
         print(f"init: {error}", file=sys.stderr)
