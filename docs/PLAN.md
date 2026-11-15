@@ -279,7 +279,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-15 Eval runner: retrieval and compile
 
 - **Read**: `docs/EVALS.md` sections 3, 4, 6.
-- **Build**: `evals/` runner with the `makna-eval` command (`all`, `retrieval`, `compile`, `freeze`), reports in Markdown and JSON, gates in `evals/gates.toml`, the CI wiring, and one tuning pass of the search weights and confidence thresholds with the real default model.
+- **Build**: `evals/` runner with the `makna-eval` command (`all`, `retrieval`, `compile`, `freeze`; run as `uv run python -m evals <command>`, see `docs/EVALS.md` section 6), reports in Markdown and JSON, gates in `evals/gates.toml`, the CI wiring, and one tuning pass of the search weights and confidence thresholds with the real default model.
 - **Acceptance**
   1. `uv run makna-eval all` on the dev stack writes `report.md` and `report.json` containing every score in the tables of sections 3 and 4, including keyword-only, vector-only, and fused retrieval scores and the per-language split.
   2. The exit code is 1 when a gate fails: a test lowers a gate fixture and asserts the failure, and breaks one reference CSV and asserts the compile gate fails naming the question.

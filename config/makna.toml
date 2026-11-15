@@ -33,8 +33,9 @@ domain = 0.7
 column = 0.6
 
 # Confidence band (ARCHITECTURE 8.3). low_cosine stays unset: with the default model the top
-# cosine of a question that has no definition (0.43 to 0.60) lies among those of valid questions
-# (0.34 to 0.78), so it cannot separate them (WP-15, docs/EVALS.md "Tuning (WP-15)").
+# cosine of the three golden questions that have no definition (0.43 to 0.51) lies inside that of
+# the answer questions (0.27 to 0.65), so it cannot separate them (WP-15, docs/EVALS.md
+# "Tuning (WP-15)").
 [search.confidence]
 high = 0.6
 low = 0.3

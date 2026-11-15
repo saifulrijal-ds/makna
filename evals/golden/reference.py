@@ -1,8 +1,7 @@
 """Run a reference SQL file and turn its result into the text of an expected CSV.
 
-This is the one shared function of the golden set: `python -m evals.golden.freeze` writes the
-CSVs with it and the engine test re-runs every reference SQL with it and compares exact text.
-WP-15 folds it into `makna-eval freeze`; until then nothing else uses it.
+This is the one shared function of the golden set: `python -m evals freeze` writes the CSVs with
+it and the engine test re-runs every reference SQL with it and compares exact text.
 
 CSV format (fixed so that a re-run compares as plain text): a header row of column names, one
 row per result row in the order of the SQL's own ORDER BY, values in the form psycopg returns
