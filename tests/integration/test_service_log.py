@@ -266,7 +266,11 @@ def test_every_tool_redacts_what_the_caller_typed(service_world: tuple[Engine, U
         ),
     ]
     for row in rows:
-        stored = json.dumps(row, default=str)
+        # What the caller typed can only be in these columns; the timestamp `at` and the numeric
+        # columns hold digits such as .123456 that are not it.
+        stored = json.dumps(
+            {k: row[k] for k in ("tool", "request", "result", "error_code")}, default=str
+        )
         for piece in ("john", "example.com", "4111", "3456", "7890", "@", "1111111111111111"):
             assert piece not in stored, (row["tool"], piece)
 

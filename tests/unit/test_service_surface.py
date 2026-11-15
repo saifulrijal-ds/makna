@@ -70,7 +70,14 @@ def test_the_four_services_are_the_public_surface_of_services() -> None:
         if not name.startswith("_") and callable(member)
     }
     assert {"search", "get_definition", "list_related", "compile_query"} <= methods
-    assert methods <= {"search", "get_definition", "list_related", "compile_query", "dispose"}
+    assert methods <= {
+        "search",
+        "get_definition",
+        "list_related",
+        "compile_query",
+        "refuse_input",  # the log row of a call the interface refused (section 14)
+        "dispose",
+    }
 
 
 def test_every_service_takes_a_caller_first() -> None:

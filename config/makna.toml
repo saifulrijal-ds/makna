@@ -90,6 +90,13 @@ min_group_size = 10
 [engine]
 statement_timeout_seconds = 30
 
+# The MCP endpoint at /mcp (ARCHITECTURE section 12). The server answers only to Host headers of
+# localhost, 127.0.0.1, and [::1] (any port), which defeats DNS rebinding. List here every other
+# name the application is reached by, as a client writes it in its URL: bare host names, or
+# host:port. No scheme, path, or wildcard. Inside the development stack the name is "app".
+[mcp]
+# allowed_hosts = ["makna.example.org"]
+
 [sensitivity.tag_map]
 "PII.Sensitive" = "personal"
 "PersonalData.Personal" = "personal"

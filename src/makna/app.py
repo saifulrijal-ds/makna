@@ -11,8 +11,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.routing import Route
 
 from makna.config import Settings, load_settings
+from makna.mcp.http import PATH as MCP_PATH
+from makna.mcp.http import build_mcp_endpoint
 from makna.services import build_services
 
 
@@ -27,11 +30,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     settings = settings or load_settings()
     services = build_services(settings)
+    mcp = build_mcp_endpoint(services, settings.mcp.allowed_hosts)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
-            yield
+            async with mcp.run():
+                yield
         finally:
             services.dispose()
 
@@ -42,5 +47,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    # The MCP endpoint answers for every method and authenticates each request itself. Both
+    # spellings are routed, so a client never meets a redirect.
+    for path in (MCP_PATH, MCP_PATH + "/"):
+        app.router.routes.append(Route(path, endpoint=mcp.asgi))
 
     return app

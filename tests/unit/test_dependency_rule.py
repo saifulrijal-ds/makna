@@ -45,7 +45,18 @@ ALLOWED_MAKNA: dict[str, frozenset[str] | None] = {
     "index": frozenset({"model"}),
     "search": frozenset({"model"}),
     "model": frozenset(),
+    # The use cases depend on every library package, never on an interface (WP-13).
+    "services": frozenset(
+        {"model", "config", "definitions", "catalog", "index", "search", "engine", "compiler"}
+    ),
 }
+# Single modules a package may import although it may not import the rest of their package:
+# `makna mcp` is only an HTTP bridge (ARCHITECTURE section 12), so the command line may load it.
+ALLOWED_MODULES: dict[str, tuple[str, ...]] = {"cli": ("makna.mcp.bridge",)}
+# Modules that import nothing from Makna at all. The stdio bridge runs on an agent's machine and
+# must not hold service code or database settings (WP-13); a second test loads it in a fresh
+# interpreter and looks at what it pulled in.
+NO_MAKNA_IMPORTS = frozenset({"makna/mcp/bridge.py"})
 FORBIDDEN_THIRD_PARTY: dict[str, frozenset[str]] = {"compiler": DB_NETWORK_LIBRARIES}
 
 
@@ -101,11 +112,20 @@ def check_dependency_rule(root: Path) -> list[Violation]:
         for imported in _imported_modules(path, module):
             top = imported.split(".")[0]
             if top == "makna":
+                relative = str(path.relative_to(root))
+                if relative in NO_MAKNA_IMPORTS:
+                    violations.append(Violation(relative, package, imported))
+                    continue
                 target = imported.split(".")[1] if "." in imported else None
                 if target is None or target == package:
                     continue
                 if allowed is not None and target not in allowed:
-                    violations.append(Violation(str(path.relative_to(root)), package, imported))
+                    if any(
+                        imported == m or imported.startswith(m + ".")
+                        for m in ALLOWED_MODULES.get(package, ())
+                    ):
+                        continue
+                    violations.append(Violation(relative, package, imported))
             elif top in forbidden:
                 violations.append(Violation(str(path.relative_to(root)), package, imported))
     return violations
@@ -142,6 +162,18 @@ def test_every_package_of_the_architecture_exists() -> None:
         ("cli/commands.py", "from makna.resolve import resolver\n", "makna.resolve"),
         ("cli/commands.py", "from makna.web import routes\n", "makna.web"),
         ("cli/commands.py", "import makna.mcp.server\n", "makna.mcp.server"),
+        ("cli/commands.py", "from makna.mcp.http import build_mcp_endpoint\n", "makna.mcp.http"),
+        ("mcp/tools.py", "from makna.index import tables\n", "makna.index"),
+        ("mcp/tools.py", "from makna.catalog import base\n", "makna.catalog"),
+        ("mcp/tools.py", "from makna.engine import base\n", "makna.engine"),
+        ("mcp/tools.py", "from makna.app import create_app\n", "makna.app"),
+        ("mcp/bridge.py", "from makna.model import request\n", "makna.model"),
+        ("mcp/bridge.py", "from makna.services import Caller\n", "makna.services"),
+        ("mcp/bridge.py", "from makna.mcp import texts\n", "makna.mcp"),
+        ("services/x.py", "from makna.mcp import server\n", "makna.mcp"),
+        ("services/x.py", "from makna.web import routes\n", "makna.web"),
+        ("services/x.py", "from makna.app import create_app\n", "makna.app"),
+        ("services/x.py", "from makna.cli import main\n", "makna.cli"),
         ("app.py", "from makna.compiler import plan\n", "makna.compiler"),
         ("app.py", "from makna.index import tables\n", "makna.index"),
         ("compiler/sql.py", "import sqlalchemy\n", "sqlalchemy"),
@@ -181,6 +213,11 @@ def test_allowed_imports_pass(tmp_path: Path) -> None:
     _write(tmp_path, "web/b.py", "from . import a\nfrom .a import thing\n")
     _write(tmp_path, "cli/a.py", "from makna.definitions import v\nfrom makna.engine import e\n")
     _write(tmp_path, "cli/b.py", "from makna.app import create_app\n")
+    _write(tmp_path, "cli/c.py", "from makna.mcp.bridge import main\n")
+    _write(tmp_path, "mcp/bridge.py", "import os\nimport anyio\n")
+    _write(
+        tmp_path, "services/a.py", "from makna.compiler import plan\nfrom makna.index import t\n"
+    )
     _write(tmp_path, "app.py", "from makna.web import w\nfrom makna.mcp import m\n")
     _write(tmp_path, "compiler/a.py", "import sqlglot\nfrom makna.model import m\n")
     _write(tmp_path, "catalog/a.py", "from makna.model import m\nfrom makna.index import tables\n")

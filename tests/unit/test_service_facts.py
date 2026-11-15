@@ -215,8 +215,8 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
     assert services.policy == STRICT
     response = TestClient(app).get("/healthz")  # no database runs at localhost: still ok
     assert response.status_code == 200 and response.json() == {"status": "ok"}
-    # No route beyond /healthz: the MCP server (WP-13) and the web pages (WP-16) add theirs.
-    assert {getattr(route, "path", None) for route in app.routes} == {"/healthz"}
+    # The MCP endpoint (WP-13) is the one route beside /healthz; the web pages (WP-16) add theirs.
+    assert {getattr(route, "path", None) for route in app.routes} == {"/healthz", "/mcp", "/mcp/"}
 
 
 def test_create_app_builds_the_services_with_the_configured_policy(tmp_path: Path) -> None:

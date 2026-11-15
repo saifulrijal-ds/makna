@@ -6,6 +6,7 @@ Secrets and connection settings come only from the environment (NFR-4). Non-secr
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -127,6 +128,36 @@ class SensitivitySettings(BaseModel):
     )
 
 
+_HOST_PATTERN = re.compile(
+    r"(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?"
+)
+
+
+class McpSettings(BaseModel):
+    """`[mcp]` of `config/makna.toml`: the MCP endpoint at `/mcp` (ARCHITECTURE section 12).
+
+    `allowed_hosts` are the host names (or `host:port`) the server may be reached by, besides
+    localhost: the SDK refuses a request whose `Host` header is not on the list (421) to defeat
+    DNS rebinding. Write each as a client would in its URL, for example `makna.example.org`; no
+    scheme, no path, no wildcard.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    allowed_hosts: tuple[str, ...] = ()
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _check_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for host in value:
+            if not _HOST_PATTERN.fullmatch(host):
+                raise ValueError(
+                    "each host is a name such as makna.example.org, with an optional :port; "
+                    "no scheme, path, or wildcard"
+                )
+        return value
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -148,6 +179,7 @@ class Settings(BaseModel):
     governance: GovernanceSettings = Field(default_factory=GovernanceSettings)
     sensitivity: SensitivitySettings = Field(default_factory=SensitivitySettings)
     engine: EngineSettings = Field(default_factory=EngineSettings)
+    mcp: McpSettings = Field(default_factory=McpSettings)
 
 
 _ENV_FIELDS = (

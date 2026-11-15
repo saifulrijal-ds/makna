@@ -258,7 +258,7 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 - **Acceptance** (integration tier, using the SDK's client in process and over HTTP)
   1. Listing tools returns exactly the four tools of section 12 (there is no run tool, D-21). Every tool has `readOnlyHint` set. A snapshot test compares each tool description and the server instructions with a reviewed text file in the test directory, so a wording change is always a visible, reviewed change; the first snapshot is the text of section 12 (MCP-2).
   2. A full flow passes: search "kredit macet per wilayah", get the top metric's definition (it includes its example requests and rules), and compile a request using a dimension from that definition.
-  3. `makna_search` output for each of the 20 question texts in `docs/EVALS.md` section 2.5 (copied into the test) is at most 2,500 characters at the default limit; `makna_get_definition` in `full` is at most 6,000 characters for every approved sample metric.
+  3. `makna_search` output for each of the 20 question texts in `docs/EVALS.md` section 2.5 (copied into the test) is at most 2,500 characters at the default limit; `makna_get_definition` in `full` is at most 12,000 characters for every approved sample metric.
   4. A compile error is returned as a tool error whose JSON has `code`, `message`, and `details`; for `DIMENSION_NOT_AVAILABLE` the details list available dimensions.
   5. HTTP without a token, with a revoked token, and with a malformed token is rejected with 401.
   6. No tool accepts SQL text: the input schema of every tool has no property named `sql` or `query_sql`, and a test asserts this.

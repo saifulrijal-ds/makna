@@ -39,12 +39,13 @@ from makna.model.search import EmbeddingProvider, SearchSettings
 from makna.search.confidence import LOW_GUIDANCE
 from makna.search.embedding import EmbeddingError
 from makna.search.hybrid import HybridSearch, SearchError
-from makna.services import objects, permissions
+from makna.services import accounts, objects, permissions
 from makna.services.caller import Caller
 from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
 from makna.services.derive import personal_column_issue
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
+from makna.services.redact import redact_value
 from makna.services.related import RELATIONS, list_related
 from makna.services.snapshot import Snapshot, SnapshotCache
 from makna.services.text_check import check_deep, check_request_bounds, check_text
@@ -61,6 +62,7 @@ logger = logging.getLogger(__name__)
 MAX_QUERY_LENGTH = 500
 MAX_LIMIT = 10
 DEFAULT_LIMIT = 5
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 SEARCH_KINDS = ("metric", "glossary_term", "entity", "dimension", "column")
 DETAILS = ("brief", "full")
 SUPPORTED_DIALECTS = ("postgres", "duckdb")
@@ -171,6 +173,26 @@ class Services:
             call.status = "ok"
             if not self._calls.write(call):
                 raise ServiceError(ServiceErrorCode.INTERNAL, INTERNAL_MESSAGE) from None
+
+    def refuse_input(
+        self, caller: Caller, tool: str, fields: Collection[object], allowed: Collection[str]
+    ) -> None:
+        """Refuse a `search`, `get_definition`, or `list_related` call that names fields the tool
+        does not have, so the refusal gets its log row like every other (section 14). Always
+        raises `INVALID_INPUT`. Only the names of the fields are kept, and only names that look
+        like names (at most 10); no value is ever passed in."""
+        if tool not in ("search", "get_definition", "list_related"):
+            raise ValueError(f"unknown tool {tool!r}")
+        with self._logged(caller, tool) as call:
+            names = sorted({f for f in fields if isinstance(f, str) and _FIELD_NAME.fullmatch(f)})
+            # Redacted like every logged string: a key can be an account number.
+            call.request = {"unknown_fields": [redact_value(n, 64) for n in names[:10]]}
+            raise ServiceError(
+                ServiceErrorCode.INVALID_INPUT,
+                f"{tool} has no field {', '.join(names[:10]) if names else 'with that name'}. "
+                f"Use only: {', '.join(sorted(allowed))}.",
+                {"field": "arguments", "fields": names[:10], "allowed": sorted(allowed)},
+            )
 
     # --- search --------------------------------------------------------------------------
 
@@ -399,6 +421,18 @@ class Services:
                 "is approved. Choose an approved metric.",
                 {"metric": metric, "status": row.status},
             )
+
+
+# --- authentication for an interface ---
+
+
+def authenticate_bearer_token(services: Services, raw: str, channel: str) -> Caller:
+    """The `Caller` of a bearer token on `channel`, on the database of `services`: what an
+    interface that authenticates each request (the MCP endpoint) calls, so it never holds the
+    database engine. It is `makna.services.accounts.authenticate_token` and raises what that
+    raises: `AuthenticationError` for any token that cannot act, and `AccountStoreError` when the
+    user store is down. Synchronous: it reads the database."""
+    return accounts.authenticate_token(services._engine, raw, channel)
 
 
 # --- the compile path shared with the evals ---
