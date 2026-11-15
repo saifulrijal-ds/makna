@@ -18,7 +18,8 @@ from typing import Any
 import anyio
 import pytest
 from mcp import Client
-from mcp_types import CallToolResult
+from mcp.shared.exceptions import MCPError
+from mcp_types import INVALID_PARAMS, CallToolResult
 
 from makna.mcp import texts
 from makna.mcp.http import NoCallerError, caller_from_request
@@ -60,6 +61,7 @@ class StubServices:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        self.refusals: list[tuple[str, list[Any], list[str]]] = []
         self.threads: list[int] = []
         self.result: Any = View({"ok": True})
         self.error: BaseException | None = None
@@ -70,6 +72,10 @@ class StubServices:
         if self.error is not None:
             raise self.error
         return self.result
+
+    def refuse_input(self, caller: Caller, tool: str, fields: Any, allowed: Any) -> None:
+        self.refusals.append((tool, list(fields), list(allowed)))
+        raise ServiceError(ServiceErrorCode.INVALID_INPUT, "stub refusal", {"fields": list(fields)})
 
     def search(self, *args: Any, **kwargs: Any) -> Any:
         return self._answer("search", *args, **kwargs)
@@ -220,6 +226,9 @@ def test_search_never_passes_include_deprecated() -> None:
     stub = StubServices()
     result = call(stub, "makna_search", {"query": "npf", "include_deprecated": True})
     assert result.is_error is True and stub.calls == []
+    assert stub.refusals == [
+        ("search", ["include_deprecated"], ["domain", "kinds", "limit", "query"])
+    ]
 
 
 def test_get_definition_and_list_related_pass_their_arguments() -> None:
@@ -360,29 +369,102 @@ def test_a_call_without_an_authenticated_caller_is_internal_and_runs_no_service(
         caller_from_request(None)
 
 
-def test_an_unknown_tool_is_refused_without_echoing_the_name_back() -> None:
+def test_an_unknown_tool_is_a_protocol_error_with_fixed_text_and_no_echo() -> None:
     stub = StubServices()
-    result = call(stub, "makna_run_query", {"sql": "SELECT 1"})
-    error = payload(result)["error"]
-    assert result.is_error is True and error["code"] == "INVALID_INPUT"
-    assert "makna_run_query" not in json.dumps(error) and "SELECT" not in json.dumps(error)
-    assert error["details"]["allowed"] == [t.name for t in TOOLS]
-    assert stub.calls == []
+    outcome: list[MCPError] = []
+
+    async def go() -> None:
+        async with Client(build_mcp_server(stub, lambda _c: CALLER)) as client:  # type: ignore[arg-type]
+            try:
+                await client.call_tool("makna_run_query_" + MARKER, {"sql": "SELECT 1"})
+            except MCPError as error:
+                outcome.append(error)
+
+    anyio.run(go)
+    (error,) = outcome
+    assert error.code == INVALID_PARAMS
+    assert MARKER not in str(error) and "SELECT" not in str(error)
+    assert stub.calls == [] and stub.refusals == []
 
 
-def test_an_unknown_field_is_refused_and_a_value_is_never_repeated() -> None:
+@pytest.mark.parametrize(
+    ("tool", "service", "arguments"),
+    [
+        ("makna_search", "search", {"query": "x"}),
+        ("makna_get_definition", "get_definition", {"id": "metric:x"}),
+        ("makna_list_related", "list_related", {"id": "metric:x"}),
+    ],
+)
+def test_an_unknown_field_is_refused_through_the_service_so_the_refusal_is_logged(
+    tool: str, service: str, arguments: dict[str, Any]
+) -> None:
     stub = StubServices()
-    result = call(stub, "makna_compile_query", {"metric": "npf_ratio", "time_from": MARKER})
-    error = payload(result)["error"]
-    assert result.is_error is True and error["code"] == "INVALID_INPUT"
-    assert error["details"]["fields"] == ["time_from"]  # the name helps the agent fix it
-    assert "metric" in error["details"]["allowed"] and MARKER not in json.dumps(error)
-    assert stub.calls == []
-    # A key that is not a plain name is not repeated back either.
-    odd = call(stub, "makna_search", {"query": "x", f"<script>{MARKER}": 1})
-    assert MARKER not in odd.content[0].text  # type: ignore[union-attr]
-    assert payload(odd)["error"]["details"]["fields"] == []
-    assert stub.calls == []
+    result = call(stub, tool, {**arguments, "time_from": MARKER, f"<script>{MARKER}": 1})
+    assert result.is_error is True and payload(result)["error"]["code"] == "INVALID_INPUT"
+    ((name, fields, allowed),) = stub.refusals
+    assert name == service and "time_from" in fields and allowed
+    assert stub.calls == []  # no service ran
+
+
+def test_an_unknown_compile_field_is_left_to_the_compile_service_which_refuses_and_logs_it() -> (
+    None
+):
+    stub = StubServices()
+    call(stub, "makna_compile_query", {"metric": "npf_ratio", "time_from": MARKER})
+    assert stub.refusals == []
+    assert stub.calls[0][1] == (CALLER, {"metric": "npf_ratio", "time_from": MARKER})
+
+
+def test_there_are_no_prompts_and_no_resources_and_what_is_asked_is_not_repeated(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    async def go() -> None:
+        async with Client(build_mcp_server(StubServices(), lambda _c: CALLER)) as client:  # type: ignore[arg-type]
+            for ask in (
+                client.get_prompt("p\n" + MARKER),
+                client.read_resource("file:///" + MARKER),
+            ):
+                try:
+                    await ask
+                except MCPError as error:
+                    assert MARKER not in str(error) and error.code == INVALID_PARAMS
+                else:
+                    raise AssertionError("expected a protocol error")
+
+    anyio.run(go)
+    assert MARKER not in " ".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
+
+
+def test_building_the_server_leaves_the_root_logger_as_it_was() -> None:
+    root = logging.getLogger()
+    saved, level = root.handlers[:], root.level
+    try:
+        root.handlers = []
+        root.setLevel(logging.NOTSET)
+        build_mcp_server(StubServices(), lambda _c: CALLER)  # type: ignore[arg-type]
+        assert root.handlers == [] and root.level == logging.NOTSET
+        marker = logging.NullHandler()
+        root.handlers = [marker]
+        build_mcp_server(StubServices(), lambda _c: CALLER)  # type: ignore[arg-type]
+        assert root.handlers == [marker]
+    finally:
+        root.handlers, level_ = saved, level
+        root.setLevel(level_)
+
+
+def test_optional_fields_that_the_services_take_as_null_are_advertised_as_nullable() -> None:
+    props = COMPILE_SCHEMA["properties"]
+    for name in ("grain", "time_start", "time_end"):
+        assert "null" in props[name]["type"], name
+    assert {"type": "null"} in props["filters"]["items"]["properties"]["value"]["anyOf"]
+    for name in ("kinds", "domain"):
+        assert "null" in SEARCH_SCHEMA["properties"][name]["type"], name
+    relation = LIST_RELATED_SCHEMA["properties"]["relation"]
+    assert "null" in relation["type"] and None in relation["enum"]
+    for required in ("metric", "dimension", "op"):  # what has no null stays required
+        assert required in str(COMPILE_SCHEMA["required"] + ["dimension", "op"])
 
 
 def test_a_compile_response_is_serialised_like_every_other_view() -> None:

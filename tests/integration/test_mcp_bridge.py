@@ -27,7 +27,10 @@ from makna.services import accounts
 from . import mcp_support as m
 from .service_support import Users
 
-BRIDGE = ["-c", "import sys; from makna.cli.main import main; sys.exit(main(['mcp']))"]
+BRIDGE = [
+    "-c",
+    "import sys; sys.argv = ['makna', 'mcp']; from makna.cli.entry import main; sys.exit(main())",
+]
 REFUSED = "makna mcp: the Makna server refused the token"
 ROOT = Path(__file__).resolve().parents[2]
 

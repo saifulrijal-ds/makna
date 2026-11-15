@@ -12,7 +12,10 @@ inputSchema:
   "additionalProperties": false,
   "properties": {
     "domain": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "kinds": {
       "items": {
@@ -26,7 +29,10 @@ inputSchema:
         "type": "string"
       },
       "minItems": 1,
-      "type": "array"
+      "type": [
+        "array",
+        "null"
+      ]
     },
     "limit": {
       "default": 5,
@@ -99,9 +105,13 @@ inputSchema:
         "measures",
         "same_entity",
         "joins_to",
-        "joined_from"
+        "joined_from",
+        null
       ],
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
@@ -168,6 +178,9 @@ inputSchema:
                 },
                 "maxItems": 100,
                 "type": "array"
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -183,7 +196,10 @@ inputSchema:
     },
     "grain": {
       "maxLength": 200,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "limit": {
       "default": 1000,
@@ -197,11 +213,17 @@ inputSchema:
     },
     "time_end": {
       "maxLength": 200,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "time_start": {
       "maxLength": 200,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

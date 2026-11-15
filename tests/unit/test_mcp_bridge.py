@@ -4,8 +4,12 @@ without them, holds no service or database code, and `makna mcp` reaches it."""
 from __future__ import annotations
 
 import ast
+import json
 import subprocess
 import sys
+import threading
+from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +30,42 @@ def test_the_url_gets_the_mcp_path_appended_once() -> None:
         assert settings_from({"MAKNA_URL": given, "MAKNA_TOKEN": TOKEN}) == (URL + "/mcp", TOKEN)
     https = settings_from({"MAKNA_URL": "https://makna.example.org/base", "MAKNA_TOKEN": TOKEN})
     assert https[0] == "https://makna.example.org/base/mcp"
+
+
+def test_a_url_that_already_ends_in_mcp_is_not_doubled() -> None:
+    for given in (URL + "/mcp", URL + "/mcp/", URL + "//mcp//"):
+        assert settings_from({"MAKNA_URL": given, "MAKNA_TOKEN": TOKEN})[0] == URL + "/mcp"
+    deep = settings_from({"MAKNA_URL": "https://h.example/base/mcp", "MAKNA_TOKEN": TOKEN})
+    assert deep[0] == "https://h.example/base/mcp"
+
+
+@pytest.mark.parametrize(
+    "given",
+    ["http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000", "HTTP://LOCALHOST/x"],
+)
+def test_plain_http_is_accepted_for_localhost(given: str) -> None:
+    assert settings_from({"MAKNA_URL": given, "MAKNA_TOKEN": TOKEN})[0].endswith("/mcp")
+
+
+@pytest.mark.parametrize(
+    ("given", "message"),
+    [
+        ("http://makna.example.org", "must use https"),
+        ("http://10.0.0.5:8000", "must use https"),
+        ("http://app:8000", "must use https"),
+        ("http://localhost.example.org", "must use https"),
+        ("https://user:secret@makna.example.org", "must not hold a user name"),
+        ("https://user@makna.example.org", "must not hold a user name"),
+        ("http://user:secret@localhost:8000", "must not hold a user name"),
+        ("https://", "is not a URL"),
+    ],
+)
+def test_the_token_is_not_sent_in_clear_text_to_another_host_nor_with_user_info(
+    given: str, message: str
+) -> None:
+    with pytest.raises(BridgeSettingsError, match=message) as raised:
+        settings_from({"MAKNA_URL": given, "MAKNA_TOKEN": TOKEN})
+    assert "secret" not in str(raised.value) and given not in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -163,3 +203,246 @@ def test_the_command_line_imports_the_bridge_lazily_and_never_the_server() -> No
     assert not [name for name in imported if name.startswith("makna.mcp")]
     assert "from makna.mcp.bridge import main as bridge_main" in source
     assert "makna.mcp.server" not in source and "makna.mcp.http" not in source
+
+
+# --- the launcher: `makna mcp` loads no service or database code ---
+
+
+def test_the_makna_command_runs_the_bridge_without_loading_service_or_database_code() -> None:
+    code = (
+        "import sys\n"
+        "sys.argv = ['makna', 'mcp']\n"
+        "from makna.cli.entry import main\n"
+        "status = main()\n"
+        f"forbidden = {FORBIDDEN!r}\n"
+        "loaded = sorted(\n"
+        "    n for n in sys.modules if any(n == f or n.startswith(f + '.') for f in forbidden)\n"
+        ")\n"
+        "print(status, loaded)\n"
+    )
+    environment = {"PATH": "/usr/bin:/bin", "HOME": "/tmp"}
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        timeout=120,
+        env=environment,
+    )
+    assert result.stdout.strip() == "2 []", result.stdout + result.stderr  # exit 2, nothing loaded
+    assert result.stderr.strip() == "makna mcp: MAKNA_URL and MAKNA_TOKEN not set"
+
+
+def test_the_console_script_points_at_the_launcher_and_help_still_lists_mcp() -> None:
+    import tomllib
+
+    scripts = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert scripts["scripts"]["makna"] == "makna.cli.entry:main"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.argv=['makna','--help']; from makna.cli.entry import main; main()",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        timeout=120,
+    )
+    assert result.returncode == 0 and "mcp" in result.stdout
+
+
+# --- what the bridge prints and when the server is not there ---
+
+
+def run_bridge(url: str, lines: list[str], wait: float) -> subprocess.CompletedProcess[str]:
+    environment = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "MAKNA_URL": url, "MAKNA_TOKEN": TOKEN}
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; from makna.mcp.bridge import main; sys.exit(main())",
+        ],
+        env=environment,
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdin is not None
+    process.stdin.write("".join(line + "\n" for line in lines))
+    process.stdin.flush()
+    try:
+        out, err = process.communicate(timeout=wait)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        out, err = process.communicate()
+        return subprocess.CompletedProcess(process.args, -9, out, err)
+    return subprocess.CompletedProcess(process.args, process.returncode, out, err)
+
+
+INITIALIZE = (
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",'
+    '"capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'
+)
+
+
+def test_a_server_that_cannot_be_reached_ends_the_bridge_with_one_fixed_line() -> None:
+    import socket
+    import time
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]  # closed again: nothing listens there
+    started = time.monotonic()
+    result = run_bridge(f"http://127.0.0.1:{port}", [INITIALIZE], wait=30)
+    assert result.returncode == 1, result.stderr
+    assert result.stderr.strip().splitlines()[-1] == "makna mcp: cannot reach the Makna server"
+    assert str(port) not in result.stderr and "ExceptionGroup" not in result.stderr
+    assert time.monotonic() - started < 20
+
+
+def test_an_exception_group_is_reported_by_its_first_leaf_class() -> None:
+    group = ExceptionGroup("outer", [ExceptionGroup("inner", [ConnectionRefusedError("x")])])
+    assert type(bridge._leaf(group)) is ConnectionRefusedError
+    assert type(bridge._leaf(ValueError("y"))) is ValueError
+
+
+def test_a_malformed_answer_from_the_server_is_not_printed_on_standard_error() -> None:
+    marker = "SERVER_BODY_MARKER_zxq"
+    with StubServer(lambda _body: (200, "application/json", "{not json " + marker)) as stub:
+        result = run_bridge(stub.url, [INITIALIZE], wait=8)
+    # (The SDK answers the client's request with a JSON-RPC parse error on standard output; that
+    # is the protocol's own channel to the client. Standard error is the log.)
+    assert marker not in result.stderr
+    assert TOKEN not in result.stderr
+    for line in result.stderr.strip().splitlines():
+        assert line.startswith("makna mcp: ")  # only the bridge's own format, class names only
+
+
+def test_the_library_loggers_print_level_name_and_exception_class_only() -> None:
+    import io
+    import logging
+
+    saved = sys.stderr
+    sys.stderr = captured = io.StringIO()
+    try:
+        bridge.quiet_library_logs()
+        logger = logging.getLogger("mcp.client.streamable_http")
+        try:
+            raise ValueError("TEXT_MARKER")
+        except ValueError:
+            logger.exception("message %s", "ARG_MARKER")
+        logger.warning("plain WARN_MARKER")
+        logging.getLogger("httpx2").info("below the level")
+    finally:
+        sys.stderr = saved
+        for name in bridge.LIBRARY_LOGGERS:
+            logging.getLogger(name).handlers = []
+            logging.getLogger(name).propagate = True
+    lines = captured.getvalue().strip().splitlines()
+    assert lines == [
+        "makna mcp: ERROR mcp.client.streamable_http: ValueError",
+        "makna mcp: WARNING mcp.client.streamable_http",
+    ]
+
+
+# --- the bridge forwards every kind of message, both ways ---
+
+
+def test_every_message_goes_both_ways_requests_notifications_and_responses() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def answer(body: dict[str, Any]) -> tuple[int, str, str]:
+        seen.append(body)
+        method, ident = body.get("method"), body.get("id")
+        if method == "initialize":
+            result = {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "serverInfo": {"name": "stub", "version": "1"},
+            }
+            reply = {"jsonrpc": "2.0", "id": ident, "result": result}
+            return 200, "application/json", json.dumps(reply)
+        if method == "tools/list":
+            events = [
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/message",
+                    "params": {"level": "info", "data": "N"},
+                },
+                {"jsonrpc": "2.0", "id": "srv-1", "method": "ping"},
+                {"jsonrpc": "2.0", "id": ident, "result": {"tools": []}},
+            ]
+            return (
+                200,
+                "text/event-stream",
+                "".join(f"event: message\ndata: {json.dumps(e)}\n\n" for e in events),
+            )
+        return 202, "application/json", ""
+
+    lines = [
+        INITIALIZE,
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
+        '{"jsonrpc":"2.0","id":"srv-1","result":{}}',
+    ]
+    with StubServer(answer) as stub:
+        result = run_bridge(stub.url, lines, wait=60)
+    assert result.returncode == 0, result.stderr
+    # To the server: the request, the notification, and the client's own response.
+    assert [b.get("method") or ("response", b.get("id")) for b in seen] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+        ("response", "srv-1"),
+    ]
+    # To the client: the answer, the server's notification, and the server's own request.
+    printed = [json.loads(line) for line in result.stdout.splitlines()]
+    methods = [m.get("method") for m in printed]
+    assert "notifications/message" in methods and "ping" in methods
+    assert {"jsonrpc": "2.0", "id": 2, "result": {"tools": []}} in printed
+    assert any(m.get("id") == 1 and "result" in m for m in printed)
+
+
+class StubServer:
+    """A server for `/mcp` that records what is posted and answers as `answer` says."""
+
+    def __init__(self, answer: Callable[[Any], tuple[int, str, str]]) -> None:
+        self._answer = answer
+        self._httpd: ThreadingHTTPServer | None = None
+
+    def __enter__(self) -> StubServer:
+        answer = self._answer
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("content-length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                status, kind, text = answer(body)
+                data = text.encode()
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+        return self
+
+    @property
+    def url(self) -> str:
+        assert self._httpd is not None
+        return f"http://127.0.0.1:{self._httpd.server_address[1]}"
+
+    def __exit__(self, *exc: object) -> None:
+        assert self._httpd is not None
+        self._httpd.shutdown()
+        self._httpd.server_close()

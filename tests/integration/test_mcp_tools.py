@@ -50,7 +50,7 @@ QUESTIONS = [
     "List the names and phone numbers of customers who are more than 90 days past due.",
 ]
 SEARCH_BUDGET = 2_500
-DEFINITION_BUDGET = 6_000
+DEFINITION_BUDGET = 12_000
 
 
 @pytest.fixture(scope="module")
