@@ -71,6 +71,7 @@ def user_create(
         return 2
     try:
         password = _read_password(password_stdin)
+        accounts.check_password_policy(password)
     except (AccountError, EOFError) as error:
         print(f"makna user create: {error}", file=sys.stderr)
         return 1
