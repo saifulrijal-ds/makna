@@ -37,7 +37,7 @@ SETTINGS = {
 
 @pytest.fixture(params=sorted(SETTINGS))
 def settings(request: pytest.FixtureRequest) -> SearchSettings:
-    return SETTINGS[request.param]  # type: ignore[no-any-return]
+    return SETTINGS[request.param]
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def test_the_eval_compile_returns_the_sql_of_the_compile_service(world: tuple[En
     engine, users = world
     service = sup.services(engine)
     snapshot, _ = SnapshotCache(engine).current()
-    requests = [
+    requests: list[dict[str, Any]] = [
         {"metric": "npf_ratio"},
         {
             "metric": "disbursement_amount",
