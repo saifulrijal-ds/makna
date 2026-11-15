@@ -24,7 +24,7 @@ def untouchable_engine() -> Engine:
     engine = MagicMock(spec=Engine)
     engine.begin.side_effect = AssertionError("the database was used")
     engine.connect.side_effect = AssertionError("the database was used")
-    return engine  # type: ignore[no-any-return]
+    return engine
 
 
 # --- tokens ---
@@ -154,7 +154,7 @@ def test_teams_are_trimmed_lower_case_non_empty_and_unique() -> None:
 
 def test_create_user_validates_before_it_touches_the_database() -> None:
     engine = untouchable_engine()
-    good = ("a@demo.example", "A", "viewer", [], "long enough password")
+    good: tuple[object, ...] = ("a@demo.example", "A", "viewer", [], "long enough password")
     for index, bad in ((0, "nope"), (1, " "), (2, "root"), (3, [""]), (4, "short")):
         args = list(good)
         args[index] = bad
@@ -304,3 +304,11 @@ def test_the_scan_detects_a_value() -> None:
     assert demo_password_values('echo "MAKNA_DEMO_PASSWORD=$pw" >> f') == []
     assert demo_password_values("export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)") == []
     assert demo_password_values("export MAKNA_DEMO_PASSWORD=...") == []
+
+
+def test_a_refused_token_is_not_written_to_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    raw = "mkn_" + "B" * 42 + "!"
+    with caplog.at_level("DEBUG"), pytest.raises(AuthenticationError):
+        accounts.authenticate_token(untouchable_engine(), raw, "mcp")
+    assert "malformed" in caplog.text
+    assert raw not in caplog.text and accounts.hash_token(raw) not in caplog.text
