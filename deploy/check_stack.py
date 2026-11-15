@@ -4,8 +4,9 @@
 
 Proves WP-05 acceptance 2 (row counts), 4 (a second `init` changes nothing) and 6 (roles and
 the published port), and that `init` synced the sample catalog with no open reference issue
-(WP-06) and built the search index (WP-07). Passwords default to the development values of
-docker-compose.yml.
+(WP-06), built the search index (WP-07), and created the four demo users (WP-12B; set
+MAKNA_DEMO_PASSWORD, as CI does, to check them; without it the check expects none).
+Passwords default to the development values of docker-compose.yml.
 """
 
 from __future__ import annotations
@@ -21,8 +22,11 @@ from pathlib import Path
 
 import psycopg
 import pyarrow.parquet as pq
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError
 
 from data.generator.spec import TABLES
+from deploy.init import DEMO_USERS
 
 COMPOSE = ["docker", "compose", "-f", "deploy/docker-compose.yml"]
 HOST = "127.0.0.1"
@@ -103,6 +107,36 @@ def check_index_built() -> None:
     assert unembedded == (0,), unembedded
 
 
+def check_demo_users() -> None:
+    """WP-12B: `init` created the four demo users with Argon2id hashes, the expected roles and
+    teams, and the password in MAKNA_DEMO_PASSWORD. Without that variable it created none."""
+    password = os.environ.get("MAKNA_DEMO_PASSWORD")
+    with connect("makna", "makna") as connection:
+        rows = connection.execute(
+            "SELECT email, role, teams, is_active, password_hash FROM app_user ORDER BY email"
+        ).fetchall()
+    if not password:
+        assert rows == [], (
+            f"users exist although MAKNA_DEMO_PASSWORD is not set: {[r[0] for r in rows]}"
+        )
+        return
+    found = {row[0]: row for row in rows}
+    assert sorted(found) == sorted(d.email for d in DEMO_USERS), sorted(found)
+    hasher = PasswordHasher()
+    for demo in DEMO_USERS:
+        _, role, teams, active, password_hash = found[demo.email]
+        assert role == demo.role, f"{demo.email}: role {role}"
+        assert tuple(teams) == demo.teams, f"{demo.email}: teams {teams}"
+        assert active is True, f"{demo.email}: not active"
+        assert password_hash.startswith("$argon2id$"), f"{demo.email}: not an Argon2id hash"
+        try:
+            hasher.verify(password_hash, password)
+        except VerificationError:
+            raise AssertionError(
+                f"{demo.email}: the hash does not match the demo password"
+            ) from None
+
+
 def snapshot() -> dict[str, object]:
     """Everything a second `init` run could change: rows, load markers, tuple counters."""
     state: dict[str, object] = {}
@@ -136,6 +170,8 @@ def check_second_init_changes_nothing() -> None:
         assert f"init: {step}: unchanged" in output, (
             f"step {step} did not report unchanged:\n{output}"
         )
+    expected = "unchanged" if os.environ.get("MAKNA_DEMO_PASSWORD") else "skipped"
+    assert f"init: demo-users: {expected}" in output, f"demo-users did not report {expected}"
     time.sleep(2)
     after = snapshot()
     assert before == after, f"state changed:\nbefore={before}\nafter={after}"
@@ -220,6 +256,7 @@ CHECKS: list[Callable[[], None]] = [
     check_published_ports,
     check_catalog_synced,
     check_index_built,
+    check_demo_users,
     check_second_init_changes_nothing,
 ]
 

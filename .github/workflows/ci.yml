@@ -68,6 +68,11 @@ jobs:
           key=$(openssl rand -hex 32)
           echo "::add-mask::$key"
           echo "MAKNA_SECRET_KEY=$key" >> "$GITHUB_ENV"
+      - name: Generate a throwaway password for the demo users
+        run: |
+          pw=$(openssl rand -hex 16)
+          echo "::add-mask::$pw"
+          echo "MAKNA_DEMO_PASSWORD=$pw" >> "$GITHUB_ENV"
       - name: Start the stack (acceptance 1)
         run: docker compose -f deploy/docker-compose.yml up -d --wait --wait-timeout 300
       - name: Check row counts, a second init, roles and ports (acceptance 2, 4, 6)

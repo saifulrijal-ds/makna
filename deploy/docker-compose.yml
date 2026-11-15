@@ -36,6 +36,8 @@ services:
     environment:
       MAKNA_DATABASE_URL: postgresql://makna:${MAKNA_DB_PASSWORD:-makna_dev_makna}@postgres:5432/makna
       MAKNA_LENDING_LOADER_URL: postgresql://lending_loader:${MAKNA_LENDING_LOADER_PASSWORD:-makna_dev_loader}@postgres:5432/lending
+      # No default: without it, init creates no demo users (deploy/README.md).
+      MAKNA_DEMO_PASSWORD: ${MAKNA_DEMO_PASSWORD:-}
     volumes:
       - generated:/app/data/generated
     depends_on:

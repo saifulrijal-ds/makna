@@ -12,6 +12,7 @@ from makna.catalog.base import ConnectorError
 from makna.catalog.file import FileConnector
 from makna.catalog.references import load_view, open_issues
 from makna.catalog.sync import sync_catalog
+from makna.cli import accounts as account_commands
 from makna.config import (
     ConfigError,
     load_engine_runtime,
@@ -30,6 +31,7 @@ from makna.model.definitions import Entity, GlossaryTerm
 from makna.model.search import DOCUMENT_KINDS
 from makna.search.embedding import EmbeddingError, make_provider
 from makna.search.hybrid import ROLES, HybridSearch, SearchError
+from makna.services.caller import ROLES as USER_ROLES
 from makna.services.derive import make_derive
 from makna.services.examples import check_example_requests
 
@@ -160,6 +162,90 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-deprecated", action="store_true", help="also return deprecated objects"
     )
     search.add_argument("--limit", type=int, default=5, help="number of hits (default: 5)")
+    user = commands.add_parser(
+        "user",
+        help="create, list, and deactivate users (the administrator's path)",
+        description=(
+            "User commands. They need MAKNA_DATABASE_URL and act as the operator: whoever can "
+            "run them can already change the database, so they build no caller and are not "
+            "limited by roles. Users are never deleted, because the logs refer to them; "
+            "deactivate a user instead."
+        ),
+    )
+    user_commands = user.add_subparsers(dest="user_command", metavar="<command>")
+    user_create = user_commands.add_parser(
+        "create",
+        help="create a user; the password is asked for twice, or read from standard input",
+        description=(
+            "Create a user. The password (at least 12 characters) is asked for twice without "
+            "echo, or with --password-stdin read from the first line of standard input. It "
+            "cannot be given as an argument. Prints the new user's id, never the password. "
+            "Exits 0 on success, 1 if the input cannot be used or the database fails, 2 on "
+            "bad usage or a missing setting."
+        ),
+        allow_abbrev=False,
+    )
+    user_create.add_argument("--email", required=True, help="the user's email (the sign-in name)")
+    user_create.add_argument("--name", required=True, help="the display name")
+    user_create.add_argument("--role", required=True, choices=USER_ROLES, help="the user's role")
+    user_create.add_argument(
+        "--team", action="append", default=[], help="a team of the user (repeatable)"
+    )
+    user_create.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read the password from the first line of standard input (for scripts)",
+    )
+    # Accepted only to refuse it with an explanation, and kept out of the help.
+    user_create.add_argument("--password", help=argparse.SUPPRESS)
+    user_commands.add_parser(
+        "list",
+        help="list the users (never their password hashes)",
+        description="Print one line per user: id, email, role, teams, active or inactive.",
+    )
+    user_deactivate = user_commands.add_parser(
+        "deactivate",
+        help="stop a user's sign-in and all of the user's tokens",
+        description=(
+            "Make a user inactive. Sign-in and every token of the user stop working at once. "
+            "Doing it again changes nothing."
+        ),
+    )
+    user_deactivate.add_argument("--email", required=True, help="the user's email")
+    token = commands.add_parser(
+        "token",
+        help="create, list, and revoke API tokens (the administrator's path)",
+        description=(
+            "API token commands. They need MAKNA_DATABASE_URL and act as the operator, like "
+            "`makna user`. A token acts with viewer permissions only, whatever its user's role. "
+            "Tokens are never deleted, because the tool-call log refers to them; revoke them."
+        ),
+    )
+    token_commands = token.add_subparsers(dest="token_command", metavar="<command>")
+    token_create = token_commands.add_parser(
+        "create",
+        help="create a token for a user; it is shown once",
+        description=(
+            "Create an API token for an active user and print it once. Only its SHA-256 hash "
+            "is stored, so it cannot be shown again."
+        ),
+    )
+    token_create.add_argument("--user", required=True, help="email of the token's user")
+    token_create.add_argument("--name", required=True, help="what the token is for")
+    token_list = token_commands.add_parser(
+        "list",
+        help="list tokens (never the token or its hash)",
+        description="Print one line per token: id, name, user, created, last used, revoked.",
+    )
+    token_list.add_argument("--user", help="only the tokens of this user (email)")
+    token_revoke = token_commands.add_parser(
+        "revoke",
+        help="revoke a token",
+        description=(
+            "Revoke a token by id (see `makna token list`). Doing it again changes nothing."
+        ),
+    )
+    token_revoke.add_argument("--id", required=True, type=int, dest="token_id", help="token id")
     return parser
 
 
@@ -446,6 +532,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.index_command == "build":
             return _index_build(args.definitions)
         print("makna index: choose build", file=sys.stderr)
+        return 2
+    if args.command == "user":
+        if args.user_command == "create":
+            return account_commands.user_create(
+                args.email,
+                args.name,
+                args.role,
+                args.team,
+                args.password_stdin,
+                args.password is not None,
+            )
+        if args.user_command == "list":
+            return account_commands.user_list()
+        if args.user_command == "deactivate":
+            return account_commands.user_deactivate(args.email)
+        print("makna user: choose create, list or deactivate", file=sys.stderr)
+        return 2
+    if args.command == "token":
+        if args.token_command == "create":
+            return account_commands.token_create(args.user, args.name)
+        if args.token_command == "list":
+            return account_commands.token_list(args.user)
+        if args.token_command == "revoke":
+            return account_commands.token_revoke(args.token_id)
+        print("makna token: choose create, list or revoke", file=sys.stderr)
         return 2
     if args.command == "search":
         return _search(
