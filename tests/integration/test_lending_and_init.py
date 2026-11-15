@@ -108,6 +108,8 @@ def test_init_twice_changes_nothing(
         "init: migrate: unchanged",
         "init: sync-catalog: unchanged",
         "init: build-index: unchanged",
+        # No MAKNA_DEMO_PASSWORD in this context: the step skips and succeeds (WP-12B).
+        "init: demo-users: skipped (MAKNA_DEMO_PASSWORD is not set, so no demo user was created)",
     ]
     # The second run wrote no `sync_run` row and opened no reference issue.
     with psycopg.connect(plain(empty_database)) as connection:

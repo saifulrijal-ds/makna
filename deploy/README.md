@@ -5,6 +5,7 @@ needs Docker with Compose v2 and one environment variable, with no default:
 
 ```
 export MAKNA_SECRET_KEY=$(openssl rand -hex 32)
+export MAKNA_DEMO_PASSWORD=...             # optional, at least 12 characters: see "Demo users"
 docker compose -f deploy/docker-compose.yml up -d --wait
 curl http://127.0.0.1:8000/healthz        # {"status":"ok"}
 uv run python -m deploy.check_stack       # the stack checks CI runs
@@ -54,13 +55,26 @@ It stops at the first failing step and exits 1. Every step is idempotent: a seco
 2. `load-lending`: creates `lending.core` tables from `data/generator/spec.py` and loads the files (`data/lending_loader.py`). A table is reloaded only when its file changed (its load marker is the file's SHA-256, kept as the table comment).
 3. `migrate`: `alembic upgrade head` on the `makna` database.
 4. `sync-catalog`: syncs `data/catalog/lending.catalog.yaml` into the catalog tables and runs the reference check against `semantic/definitions`. When the file has not changed it writes nothing (no `sync_run` row), so a second run prints `unchanged`.
-
 5. `build-index`: indexes `semantic/definitions` and the synced catalog into `semantic_object` and `search_document`, with the provider from `config/makna.toml` / `MAKNA_EMBEDDING_PROVIDER` (default `fastembed`, whose model the image carries). It writes only differences, so a second run prints `unchanged` and writes nothing. If the model differs from the one that built the index, every document is embedded again.
+6. `demo-users`: creates four demo users, one per role (see "Demo users" below). Without `MAKNA_DEMO_PASSWORD` it creates nothing and prints `skipped`. A user whose email already exists is left exactly as it is, and nothing is written for it, so a second run prints `unchanged`.
 
 Existing Parquet files are kept whatever `--seed` or `--scale` is passed (a file that cannot be read is regenerated); to change the data, delete the `generated` volume and the `pgdata` volume (`down -v`).
 
 Later work packages append their step to `STEPS`. `init` lives here and not in `src/makna`
 because it uses the sample-data code in `data/`, which the installed product never imports.
+
+## Demo users
+
+For the development stack only. When `MAKNA_DEMO_PASSWORD` is set (at least 12 characters), `init` creates these users, all with that password (stored as an Argon2id hash, never in clear):
+
+| Email | Role | Teams |
+|---|---|---|
+| `viewer@demo.example` | viewer | `credit-risk` |
+| `curator@demo.example` | curator | `credit-risk` |
+| `approver@demo.example` | approver | `data-governance` |
+| `admin@demo.example` | admin | none |
+
+There is no default password in any committed file: choose one when you start the stack, for example `export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)`. Without it, `init` still succeeds and creates no demo user. A later run with another password does not change existing users; to change one, use `docker compose down -v` or the `makna user` commands. Create real users and API tokens with `makna user create` and `makna token create` (they need `MAKNA_DATABASE_URL`).
 
 ## The embedding model and the offline check
 
