@@ -147,7 +147,7 @@ skip; the CI `stack` job also sets `MAKNA_REQUIRE_ENGINE_DATABASE=1`, which turn
 into a failure. The tier now holds the golden reference SQL check (`evals/golden/`, WP-14):
 every file in `evals/golden/reference_sql/` runs on the sample data and must return the
 committed CSV in `evals/golden/expected/`. After a deliberate change to the generator or a
-definition, rewrite the CSVs with `uv run python -m evals.golden.freeze` (it needs the same
+definition, rewrite the CSVs with `uv run python -m evals freeze` (it needs the same
 variable) and review the diff.
 
 ### The engine connector and the compiled SQL (WP-11)

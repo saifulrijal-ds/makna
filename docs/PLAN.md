@@ -279,15 +279,15 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 ### WP-15 Eval runner: retrieval and compile
 
 - **Read**: `docs/EVALS.md` sections 3, 4, 6.
-- **Build**: `evals/` runner with the `makna-eval` command (`all`, `retrieval`, `compile`, `freeze`), reports in Markdown and JSON, gates in `evals/gates.toml`, the CI wiring, and one tuning pass of the search weights and confidence thresholds with the real default model.
+- **Build**: `evals/` runner with the `makna-eval` command (`all`, `retrieval`, `compile`, `freeze`; run as `uv run python -m evals <command>`, see `docs/EVALS.md` section 6), reports in Markdown and JSON, gates in `evals/gates.toml`, the CI wiring, and one tuning pass of the search weights and confidence thresholds with the real default model.
 - **Acceptance**
-  1. `uv run makna-eval all` on the dev stack writes `report.md` and `report.json` containing every score in the tables of sections 3 and 4, including keyword-only, vector-only, and fused retrieval scores and the per-language split.
+  1. `uv run python -m evals all` on the dev stack writes `report.md` and `report.json` containing every score in the tables of sections 3 and 4, including keyword-only, vector-only, and fused retrieval scores and the per-language split.
   2. The exit code is 1 when a gate fails: a test lowers a gate fixture and asserts the failure, and breaks one reference CSV and asserts the compile gate fails naming the question.
   3. The result comparison function has unit tests for: row order differences (equal), numeric tolerance (equal inside, different outside), an extra column in the compiled result (equal), a missing row (different).
   4. Compile part B covers every approved metric and every available non-personal dimension (assert the count of executed requests equals the count derived from the index).
   5. On the dev stack with the real default embedding model: recall at 3 is at least 0.90 and compile correctness is 100%. If recall is below the gate after tuning, do not lower the gate: report the failing questions and the per-leg scores in the pull request and mark the package `blocked` for the owner's decision on the embedding model (DR-9).
   6. Manual: the tuned weights and thresholds are committed in `config/makna.toml`, and the pull request shows the scores before and after tuning.
-  7. The CI stack job runs `makna-eval all` and uploads the report.
+  7. The CI stack job runs `python -m evals all` and uploads the report.
 
 **Fable review 1 (core complete)** follows WP-15.
 

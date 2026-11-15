@@ -119,6 +119,8 @@ Questions to add early in the remaining set: "Berapa hapus buku tahun lalu?" (`n
 
 **Run.** For each question, call the search service with the question text, kinds `metric` and `glossary_term`, approved only, limit 10. A glossary term in the results counts as its `related` metrics, placed at the term's rank. Record the ranked list of distinct metrics.
 
+*As built (WP-15).* The runner calls the code the service calls, `HybridSearch` with the configured search settings and embedding provider, as a viewer would, and not `Services.search`, which writes a `tool_call_log` row per call; an integration test checks that both return the same ranked ids. Keyword only and vector only are the same search with the other leg's weight set to 0 (the statement keeps only documents with a fused score above zero, so what is left is that leg's candidates, in that leg's order multiplied by the status and kind weights; a test shows that with flat kind weights the order is exactly the leg's own rank).
+
 **Scores.**
 
 | Score | Over which questions | Definition | Gate |
@@ -134,6 +136,8 @@ The report also shows recall at 3 and mean reciprocal rank for keyword only, vec
 
 **Latency** (NFR-2). The same run records the time of each search call. The 95th percentile must be under 500 ms on the dev stack with the default embedding model.
 
+*As built.* The fused search of every question is timed in three rounds, 153 calls for 51 questions. The first search of the run loads the embedding model; it is made before the timed rounds, reported as `warmup_ms`, and left out of the percentile, so the figure describes a search on a running server. `deploy/check_search.py` keeps the other reading (its 200 searches include the first).
+
 ## 4. Compile correctness eval (EVL-3)
 
 **Part A: golden requests.** For each `answer` question and each candidate of each `clarify` question: compile `expected.request` for the `postgres` dialect, run it on the sample database, and compare with the expected CSV.
@@ -141,6 +145,8 @@ The report also shows recall at 3 and mean reciprocal rank for keyword only, vec
 **Part B: every approved metric.** For each approved metric, with no golden question needed: compile and run (1) the metric with no dimensions over 2026-01-01 to 2026-07-01; (2) the metric at its default grain over the same range; (3) the metric by each available non-personal dimension, one at a time, at the latest month. Each must run without error and return at least one row. This backs the brief's "every compiled query for an approved metric runs on the engine".
 
 **Part C: refusals.** For each `no_metric` question with reason `dimension_not_available` or `not_approved`, and each `refuse` question that names a request: compiling must fail with the expected error code.
+
+*As built (WP-15).* Every request goes through `makna.services.compile_on_snapshot`, the function `compile_query` calls, on the approved snapshot read from the database; the SQL runs on the sample database through `MAKNA_ENGINE_URL` with the read-only role, in a read-only connection with the configured statement timeout. A failing statement is reported with its question id, SQLSTATE and the class of the error, never the engine's message (`docs/notes/engine-error-text-can-carry-a-personal-value.md`); `--verbose` sends that text, and the values of a mismatch, to standard error. Part B takes the metrics and their available non-personal dimensions from the index (`semantic_object.derived`, stored under the running policy; a run refuses to start when the index was built under another policy) and makes one request per metric with no dimension, one per metric that has a default grain, and one per available dimension, so the count of requests follows the index. For part C, `not_approved` is the one reason where the code differs from the planner's: the evals compile as an agent token, which sees the approved snapshot only, so a draft metric is `UNKNOWN_METRIC` to it (a curator would get `NOT_APPROVED`, ARCHITECTURE 7.7). Part C expects `UNKNOWN_METRIC` there and checks in the index that the metric really is a draft or in review.
 
 **Comparing two results.** Take the `answer_columns`. Both results must have the same number of rows. Sort both by the non-metric columns. Text and date cells must be equal. Numeric cells must agree within a relative tolerance of 1e-6 (absolute 0.005 for currency). Column order and extra columns in the compiled result (such as the inputs of a ratio) are ignored.
 
@@ -209,17 +215,42 @@ Checked on every run, whatever the outcome: **personal data exposure**. The harn
 
 ## 6. Running the evals (EVL-5)
 
-One command with the dev stack up:
+The command is `makna-eval`, run as `uv run python -m evals <command>` from the repository root. (A console script named `makna-eval` would have to import `evals`, which lives outside the installed package, as `data/` and `deploy/` do; the installed `makna` package must never import it. `python -m evals` needs no packaging and works the same locally, in CI, and in the app image. PLAN and the requirements say `makna-eval` for the command.)
+
+With the dev stack up (or the local databases of `CLAUDE.md`, with `MAKNA_DATABASE_URL`, `MAKNA_ENGINE_URL`, and the real model in `MAKNA_EMBEDDING_CACHE_DIR`):
 
 ```
-uv run makna-eval all                # retrieval + compile; writes evals/reports/<date>/report.md and report.json; exit code 1 if a gate fails
-uv run makna-eval retrieval
-uv run makna-eval compile
-uv run makna-eval agent --quick --run-name <name>   # 20 questions, 1 run per arm; needs GEMINI_API_KEY; not part of "all"
-uv run makna-eval agent --run-name <name>           # full run; rerun the same command to resume after a stop
-uv run makna-eval freeze             # re-run reference SQL and rewrite evals/golden/expected/ (after a deliberate data or definition change)
+uv run python -m evals all                # retrieval + compile; writes evals/reports/<date>/report.md and report.json; exit code 1 if a gate fails
+uv run python -m evals retrieval
+uv run python -m evals compile
+uv run python -m evals freeze             # re-run reference SQL and rewrite evals/golden/expected/ (after a deliberate data or definition change)
+uv run python -m evals agent --quick --run-name <name>   # WP-22B: 20 questions, 1 run per arm; needs GEMINI_API_KEY; not part of "all"
+uv run python -m evals agent --run-name <name>           # WP-22B: full run; rerun the same command to resume after a stop
 ```
 
-In CI: `makna-eval all` runs on every pull request in the job that starts the dev stack. It uses the real default embedding model (cached between runs), because retrieval scores with the test stand-in would mean nothing. `makna-eval agent` runs in CI only on manual trigger, in quick mode, and only if the owner has configured `GEMINI_API_KEY` as a CI secret; without it the job is skipped and says so. The full run is started by hand with the key in the environment (it can take days under the rate limit) and its report is committed. This is the one place where an outside service is used, and it is outside the product (NFR-3 is about the running platform).
+Options of `all`, `retrieval` and `compile`: `--out DIR` (default `evals/reports/<date>`, which git ignores), `--gates FILE` (default `evals/gates.toml`), `--verbose` (engine error text and differing values to standard error; both can hold personal data, so never in a shared log). Exit codes: 0 every gate passed, 1 a gate failed (each failing gate, and for compile each failing request, is named), 2 the evals could not run. `report.json` is the source: the settings used (search weights, confidence thresholds, embedding provider and model, governance mode, index state, git commit), every score, each question's ranking, and every compile item; `report.md` is rendered from it.
 
-Gates live in `evals/gates.toml` so that changing a threshold is a reviewed change.
+In CI: `makna-eval all` runs on every pull request in the job that starts the dev stack, **inside the app container**, because that container already holds the real default embedding model (baked into the image, no download), the index `init` built, and the settings; the image therefore contains `evals/`. The report directory is copied out and uploaded as the build artifact `eval-report` (also when a gate fails), and the job fails at its last step when a gate failed, so the checks that follow the evals still run. `makna-eval agent` runs in CI only on manual trigger, in quick mode, and only if the owner has configured `GEMINI_API_KEY` as a CI secret; without it the job is skipped and says so. The full run is started by hand with the key in the environment (it can take days under the rate limit) and its report is committed. This is the one place where an outside service is used, and it is outside the product (NFR-3 is about the running platform).
+
+Gates live in `evals/gates.toml` so that changing a threshold is a reviewed change. The runner refuses a gates file that lacks a gate or holds an unknown one.
+
+## 7. Tuning (WP-15)
+
+One tuning pass, 2026-11-15, with `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` on the 51 golden questions that also gate (so the setting is chosen to be simple and within noise of the best, and one question is 0.024 of recall). Only `config/makna.toml` changed; no definition, synonym, question, search SQL or query processing.
+
+| | Before (1.0 / 1.0) | After (4.0 / 0.25) |
+|---|---|---|
+| Recall at 3, fused | 0.857 | 0.976 |
+| Recall at 3, keyword only / vector only | 0.976 / 0.810 | 0.976 / 0.810 |
+| Mean reciprocal rank, fused | 0.828 | 0.899 |
+| Recall at 1, fused | 0.750 | 0.833 |
+| False abstention rate | 0.083 | 0.028 |
+| Abstention recall (3 questions) | 0.333 | 0.333 |
+| English minus Indonesian recall at 3 | 0.357 | -0.038 |
+| Latency p95 (indicative, local; 23 to 39 ms over three runs) | 26 ms | 23 to 39 ms |
+
+The grid: `w_vector` of 0, 0.1, 0.25, 0.5, 0.75, 1 with `w_keyword` 1 and `candidates` 10, 20, 30, 50; then `w_keyword` of 1, 1.5, 2, 3, 4 with `w_vector` 0.25 and 0.5 and `candidates` 30 and 50; then `low` from 0.1 to 0.4 against `low_cosine` unset and 0.35 to 0.55 for the chosen weights. The vector list alone is weak (recall at 3 0.810, and 0.571 on the Indonesian questions), so every step that lowered its share raised the fused score until it reached the keyword list's own 0.976 (a weight ratio of 1/8 or less). The chosen setting keeps the vector list at 1/16 of the keyword list rather than 0, so that a question with no keyword hit still gets ranked results and close keyword ranks are broken by meaning. Recall at 3 is within one question of the best for `candidates` 30 and 50 at that ratio, so `candidates` stays 30. The confidence thresholds stay `high` 0.6, `low` 0.3: at 0.3 the false abstention rate is 0.028 (one question, G32), inside the gate; `low` 0.2 or lower removes it and 0.35 breaks the gate (0.056) while lifting abstention recall to 0.67, and moving the cut that way tunes to three questions. `low_cosine` stays unset because the top cosine of the three questions with no definition (0.43 to 0.51) lies inside that of the answer questions (0.27 to 0.65). Abstention recall is 1 of 3 (G18); G47 and G48 are near misses ("average days past due", a metric one word away from `par30_ratio`), which the band cannot tell from a valid question, so the caller's reading of the descriptions remains the safeguard (`docs/notes/search-scores-cannot-say-no-match.md`). The target of 0.6 that section 3 left to this run is not set: three questions cannot support it.
+
+What this does not settle: the gate passes because the keyword list carries the ranking. The vector leg of this model adds nothing on the golden set that the keyword leg lacks, and it is weak in Indonesian; the owner's decision on the embedding model (DR-9) is still open and a stronger model would let the vector weight rise again. Re-run the grid after any change of the model, the definitions, or the questions.
+
+One existing test pinned a ranking that the tuned weights change. `tests/integration/test_index_cli.py::test_search_options_reach_the_search` checks that `makna search "NPL ratio retired" --include-deprecated` lists the deprecated `metric:npl_ratio`. That metric is first in both lists, but its score is multiplied by the deprecated status weight 0.5, and under a keyword-led fusion every approved metric that matches "ratio" outscores half of the best score: it lands 11th (9th with the starting weights). The test passes at a vector weight of at least half the keyword weight, and at that ratio the English-minus-Indonesian gate (0.143) and the false abstention gate (0.056) fail. The test's subject is that the flag reaches the search, not the rank, so its limit was widened from 10 to 20 (it was already on the edge in WP-04B). That a deprecated hit the caller asked for sorts below every matching approved hit is a design question for the first milestone review, together with the embedding model (DR-9).

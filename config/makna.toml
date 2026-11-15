@@ -8,10 +8,13 @@ dialect = "postgres"
 embedding_provider = "fastembed"
 
 # Search fusion (ARCHITECTURE 8.2): score = (w_keyword / (60 + keyword rank) +
-# w_vector / (60 + vector rank)) * status weight * kind weight. Tuned on the golden set (WP-15).
+# w_vector / (60 + vector rank)) * status weight * kind weight. Tuned on the golden set with the
+# default embedding model in WP-15 (see "Tuning (WP-15)" in docs/EVALS.md): the keyword list is
+# the stronger one, so the vector list weighs 1/16 of it. It still ranks what has no keyword hit
+# and breaks ties between close keyword ranks.
 [search]
-w_keyword = 1.0
-w_vector = 1.0
+w_keyword = 4.0
+w_vector = 0.25
 candidates = 30
 
 [search.status_weights]
@@ -29,7 +32,10 @@ rule = 0.8
 domain = 0.7
 column = 0.6
 
-# Confidence band (ARCHITECTURE 8.3). low_cosine is unset until WP-15 has measured the model.
+# Confidence band (ARCHITECTURE 8.3). low_cosine stays unset: with the default model the top
+# cosine of the three golden questions that have no definition (0.43 to 0.51) lies inside that of
+# the answer questions (0.27 to 0.65), so it cannot separate them (WP-15, docs/EVALS.md
+# "Tuning (WP-15)").
 [search.confidence]
 high = 0.6
 low = 0.3

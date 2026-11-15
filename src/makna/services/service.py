@@ -347,9 +347,7 @@ class Services:
                 permissions.require(caller, permissions.Permission.COMPILE)
                 # D-30 and the covered tables come from the snapshot the compile uses.
                 snapshot, _ = self._cache.current()
-                if not snapshot.catalog_synced:
-                    # No catalog, so the levels the catalog derives are unknown: keep no value.
-                    raise ServiceError(ServiceErrorCode.CATALOG_NOT_SYNCED, NOT_SYNCED_MESSAGE)
+                require_catalog(snapshot)
                 call.request = CallLog.compile_request(parsed, snapshot.model)
                 response = self._compile(caller, snapshot, parsed)
             except QueryError as error:
@@ -383,27 +381,9 @@ class Services:
     def _compile(
         self, caller: Caller, snapshot: Snapshot, request: QueryRequest
     ) -> CompileResponse:
-        model = snapshot.model
-        if request.metric not in model.metrics:
+        if request.metric not in snapshot.model.metrics:
             self._refuse_unapproved(caller, request.metric)
-        else:
-            _refuse_broken_metric(model, snapshot, request.metric)
-        try:
-            plan = plan_request(model, request, enforce_status=True, governance=self._policy)
-            missing = sorted(_plan_tables(model, plan) - snapshot.tables)
-            if missing:
-                # D-30 per table: the catalog levels of a table the plan reads must be there.
-                raise ServiceError(
-                    ServiceErrorCode.CATALOG_NOT_SYNCED,
-                    "The catalog has no data about the table(s) this query reads "
-                    f"({', '.join(missing)}), so Makna cannot check them: column names and "
-                    "personal-data tags come only from the catalog. Ask an administrator to "
-                    "run `makna catalog sync` with an export that covers them.",
-                    {"tables": missing},
-                )
-            return compile_plan(model, plan, self._dialect)
-        except GovernanceError as error:
-            raise _personal_column_error(error, model, request.metric) from None
+        return compile_on_snapshot(snapshot, request, policy=self._policy, dialect=self._dialect)
 
     def _refuse_unapproved(self, caller: Caller, metric: str) -> None:
         """A curator who asks for a draft learns it is not approved; everyone else gets the
@@ -419,6 +399,52 @@ class Services:
                 "is approved. Choose an approved metric.",
                 {"metric": metric, "status": row.status},
             )
+
+
+# --- the compile path shared with the evals ---
+
+
+def require_catalog(snapshot: Snapshot) -> None:
+    """D-30: no synced catalog, no compiling. Raises `CATALOG_NOT_SYNCED`."""
+    if not snapshot.catalog_synced:
+        # No catalog, so the levels the catalog derives are unknown: keep no value.
+        raise ServiceError(ServiceErrorCode.CATALOG_NOT_SYNCED, NOT_SYNCED_MESSAGE)
+
+
+def compile_on_snapshot(
+    snapshot: Snapshot,
+    request: QueryRequest,
+    *,
+    policy: GovernancePolicy,
+    dialect: Literal["postgres", "duckdb"],
+) -> CompileResponse:
+    """Plan and compile `request` against the approved snapshot: the part of `compile_query`
+    that follows its input checks, permission check, and catalog check, and precedes its log row.
+
+    It is the one compile path of the product. `compile_query` calls it, and so do the compile
+    evals (`evals/`), which log nothing and so must not go through the service. Raises
+    `QueryError`, or `ServiceError` for `CATALOG_NOT_SYNCED` (a table the plan reads is not in
+    the catalog, D-30) and `INTERNAL`.
+    """
+    model = snapshot.model
+    if request.metric in model.metrics:
+        _refuse_broken_metric(model, snapshot, request.metric)
+    try:
+        plan = plan_request(model, request, enforce_status=True, governance=policy)
+        missing = sorted(_plan_tables(model, plan) - snapshot.tables)
+        if missing:
+            # D-30 per table: the catalog levels of a table the plan reads must be there.
+            raise ServiceError(
+                ServiceErrorCode.CATALOG_NOT_SYNCED,
+                "The catalog has no data about the table(s) this query reads "
+                f"({', '.join(missing)}), so Makna cannot check them: column names and "
+                "personal-data tags come only from the catalog. Ask an administrator to "
+                "run `makna catalog sync` with an export that covers them.",
+                {"tables": missing},
+            )
+        return compile_plan(model, plan, dialect)
+    except GovernanceError as error:
+        raise _personal_column_error(error, model, request.metric) from None
 
 
 # --- helpers ---

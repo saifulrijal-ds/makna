@@ -73,3 +73,31 @@ def test_the_latency_budget_is_enforced(
     monkeypatch.setattr(check_search, "P95_BUDGET_MS", 0.0)
     assert check_search.main([]) == 1
     assert "FAIL check_latency" in capsys.readouterr().out
+
+
+def test_the_index_check_keeps_the_available_dimensions_of_the_index(
+    stand_in_index: None, empty_database: URL
+) -> None:
+    """The check re-runs the index build; with no derive hook it would drop the facts that the
+    compile evals read (part B), and every later step of the stack job would find none."""
+    from sqlalchemy import create_engine, text
+
+    from makna.definitions.loader import definition_objects, load_definitions
+    from makna.index import indexer
+    from makna.model.governance import STRICT
+    from makna.services.derive import make_derive
+    from tests.catalog_support import DEFINITIONS
+
+    engine = create_engine(empty_database)
+    count = text("SELECT count(*) FROM semantic_object WHERE derived ? 'dimensions'")
+    try:
+        objects = definition_objects(load_definitions(DEFINITIONS))
+        indexer.build(engine, StandIn(), objects, derive=make_derive(STRICT))
+        with engine.connect() as connection:
+            before = connection.execute(count).scalar_one()
+        assert before > 0
+        check_search.check_index_builds_with_the_real_model()
+        with engine.connect() as connection:
+            assert connection.execute(count).scalar_one() == before
+    finally:
+        engine.dispose()

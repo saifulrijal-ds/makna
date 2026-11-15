@@ -79,8 +79,11 @@ def test_search_options_reach_the_search(
         capsys, "search", "national id", "--kind", "column", "--role", "curator", "--limit", "10"
     )
     assert code == 0 and "customers.national_id" in out
+    # The flag must reach the search: a deprecated object is listed at all. Its rank is not this
+    # test's subject. The status weight (0.5) puts a deprecated hit below the approved hits that
+    # match, and with the tuned weights (WP-15) more than 10 approved hits match here.
     code, out, _ = run(
-        capsys, "search", "NPL ratio retired", "--include-deprecated", "--limit", "10"
+        capsys, "search", "NPL ratio retired", "--include-deprecated", "--limit", "20"
     )
     assert code == 0 and "metric:npl_ratio  [deprecated]" in out
 

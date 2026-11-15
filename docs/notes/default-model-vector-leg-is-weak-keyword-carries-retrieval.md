@@ -1,0 +1,8 @@
+With the default embedding model the vector list is the weak leg (recall at 3 of 0.81 alone, 0.57 on Indonesian questions), so the tuned fusion lets the keyword list lead and weighs the vector list at 1/16.
+
+Measured in WP-15 (2026-11-15, `paraphrase-multilingual-MiniLM-L12-v2`, 51 golden questions, `docs/EVALS.md` section 7). Starting weights 1.0 and 1.0 gave fused recall at 3 of 0.857, below keyword alone (0.976): fusing a weak list with a strong one lowers the strong one, as `docs/notes/search-scores-cannot-say-no-match.md` warned.
+
+- Only the ratio of the two weights matters (rank fusion). Every step toward the keyword list raised the score until it equalled the keyword list's; the chosen `w_keyword = 4.0`, `w_vector = 0.25` keeps the vector list for questions with no keyword hit and for ties.
+- The top cosine does not separate "no definition" (0.43 to 0.51) from a valid question (0.27 to 0.65), so `low_cosine` stays unset and abstention recall is 1 of 3.
+- The gate passes because the keyword list carries it, and the 51 questions both tune and gate. Re-run the grid (`docs/EVALS.md` section 7) after any change of model, definitions, or questions; a stronger multilingual model (DR-9) is where the vector weight could rise again.
+- Side effect: a deprecated metric that the caller asks for (`include_deprecated`) scores half (status weight 0.5) of a keyword-led fusion, so an exact-name match can fall below the first 10. `test_search_options_reach_the_search` failed at a vector to keyword weight ratio under about 0.5 and now uses `--limit 20`, because its subject is the flag, not the rank. Whether an explicitly requested deprecated hit should sort below every approved one is open for the milestone review.
