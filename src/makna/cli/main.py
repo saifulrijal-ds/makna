@@ -72,9 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Forward MCP messages between standard input and output and the /mcp endpoint of "
             "a Makna server, for MCP clients that can only start a local process. Reads only "
             "MAKNA_URL (the base URL of the application, for example http://localhost:8000; "
-            "/mcp is appended) and MAKNA_TOKEN (an API token; there is no option for it, "
+            "/mcp is appended; http:// only for localhost, https:// otherwise, and no user "
+            "name in the URL) and MAKNA_TOKEN (an API token; there is no option for it, "
             "because an option shows in the process list). Needs no database setting. "
-            "Exits 2 when a variable is missing, 1 when the server refuses the token."
+            "Exits 2 when a variable is missing or unusable, 1 when the server refuses the "
+            "token or cannot be reached."
         ),
     )
     catalog = commands.add_parser(

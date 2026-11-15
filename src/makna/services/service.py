@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 MAX_QUERY_LENGTH = 500
 MAX_LIMIT = 10
 DEFAULT_LIMIT = 5
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 SEARCH_KINDS = ("metric", "glossary_term", "entity", "dimension", "column")
 DETAILS = ("brief", "full")
 SUPPORTED_DIALECTS = ("postgres", "duckdb")
@@ -171,6 +172,25 @@ class Services:
             call.status = "ok"
             if not self._calls.write(call):
                 raise ServiceError(ServiceErrorCode.INTERNAL, INTERNAL_MESSAGE) from None
+
+    def refuse_input(
+        self, caller: Caller, tool: str, fields: Collection[object], allowed: Collection[str]
+    ) -> None:
+        """Refuse a `search`, `get_definition`, or `list_related` call that names fields the tool
+        does not have, so the refusal gets its log row like every other (section 14). Always
+        raises `INVALID_INPUT`. Only the names of the fields are kept, and only names that look
+        like names (at most 10); no value is ever passed in."""
+        if tool not in ("search", "get_definition", "list_related"):
+            raise ValueError(f"unknown tool {tool!r}")
+        with self._logged(caller, tool) as call:
+            names = sorted({f for f in fields if isinstance(f, str) and _FIELD_NAME.fullmatch(f)})
+            call.request = {"unknown_fields": names[:10]}
+            raise ServiceError(
+                ServiceErrorCode.INVALID_INPUT,
+                f"{tool} has no field {', '.join(names[:10]) if names else 'with that name'}. "
+                f"Use only: {', '.join(sorted(allowed))}.",
+                {"field": "arguments", "fields": names[:10], "allowed": sorted(allowed)},
+            )
 
     # --- search --------------------------------------------------------------------------
 

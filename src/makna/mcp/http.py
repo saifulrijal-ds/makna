@@ -167,6 +167,22 @@ def transport_security(allowed_hosts: Sequence[str] = ()) -> TransportSecuritySe
     )
 
 
+class PostOnly:
+    """The endpoint takes `POST` and nothing else. The tools need no server stream, and the SDK's
+    2025-era `GET` would open one that stays open as long as the client likes. The 2026 era and
+    `DELETE` are refused with `405` by the SDK already, so this makes the 2025 `GET` the same.
+    A client that asks for the stream is told, as the protocol says, that there is none."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["method"] != "POST":
+            await Response(status_code=405, headers={"Allow": "POST"})(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
 @dataclass(frozen=True)
 class McpEndpoint:
     """What `makna.app` mounts: the endpoint, and the manager the lifespan must run."""
@@ -187,6 +203,9 @@ def build_mcp_endpoint(services: Services, allowed_hosts: Sequence[str] = ()) ->
     Building it opens no database connection. The manager can run once: build a new endpoint
     for a new application.
     """
+    # The SDK logs the `Host` or `Origin` it refuses at WARNING. The client is told by the 421 or
+    # 403 already, and a header value does not belong in the server log.
+    logging.getLogger("mcp.server.transport_security").setLevel(logging.ERROR)
     server = build_mcp_server(services, caller_from_request)
     # The SDK makes its session manager here. Its Starlette app is not used: that app serves
     # its path only with a trailing-slash redirect when mounted, and a redirect is not "/mcp".
@@ -198,7 +217,7 @@ def build_mcp_endpoint(services: Services, allowed_hosts: Sequence[str] = ()) ->
     )
     manager = server.session_manager
     asgi = BearerTokenAuth(
-        StreamableHTTPASGIApp(manager),
+        PostOnly(StreamableHTTPASGIApp(manager)),
         lambda raw: authenticate_bearer_token(services, raw, CHANNEL),
     )
     return McpEndpoint(asgi, manager)

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -36,7 +35,8 @@ from typing import Any
 
 import anyio.to_thread
 from mcp.server.mcpserver import Context, MCPServer
-from mcp_types import CallToolResult, TextContent, ToolAnnotations
+from mcp.shared.exceptions import MCPError
+from mcp_types import INVALID_PARAMS, CallToolResult, TextContent, ToolAnnotations
 from mcp_types import Tool as MCPTool
 
 from makna.mcp import texts
@@ -63,8 +63,6 @@ SERVER_NAME = "makna"
 CallerOf = Callable[[Context | None], Caller]
 """Finds the `Caller` of the request a tool call arrived with. It raises when there is none."""
 
-_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-
 ANNOTATIONS = ToolAnnotations(
     readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
 )
@@ -82,11 +80,11 @@ SEARCH_SCHEMA: dict[str, Any] = {
     "properties": {
         "query": {"type": "string", "minLength": 1, "maxLength": MAX_QUERY_LENGTH},
         "kinds": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {"type": "string", "enum": list(SEARCH_KINDS)},
             "minItems": 1,
         },
-        "domain": {"type": "string"},
+        "domain": {"type": ["string", "null"]},
         "limit": {
             "type": "integer",
             "minimum": 1,
@@ -112,7 +110,7 @@ LIST_RELATED_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "id": {"type": "string", "maxLength": MAX_ID_LENGTH},
-        "relation": {"type": "string", "enum": list(RELATIONS)},
+        "relation": {"type": ["string", "null"], "enum": [*RELATIONS, None]},
     },
     "required": ["id"],
     "additionalProperties": False,
@@ -137,6 +135,7 @@ COMPILE_SCHEMA: dict[str, Any] = {
                         "anyOf": [
                             _SCALAR,
                             {"type": "array", "items": _SCALAR, "maxItems": MAX_IN_VALUES},
+                            {"type": "null"},
                         ]
                     },
                 },
@@ -144,9 +143,9 @@ COMPILE_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
             },
         },
-        "grain": {"type": "string", "maxLength": MAX_STRING},
-        "time_start": {"type": "string", "maxLength": MAX_STRING},
-        "time_end": {"type": "string", "maxLength": MAX_STRING},
+        "grain": {"type": ["string", "null"], "maxLength": MAX_STRING},
+        "time_start": {"type": ["string", "null"], "maxLength": MAX_STRING},
+        "time_end": {"type": ["string", "null"], "maxLength": MAX_STRING},
         "limit": {
             "type": "integer",
             "minimum": 1,
@@ -198,6 +197,9 @@ class ToolSpec:
     description: str
     schema: dict[str, Any]
     run: Callable[[Services, Caller, Mapping[str, Any]], dict[str, Any]]
+    service: str | None = None
+    """The name the service logs the tool under, when the MCP layer must have a refusal logged
+    itself; `None` for compile, whose service refuses an unknown field."""
 
     @property
     def fields(self) -> frozenset[str]:
@@ -205,15 +207,20 @@ class ToolSpec:
 
 
 TOOLS: tuple[ToolSpec, ...] = (
-    ToolSpec("makna_search", texts.SEARCH_DESCRIPTION, SEARCH_SCHEMA, _search),
+    ToolSpec("makna_search", texts.SEARCH_DESCRIPTION, SEARCH_SCHEMA, _search, "search"),
     ToolSpec(
         "makna_get_definition",
         texts.GET_DEFINITION_DESCRIPTION,
         GET_DEFINITION_SCHEMA,
         _get_definition,
+        "get_definition",
     ),
     ToolSpec(
-        "makna_list_related", texts.LIST_RELATED_DESCRIPTION, LIST_RELATED_SCHEMA, _list_related
+        "makna_list_related",
+        texts.LIST_RELATED_DESCRIPTION,
+        LIST_RELATED_SCHEMA,
+        _list_related,
+        "list_related",
     ),
     ToolSpec(
         "makna_compile_query", texts.COMPILE_QUERY_DESCRIPTION, COMPILE_SCHEMA, _compile_query
@@ -248,44 +255,26 @@ def _error(error: ServiceError | QueryError) -> CallToolResult:
     return _result(error.to_dict(), is_error=True)
 
 
-def _unknown_tool() -> CallToolResult:
-    return _error(
-        ServiceError(
-            ServiceErrorCode.INVALID_INPUT,
-            "There is no tool with that name. Use one of: "
-            + ", ".join(tool.name for tool in TOOLS)
-            + ".",
-            {"field": "name", "allowed": [tool.name for tool in TOOLS]},
-        )
-    )
-
-
-def _unknown_fields(tool: ToolSpec, arguments: Mapping[str, Any]) -> CallToolResult | None:
-    """A refusal for an argument the tool does not have, or `None`. A misspelt field must not be
-    dropped silently: the agent would believe a filter or a period was applied. Only names that
-    look like names are repeated back; the values never are."""
-    unknown = [key for key in arguments if key not in tool.fields]
-    if not unknown:
-        return None
-    shown = sorted({k for k in unknown if isinstance(k, str) and _FIELD_NAME.fullmatch(k)})[:10]
-    allowed = sorted(tool.fields)
-    return _error(
-        ServiceError(
-            ServiceErrorCode.INVALID_INPUT,
-            f"{tool.name} has no field {', '.join(shown) if shown else 'with that name'}. "
-            f"Use only: {', '.join(allowed)}.",
-            {"fields": shown, "allowed": allowed},
-        )
-    )
-
-
 class MaknaServer(MCPServer[Any]):
     """`MCPServer` with the four Makna tools. See the module docstring."""
 
     def __init__(self, services: Services, caller_of: CallerOf) -> None:
-        # `log_level` WARNING keeps the root logger where it was: the SDK calls
-        # `logging.basicConfig` with this level when the server is built.
-        super().__init__(SERVER_NAME, instructions=texts.INSTRUCTIONS, log_level="WARNING")
+        root = logging.getLogger()
+        handlers, level = list(root.handlers), root.level
+        # `log_level` WARNING because the SDK calls `logging.basicConfig` when it is built, ...
+        # `subscriptions=False`: no `subscriptions/listen` streams (Makna publishes no events).
+        super().__init__(
+            SERVER_NAME,
+            instructions=texts.INSTRUCTIONS,
+            log_level="WARNING",
+            subscriptions=False,
+        )
+        if not handlers:
+            # ... and that call adds a root handler when there is none. Logging is the
+            # application's to configure (section 14), so take it away again.
+            for handler in list(root.handlers):
+                root.removeHandler(handler)
+            root.setLevel(level)
         self._services = services
         self._caller_of = caller_of
 
@@ -300,20 +289,35 @@ class MaknaServer(MCPServer[Any]):
             for tool in TOOLS
         ]
 
+    def _run(self, tool: ToolSpec, caller: Caller, arguments: dict[str, Any]) -> dict[str, Any]:
+        unknown = [key for key in arguments if key not in tool.fields]
+        if unknown and tool.service is not None:
+            # A field the tool does not have is refused (never dropped: the agent would believe a
+            # filter was applied) through the service, which writes the log row. Compile needs no
+            # such step: its service refuses what `QueryRequest` forbids.
+            self._services.refuse_input(caller, tool.service, unknown, sorted(tool.fields))
+        return tool.run(self._services, caller, arguments)
+
+    async def get_prompt(self, name: str, arguments: Any = None, context: Any = None) -> Any:
+        """No prompts. The SDK's own answer would put `name` in an error and in the server log."""
+        raise MCPError(INVALID_PARAMS, "Makna serves no prompts.")
+
+    async def read_resource(self, uri: Any, context: Any = None) -> Any:
+        """No resources, for the same reason as `get_prompt`."""
+        raise MCPError(INVALID_PARAMS, "Makna serves no resources.")
+
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Any, Any] | None = None
     ) -> CallToolResult:
         tool = _BY_NAME.get(name)
         if tool is None:
-            return _unknown_tool()
-        refused = _unknown_fields(tool, arguments)
-        if refused is not None:
-            return refused
+            # A protocol error, not a tool answer, with fixed text: the name is not repeated.
+            raise MCPError(INVALID_PARAMS, "Makna has no such tool. List the tools first.")
         try:
             caller = self._caller_of(context)
             # The services are synchronous and read the database: off the event loop.
             payload = await anyio.to_thread.run_sync(
-                partial(tool.run, self._services, caller, dict(arguments))
+                partial(self._run, tool, caller, dict(arguments))
             )
         except (ServiceError, QueryError) as error:
             return _error(error)
