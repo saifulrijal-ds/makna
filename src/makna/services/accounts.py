@@ -13,9 +13,11 @@ functions here.
 - Users and tokens are never deleted: `tool_call_log` and `audit_event` refer to them. A user is
   deactivated and a token is revoked; both stop working at once.
 
-Database errors can carry the SQL parameters (a password hash, a token hash), so callers of
-these functions must not print the text of a `SQLAlchemyError` (see
-`docs/notes/database-error-text-carries-the-query-parameters.md`).
+Database errors can carry the SQL parameters (a password hash, a token hash). The three
+functions that WP-13 and WP-16 call on every request (`authenticate_token`, `verify_password`,
+`caller_for_user`) turn a database error into `AccountStoreError` with a fixed message; the
+others (used by the operator commands) let it through, and their callers must not print its text
+(see `docs/notes/database-error-text-carries-the-query-parameters.md`).
 """
 
 from __future__ import annotations
@@ -25,15 +27,16 @@ import hashlib
 import logging
 import re
 import secrets
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import cache
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import Engine, RowMapping, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 
 from makna.index.tables import api_token, app_user
 from makna.services.caller import CHANNELS, ROLES, Caller
@@ -61,6 +64,24 @@ class AuthenticationError(Exception):
 
     def __init__(self) -> None:
         super().__init__(_FAILURE_MESSAGE)
+
+
+class AccountStoreError(Exception):
+    """The user store could not be read or written (the database is down or refused). It is not
+    an authentication failure: an outage is not a 401. The message is fixed, because the text of
+    a database error can carry a token hash or a password hash as an SQL parameter."""
+
+    def __init__(self) -> None:
+        super().__init__("the user store is not available")
+
+
+@contextmanager
+def _store_guard() -> Iterator[None]:
+    try:
+        yield
+    except SQLAlchemyError as error:
+        logger.error("user store error: %s", type(error).__name__)
+        raise AccountStoreError from None
 
 
 @dataclass(frozen=True)
@@ -152,10 +173,9 @@ def hash_password(password: str) -> str:
     return _hasher.hash(password)
 
 
-@cache
-def _dummy_hash() -> str:
-    """A hash to verify against when the email is unknown, so that both cases cost the same."""
-    return _hasher.hash(secrets.token_urlsafe(16))
+# A hash to verify against when the email is unknown, so that both cases cost the same. Built
+# at import, so that the first unknown email does no more work than a known one.
+_DUMMY_HASH = _hasher.hash(secrets.token_urlsafe(16))
 
 
 def _row_user(mapping: RowMapping) -> User:
@@ -192,11 +212,11 @@ def verify_password(engine: Engine, email: str, password: str) -> User | None:
         wanted = normalize_email(email)
     except AccountError:
         wanted = ""
-    with engine.connect() as connection:
+    with _store_guard(), engine.connect() as connection:
         row = connection.execute(
             select(*_USER_COLUMNS, app_user.c.password_hash).where(app_user.c.email == wanted)
         ).first()
-    stored = row.password_hash if row is not None else _dummy_hash()
+    stored = row.password_hash if row is not None else _DUMMY_HASH
     try:
         _hasher.verify(stored, password if isinstance(password, str) else "")
         matches = True
@@ -205,7 +225,7 @@ def verify_password(engine: Engine, email: str, password: str) -> User | None:
     if row is None or not matches or not row.is_active:
         return None
     if _hasher.check_needs_rehash(stored):
-        with engine.begin() as connection:
+        with _store_guard(), engine.begin() as connection:
             connection.execute(
                 update(app_user)
                 .where(app_user.c.id == row.id, app_user.c.password_hash == stored)
@@ -283,7 +303,9 @@ def caller_for_user(engine: Engine, user_id: int, channel: str) -> Caller:
     """The `Caller` of a signed-in user (WP-16 calls this with the id from the session).
     Raises `AuthenticationError` for an unknown or inactive user."""
     _check_channel(channel)
-    with engine.connect() as connection:
+    if type(user_id) is not int or user_id < 1:
+        raise AuthenticationError
+    with _store_guard(), engine.connect() as connection:
         row = connection.execute(
             select(*_USER_COLUMNS).where(app_user.c.id == user_id, app_user.c.is_active.is_(True))
         ).first()
@@ -387,7 +409,7 @@ def authenticate_token(engine: Engine, raw: str, channel: str) -> Caller:
     if not is_well_formed_token(raw):
         logger.info("token refused: malformed")
         raise AuthenticationError
-    with engine.begin() as connection:
+    with _store_guard(), engine.begin() as connection:
         row = connection.execute(
             update(api_token)
             .where(

@@ -256,6 +256,9 @@ def test_the_cli_asks_twice_and_stops_when_the_entries_differ(
 
 DEMO_VALUE = re.compile(r"MAKNA_DEMO_PASSWORD[\"']?[ \t]*[:=][ \t]*(?P<value>\S*)")
 ALLOWED_VALUES = {"", "${MAKNA_DEMO_PASSWORD:-}", "..."}
+# A shell or compose default: `${MAKNA_DEMO_PASSWORD:-x}`, `-x`, `:=x`, `=x`. `:?message` and
+# an empty default are fine.
+DEFAULT_IN_EXPANSION = re.compile(r"\$\{MAKNA_DEMO_PASSWORD:?[-=](?P<value>[^}]+)\}")
 
 
 def committed_files() -> list[Path]:
@@ -270,11 +273,11 @@ def committed_files() -> list[Path]:
 
 
 def demo_password_values(text: str) -> list[str]:
-    found = []
+    found = [m.group("value") for m in DEFAULT_IN_EXPANSION.finditer(text)]
     for match in DEMO_VALUE.finditer(text):
         value = match.group("value")
         # A value taken from the shell (`$pw`, `$(openssl ...)`) or the placeholder is no secret.
-        if value not in ALLOWED_VALUES and not value.startswith("$"):
+        if value not in ALLOWED_VALUES and not value.startswith(("$", "?")):
             found.append(value)
     return found
 
@@ -304,6 +307,11 @@ def test_the_scan_detects_a_value() -> None:
     assert demo_password_values('echo "MAKNA_DEMO_PASSWORD=$pw" >> f') == []
     assert demo_password_values("export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)") == []
     assert demo_password_values("export MAKNA_DEMO_PASSWORD=...") == []
+    for default in ("-devpassword123", ":-devpassword123", "=devpassword123", ":=devpassword123"):
+        line = f"MAKNA_DEMO_PASSWORD: ${{MAKNA_DEMO_PASSWORD{default}}}"
+        assert demo_password_values(line) == [default.lstrip(":-=")], line
+    assert demo_password_values("X: ${MAKNA_DEMO_PASSWORD:?set it}") == []
+    assert demo_password_values("X: ${MAKNA_DEMO_PASSWORD-}") == []
 
 
 def test_a_refused_token_is_not_written_to_the_log(caplog: pytest.LogCaptureFixture) -> None:
@@ -312,3 +320,64 @@ def test_a_refused_token_is_not_written_to_the_log(caplog: pytest.LogCaptureFixt
         accounts.authenticate_token(untouchable_engine(), raw, "mcp")
     assert "malformed" in caplog.text
     assert raw not in caplog.text and accounts.hash_token(raw) not in caplog.text
+
+
+# --- a database failure carries no secret ---
+
+
+def failing_engine(secret: str) -> Engine:
+    """An engine whose every use raises a database error that holds `secret` as a parameter, as
+    a real one does."""
+    from sqlalchemy.exc import OperationalError
+
+    def boom(*_: object, **__: object) -> None:
+        raise OperationalError("SELECT 1", {"p": secret}, Exception(f"failed near {secret}"))
+
+    engine = MagicMock(spec=Engine)
+    engine.begin.side_effect = boom
+    engine.connect.side_effect = boom
+    return engine
+
+
+def assert_no_secret(error: BaseException, *secrets_: str) -> None:
+    import traceback
+
+    shown = str(error) + repr(error) + "".join(traceback.format_exception(error))
+    for secret in secrets_:
+        assert secret not in shown
+
+
+def test_a_database_error_reaches_the_caller_with_a_fixed_message_and_no_secret(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    token = accounts.generate_token()
+    token_hash = accounts.hash_token(token)
+    password_hash = accounts.hash_password("twelve-chars!")
+    calls = (
+        lambda e: accounts.authenticate_token(e, token, "mcp"),
+        lambda e: accounts.verify_password(e, "a@demo.example", "twelve-chars!"),
+        lambda e: accounts.caller_for_user(e, 7, "web"),
+    )
+    for call in calls:
+        with caplog.at_level("DEBUG"), pytest.raises(accounts.AccountStoreError) as raised:
+            call(failing_engine(token_hash + password_hash))
+        assert not isinstance(raised.value, AuthenticationError)
+        assert str(raised.value) == "the user store is not available"
+        assert raised.value.__cause__ is None and raised.value.__suppress_context__
+        assert_no_secret(raised.value, token, token_hash, password_hash)
+    assert "OperationalError" in caplog.text
+    assert token_hash not in caplog.text and password_hash not in caplog.text
+
+
+def test_caller_for_user_refuses_an_id_that_is_not_a_positive_whole_number() -> None:
+    engine = untouchable_engine()
+    for bad in (True, False, 0, -3, "7", 7.0, None, [7]):
+        with pytest.raises(AuthenticationError):
+            accounts.caller_for_user(engine, bad, "web")  # type: ignore[arg-type]
+
+
+def test_the_demo_step_runs_after_migrate() -> None:
+    from deploy import init
+
+    names = [step.name for step in init.STEPS]
+    assert names.index("demo-users") > names.index("migrate")
