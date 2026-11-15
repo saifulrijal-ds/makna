@@ -9,7 +9,7 @@ no logic of their own.
 from makna.services.caller import CHANNELS, ROLES, Caller
 from makna.services.errors import PermissionDenied, ServiceError, ServiceErrorCode
 from makna.services.factory import build_services
-from makna.services.service import Services
+from makna.services.service import Services, compile_on_snapshot, require_catalog
 
 __all__ = [
     "CHANNELS",
@@ -20,4 +20,6 @@ __all__ = [
     "ServiceErrorCode",
     "Services",
     "build_services",
+    "compile_on_snapshot",
+    "require_catalog",
 ]
