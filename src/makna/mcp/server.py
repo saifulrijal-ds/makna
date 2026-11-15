@@ -1,9 +1,9 @@
 """The MCP server: four read-only tools over the service layer (ARCHITECTURE section 12).
 
-`build_mcp_server(services)` returns an `MCPServer` with exactly four tools and nothing else
-registered (no resource, no prompt, no run tool: Makna compiles and never runs, D-21). The tools
-hold no logic of their own: each one passes its arguments to a service, which checks them,
-applies the permission matrix of section 11, and writes the `tool_call_log` row.
+`build_mcp_server(services, caller_of)` returns an `MCPServer` with exactly four tools and
+nothing else registered (no resource, no prompt, no run tool: Makna compiles and never runs,
+D-21). The tools hold no logic of their own: each one passes its arguments to a service, which
+checks them, applies the permission matrix of section 11, and writes the `tool_call_log` row.
 
 Why this module overrides `list_tools` and `call_tool` instead of using the `@tool` decorator:
 the decorator builds its input model from a Python signature, ignores unknown fields, and puts
@@ -52,9 +52,7 @@ from makna.services.service import (
     MAX_QUERY_LENGTH,
     SEARCH_KINDS,
 )
-from makna.services.service import (
-    MAX_LIMIT as MAX_SEARCH_LIMIT,
-)
+from makna.services.service import MAX_LIMIT as MAX_SEARCH_LIMIT
 from makna.services.text_check import MAX_DIMENSIONS, MAX_FILTERS, MAX_IN_VALUES, MAX_STRING
 from makna.services.views import compile_to_dict
 
