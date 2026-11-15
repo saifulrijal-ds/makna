@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",
+    "anyio>=4.16.0",
     "argon2-cffi>=25.1.0",
     "fastapi>=0.162.4",
     "fastembed>=0.9.1",
     "httpx>=0.28.1",
+    "httpx2>=2.16.0",
     "mcp>=2.3.0",
     "numpy>=2.0",
     "pgvector>=0.5.1",
@@ -19,11 +21,12 @@ dependencies = [
     "pyyaml>=6.0.3",
     "sqlalchemy>=2.1.8",
     "sqlglot>=30.31.0",
+    "starlette>=1.10.0",
     "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
-makna = "makna.cli.main:main"
+makna = "makna.cli.entry:main"
 
 [dependency-groups]
 dev = [
