@@ -45,6 +45,7 @@ from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
 from makna.services.derive import personal_column_issue
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
+from makna.services.redact import redact_value
 from makna.services.related import RELATIONS, list_related
 from makna.services.snapshot import Snapshot, SnapshotCache
 from makna.services.text_check import check_deep, check_request_bounds, check_text
@@ -184,7 +185,8 @@ class Services:
             raise ValueError(f"unknown tool {tool!r}")
         with self._logged(caller, tool) as call:
             names = sorted({f for f in fields if isinstance(f, str) and _FIELD_NAME.fullmatch(f)})
-            call.request = {"unknown_fields": names[:10]}
+            # Redacted like every logged string: a key can be an account number.
+            call.request = {"unknown_fields": [redact_value(n, 64) for n in names[:10]]}
             raise ServiceError(
                 ServiceErrorCode.INVALID_INPUT,
                 f"{tool} has no field {', '.join(names[:10]) if names else 'with that name'}. "

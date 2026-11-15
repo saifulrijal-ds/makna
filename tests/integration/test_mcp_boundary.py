@@ -185,6 +185,12 @@ def test_no_stream_can_be_opened_a_get_is_405_and_listen_is_refused(
     auth = {"Authorization": f"Bearer {tokens.by_role['viewer']}"}
 
     async def go() -> None:
+        # Bounded: if a GET could open a stream, or listen were served, the call would wait for
+        # ever. A regression must fail in seconds, not hang.
+        with anyio.fail_after(10):
+            await body()
+
+    async def body() -> None:
         app = m.make_app(engine)
         async with m.serving(app):
             async with m.http_client(app, **JSON_HEADERS) as http:
@@ -222,6 +228,26 @@ def rows_since(engine: Engine, since: int) -> list[Any]:
                 {"s": since},
             )
         )
+
+
+def test_an_unknown_field_name_in_the_log_is_redacted_like_any_logged_string(
+    service_world: tuple[Engine, Users], tokens: m.Tokens
+) -> None:
+    engine, _ = service_world
+    before = newest(engine)
+
+    async def go() -> None:
+        app = m.make_app(engine)
+        async with m.serving(app):
+            async with m.mcp_client(app, tokens.by_role["viewer"]) as client:
+                for key in ("acct_1234567890123", "card4111111111111111", "plain_name"):
+                    await client.call_tool("makna_search", {"query": "x", key: 1})
+
+    anyio.run(go)
+    stored = [r.request for r in rows_since(engine, before)]
+    text_stored = json.dumps(stored)
+    assert "1234567890123" not in text_stored and "4111" not in text_stored
+    assert "[REDACTED]" in text_stored and "plain_name" in text_stored
 
 
 def test_an_unknown_field_is_a_refusal_with_a_log_row_in_every_tool_and_no_value_is_kept(
