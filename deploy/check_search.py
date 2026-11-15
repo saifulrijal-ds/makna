@@ -11,7 +11,8 @@ searches run with the model that the image carries.
 
 It also prints, without asserting, how often each of the two search legs and the fused list put
 the expected metric in the top 3 (the real-model measurement that `docs/notes/spike-environment-
-limits.md` asks for; WP-15 tunes the weights on the golden set).
+limits.md` asks for). The retrieval eval (`python -m evals retrieval`) measures the same on the
+golden set and tunes nothing here.
 """
 
 from __future__ import annotations
@@ -28,13 +29,14 @@ from functools import cache
 
 from sqlalchemy import Engine
 
-from makna.config import load_search_runtime
+from makna.config import load_governance_runtime, load_search_runtime
 from makna.definitions.loader import definition_objects, load_definitions
 from makna.index import indexer
 from makna.index.db import database_url_from_env, make_engine
 from makna.model.search import DEFAULT_EMBEDDING_MODEL, EmbeddingProvider
 from makna.search.embedding import make_provider
 from makna.search.hybrid import HybridSearch
+from makna.services.derive import make_derive
 
 DEFINITIONS = "semantic/definitions"
 SEARCHES = 200
@@ -127,7 +129,13 @@ def check_real_model() -> None:
 def check_index_builds_with_the_real_model() -> None:
     loaded = load_definitions(DEFINITIONS)
     assert not loaded.load_issues, loaded.load_issues
-    result = indexer.build(suite().engine, suite().provider, definition_objects(loaded))
+    governance = load_governance_runtime()
+    # The derive hook, as `init` and `makna index build` pass it: without it the build would
+    # drop the available dimensions that the compile evals read from the index.
+    derive = make_derive(governance.governance.policy(), governance.dialect)
+    result = indexer.build(
+        suite().engine, suite().provider, definition_objects(loaded), derive=derive
+    )
     # `init` has built the index with this model already: nothing is left to change.
     assert not result.reembedded_everything
     assert sum(result.by_kind.values()) > 150, result.by_kind

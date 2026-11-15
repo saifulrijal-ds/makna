@@ -80,8 +80,36 @@ jobs:
           MAKNA_ENGINE_URL: postgresql://lending_reader:makna_dev_reader@127.0.0.1:5432/lending
           # A missing database must fail this step, never skip every engine test.
           MAKNA_REQUIRE_ENGINE_DATABASE: "1"
+          # The compile-eval tests (WP-15) also need a scratch application database: the stack's
+          # PostgreSQL superuser (a development default, deploy/README.md) creates and drops one.
+          MAKNA_TEST_DATABASE_URL: postgresql://postgres:makna_dev_postgres@127.0.0.1:5432/postgres
+          MAKNA_REQUIRE_TEST_DATABASE: "1"
       - name: Catalog against the sample database, no differences (WP-11 acceptance 5)
         run: docker compose -f deploy/docker-compose.yml exec -T app makna catalog compare
+      # The evals run in the app container: it holds the real default embedding model (baked
+      # into the image, no download), the index `init` built, the settings of config/makna.toml,
+      # and the evals/ directory. It exits 1 when a gate of evals/gates.toml fails. The step lets
+      # the job go on, so that the checks after it still run and the report is uploaded; the last
+      # step of the job fails the job when the evals failed.
+      - name: Retrieval and compile evals with the real embedding model and the gates (WP-15)
+        id: evals
+        continue-on-error: true
+        run: |
+          docker compose -f deploy/docker-compose.yml exec -T \
+            -e GITHUB_SHA="$GITHUB_SHA" app python -m evals all --out /tmp/eval-report
+      - name: Copy the eval report out of the container
+        if: always()
+        run: |
+          mkdir -p eval-report
+          docker compose -f deploy/docker-compose.yml cp app:/tmp/eval-report/. eval-report/ || true
+          if [ -f eval-report/report.md ]; then cat eval-report/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload the eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report
+          if-no-files-found: warn
       - name: Search with the real embedding model, latency and ranking (WP-07 acceptance 8)
         run: docker compose -f deploy/docker-compose.yml exec -T app python -m deploy.check_search
       - name: Show service logs
@@ -114,3 +142,8 @@ jobs:
         run: >
           docker compose -p makna-offline
           -f deploy/docker-compose.yml -f deploy/docker-compose.offline.yml down -v
+      - name: Fail the job if a gate of the evals failed (WP-15)
+        if: steps.evals.outcome == 'failure'
+        run: |
+          echo "The retrieval and compile evals failed a gate; see the eval-report artifact."
+          exit 1

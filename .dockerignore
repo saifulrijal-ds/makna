@@ -9,5 +9,5 @@ data/generated
 docs
 spikes
 tests
-evals
+evals/reports
 .env

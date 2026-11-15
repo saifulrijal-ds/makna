@@ -37,6 +37,9 @@ COPY config ./config
 COPY data ./data
 COPY semantic ./semantic
 COPY deploy ./deploy
+# The eval runner (docs/EVALS.md section 6): the CI stack job runs `python -m evals all` in this
+# image, with the model baked in above. The product never imports it.
+COPY evals ./evals
 
 # The app runs as a normal user; the generated sample data lives in a volume it can write.
 RUN useradd --create-home --uid 10001 makna \
