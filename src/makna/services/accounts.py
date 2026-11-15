@@ -29,11 +29,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from sqlalchemy import Engine, Row, func, insert, select, update
+from sqlalchemy import Engine, RowMapping, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from makna.index.tables import api_token, app_user
@@ -159,8 +158,7 @@ def _dummy_hash() -> str:
     return _hasher.hash(secrets.token_urlsafe(16))
 
 
-def _row_user(row: Row[Any]) -> User:
-    mapping = row._mapping
+def _row_user(mapping: RowMapping) -> User:
     return User(
         id=mapping["id"],
         email=mapping["email"],
@@ -213,7 +211,7 @@ def verify_password(engine: Engine, email: str, password: str) -> User | None:
                 .where(app_user.c.id == row.id, app_user.c.password_hash == stored)
                 .values(password_hash=_hasher.hash(password))
             )
-    return _row_user(row)
+    return _row_user(row._mapping)
 
 
 # --- users -----------------------------------------------------------------------------------
@@ -249,20 +247,20 @@ def create_user(
         ).first()
     if row is None:
         raise AccountError(f"email: a user with the address {clean_email} already exists")
-    return _row_user(row)
+    return _row_user(row._mapping)
 
 
 def get_user(engine: Engine, email: str) -> User | None:
     wanted = normalize_email(email)
     with engine.connect() as connection:
         row = connection.execute(select(*_USER_COLUMNS).where(app_user.c.email == wanted)).first()
-    return _row_user(row) if row is not None else None
+    return _row_user(row._mapping) if row is not None else None
 
 
 def list_users(engine: Engine) -> list[User]:
     with engine.connect() as connection:
         rows = connection.execute(select(*_USER_COLUMNS).order_by(app_user.c.id)).all()
-    return [_row_user(row) for row in rows]
+    return [_row_user(row._mapping) for row in rows]
 
 
 def deactivate_user(engine: Engine, email: str) -> User:
@@ -278,7 +276,7 @@ def deactivate_user(engine: Engine, email: str) -> User:
         ).first()
     if row is None:
         raise AccountError(f"email: no user with the address {wanted}")
-    return _row_user(row)
+    return _row_user(row._mapping)
 
 
 def caller_for_user(engine: Engine, user_id: int, channel: str) -> Caller:
@@ -291,7 +289,7 @@ def caller_for_user(engine: Engine, user_id: int, channel: str) -> Caller:
         ).first()
     if row is None:
         raise AuthenticationError
-    return _row_user(row).caller(channel)
+    return _row_user(row._mapping).caller(channel)
 
 
 # --- tokens ----------------------------------------------------------------------------------
