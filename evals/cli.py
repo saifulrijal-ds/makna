@@ -23,7 +23,7 @@ from typing import Any
 
 from evals import compile_eval, gates, report, retrieval
 from evals.golden import freeze as freeze_module
-from evals.golden.reference import QUESTIONS_FILE
+from evals.golden.reference import EXPECTED_DIR, QUESTIONS_FILE
 from evals.golden.schema import Question, load_questions
 from evals.runtime import (
     EvalSetupError,
@@ -48,7 +48,11 @@ def run_retrieval_eval(runtime: Runtime, questions: Sequence[Question]) -> dict[
 
 
 def run_compile_eval(
-    runtime: Runtime, questions: Sequence[Question], *, verbose: bool
+    runtime: Runtime,
+    questions: Sequence[Question],
+    *,
+    verbose: bool,
+    expected_dir: Path = EXPECTED_DIR,
 ) -> dict[str, Any]:
     cache = SnapshotCache(runtime.engine)
     snapshot, _ = cache.current()
@@ -68,7 +72,9 @@ def run_compile_eval(
     url = require_engine_url(runtime)
     try:
         with SqlRunner(url, runtime.statement_timeout_seconds) as runner:
-            part_a = compile_eval.run_part_a(questions, compile_fn, runner, log=log)
+            part_a = compile_eval.run_part_a(
+                questions, compile_fn, runner, expected_dir=expected_dir, log=log
+            )
             part_b = compile_eval.run_part_b(requests, compile_fn, runner, log=log)
     except SqlFailure as failure:
         if verbose:
