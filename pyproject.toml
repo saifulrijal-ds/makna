@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.162.4",
     "fastembed>=0.9.1",
     "httpx>=0.28.1",
+    "mcp>=2.3.0",
     "numpy>=2.0",
     "pgvector>=0.5.1",
     "psycopg[binary]>=3.3.8",
