@@ -204,6 +204,24 @@ def test_search_output_is_within_budget_for_the_twenty_questions(
     assert max(sizes.values()) <= SEARCH_BUDGET, sorted(sizes.items(), key=lambda i: -i[1])[:3]
 
 
+def test_a_full_definition_is_within_budget_for_every_approved_metric(
+    service_world: tuple[Engine, Users], tokens: m.Tokens
+) -> None:
+    engine, _ = service_world
+    ids = approved_metric_ids(engine)
+    assert len(ids) >= 20, "the sample domain has 23 approved metrics"
+    sizes: dict[str, int] = {}
+
+    async def check(client: Client) -> None:
+        for metric_id in ids:
+            result = await client.call_tool("makna_get_definition", {"id": metric_id})
+            assert result.is_error is not True, metric_id
+            sizes[metric_id] = len(m.text_of(result))
+
+    run(service_world, tokens, check)
+    assert max(sizes.values()) <= DEFINITION_BUDGET, sorted(sizes.items(), key=lambda i: -i[1])[:3]
+
+
 # --- criterion 4: errors ---
 
 
