@@ -4,6 +4,8 @@ HTTP, and a real server on a free port (uvicorn in a thread)."""
 
 from __future__ import annotations
 
+import json
+import logging
 import secrets
 import socket
 import threading
@@ -17,7 +19,7 @@ import uvicorn
 from fastapi import FastAPI
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
-from mcp_types import CallToolResult
+from mcp_types import CallToolResult, Tool
 from sqlalchemy import Engine
 from sqlalchemy.engine import URL
 
@@ -116,12 +118,42 @@ def free_port() -> int:
         return int(probe.getsockname()[1])
 
 
+class Sink(logging.Handler):
+    """Collects every log line of the loggers it is attached to."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage() + (record.exc_text or ""))
+
+
+LOGGERS = ("", "uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi", "mcp", "httpx2")
+
+
 @contextmanager
-def real_server(app: FastAPI) -> Iterator[str]:
-    """The application served by uvicorn on a free port, in a thread. Yields its base URL."""
+def real_server(app: FastAPI, sink: Sink | None = None) -> Iterator[str]:
+    """The application served by uvicorn on a free port, in a thread. Yields its base URL.
+
+    With `sink`, uvicorn runs at its debug level and every line of its loggers, of the SDK's, and
+    of the root logger is collected in it.
+    """
     port = free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="debug" if sink is not None else "warning",
+        lifespan="on",
+    )
     server = uvicorn.Server(config)
+    watched = [logging.getLogger(name) for name in LOGGERS] if sink is not None else []
+    for logger in watched:
+        logger.addHandler(sink)  # type: ignore[arg-type]
+    old_level = logging.getLogger().level
+    if sink is not None:
+        logging.getLogger().setLevel(logging.DEBUG)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 30
@@ -134,3 +166,30 @@ def real_server(app: FastAPI) -> Iterator[str]:
     finally:
         server.should_exit = True
         thread.join(timeout=30)
+        for logger in watched:
+            logger.removeHandler(sink)  # type: ignore[arg-type]
+        logging.getLogger().setLevel(old_level)
+
+
+SNAPSHOT_HEADER = (
+    "# MCP server snapshot (reviewed text). Changing a word here is a reviewed change (MCP-2)."
+)
+
+
+def render_snapshot(instructions: str, tools: list[Tool]) -> str:
+    """The text the reviewed snapshot file holds: the instructions, then for each tool its
+    description, annotations, and input schema as a client receives them."""
+    lines = [SNAPSHOT_HEADER, "", "## instructions", instructions, ""]
+    for tool in tools:
+        assert tool.annotations is not None
+        annotations = tool.annotations.model_dump(by_alias=True, exclude_none=True)
+        lines += [
+            f"## {tool.name}",
+            "description:",
+            str(tool.description),
+            "annotations: " + json.dumps(annotations, sort_keys=True),
+            "inputSchema:",
+            json.dumps(tool.input_schema, indent=2, sort_keys=True),
+            "",
+        ]
+    return "\n".join(lines)

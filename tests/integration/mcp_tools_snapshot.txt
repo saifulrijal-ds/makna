@@ -1,0 +1,211 @@
+# MCP server snapshot (reviewed text). Changing a word here is a reviewed change (MCP-2).
+
+## instructions
+Makna holds the approved business definitions for this organization's data. To answer a question about a business number: 1) call makna_search with the user's words; 2) call makna_get_definition for the best candidate and check that its description really matches what the user asked; 3) call makna_compile_query with a structured request (the definition's example requests show the format), then run the SQL it returns, unchanged, with your own database tool. Never write SQL yourself for a number that Makna defines. If search confidence is low or no description matches, tell the user that no approved definition exists; do not substitute a different metric. If search reports several candidates, ask the user which one they mean.
+
+## makna_search
+description:
+Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, or no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead. If `ambiguous_between` is present, ask the user to choose.
+annotations: {"destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "readOnlyHint": true}
+inputSchema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "domain": {
+      "type": "string"
+    },
+    "kinds": {
+      "items": {
+        "enum": [
+          "metric",
+          "glossary_term",
+          "entity",
+          "dimension",
+          "column"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "limit": {
+      "default": 5,
+      "maximum": 10,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "query": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}
+
+## makna_get_definition
+description:
+Get the full approved definition of one object by id (from makna_search). For a metric this returns its meaning, formula in words, official date, caveats, the dimensions you may group or filter by, their allowed values, and the allowed time grains. Read this before compiling a query, and use only the dimensions it lists. If the id is unknown, the error lists close ids; if none fits, search again with different words.
+annotations: {"destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "readOnlyHint": true}
+inputSchema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "detail": {
+      "default": "full",
+      "enum": [
+        "brief",
+        "full"
+      ],
+      "type": "string"
+    },
+    "id": {
+      "maxLength": 200,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+
+## makna_list_related
+description:
+List objects related to one object: the inputs of a metric, metrics built from it, metrics on the same entity, the rules it uses (or, for a rule, the metrics that use it), the business terms that explain it, and its replacement if deprecated. Use it to find a nearby metric when the first one is not quite what the user asked for. Returns up to 20 related objects with one-line descriptions. An empty list means nothing is related: go back to makna_search.
+annotations: {"destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "readOnlyHint": true}
+inputSchema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "relation": {
+      "enum": [
+        "replaced_by",
+        "replaces",
+        "input_of",
+        "built_on",
+        "uses_rule",
+        "used_by",
+        "explains",
+        "explained",
+        "measured_on",
+        "measures",
+        "same_entity",
+        "joins_to",
+        "joined_from"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+
+## makna_compile_query
+description:
+Turn a structured request into SQL for the query engine, using only approved joins and definitions. Use the metric name and the dimension refs exactly as given by makna_get_definition. Dates are ISO dates; time_end is exclusive; resolve words like "last month" to dates before calling. Returns the SQL, the result columns, and an explanation of how the number is built that you can show to the user. On an error, read the code and the details (they list what is allowed), fix the request, and call again.
+annotations: {"destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "readOnlyHint": true}
+inputSchema:
+{
+  "additionalProperties": false,
+  "properties": {
+    "dimensions": {
+      "items": {
+        "maxLength": 200,
+        "type": "string"
+      },
+      "maxItems": 20,
+      "type": "array"
+    },
+    "filters": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "dimension": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "=",
+              "!=",
+              ">",
+              ">=",
+              "<",
+              "<=",
+              "in",
+              "not_in",
+              "is_null",
+              "is_not_null"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              },
+              {
+                "items": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "maxItems": 100,
+                "type": "array"
+              }
+            ]
+          }
+        },
+        "required": [
+          "dimension",
+          "op"
+        ],
+        "type": "object"
+      },
+      "maxItems": 20,
+      "type": "array"
+    },
+    "grain": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "limit": {
+      "default": 1000,
+      "maximum": 10000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "metric": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "time_end": {
+      "maxLength": 200,
+      "type": "string"
+    },
+    "time_start": {
+      "maxLength": 200,
+      "type": "string"
+    }
+  },
+  "required": [
+    "metric"
+  ],
+  "type": "object"
+}
