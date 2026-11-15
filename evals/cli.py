@@ -21,6 +21,9 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import psycopg
+from sqlalchemy.exc import SQLAlchemyError
+
 from evals import compile_eval, gates, report, retrieval
 from evals.golden import freeze as freeze_module
 from evals.golden.reference import EXPECTED_DIR, QUESTIONS_FILE
@@ -47,6 +50,12 @@ def run_retrieval_eval(runtime: Runtime, questions: Sequence[Question]) -> dict[
     return retrieval.run_retrieval(runtime.engine, searchers, questions)
 
 
+def log_for(verbose: bool) -> Callable[[str], None]:
+    """Where engine error text and differing values go: standard error with `--verbose`, else
+    nowhere."""
+    return compile_eval.stderr_log if verbose else lambda message: None
+
+
 def run_compile_eval(
     runtime: Runtime,
     questions: Sequence[Question],
@@ -63,7 +72,7 @@ def run_compile_eval(
             snapshot, request, policy=runtime.policy, dialect=runtime.dialect
         )
 
-    log: Callable[[str], None] = compile_eval.stderr_log if verbose else lambda message: None
+    log = log_for(verbose)
     rows = compile_eval.approved_metric_rows(runtime.engine)
     try:
         requests = compile_eval.part_b_requests(rows, runtime.policy.fingerprint())
@@ -120,6 +129,15 @@ def evaluate_command(args: argparse.Namespace) -> int:
         settings = describe_settings(runtime)
     except (EvalSetupError, SearchError, EmbeddingError, ServiceError) as error:
         print(f"makna-eval: cannot run: {error}", file=sys.stderr)
+        return EXIT_SETUP
+    except (SQLAlchemyError, psycopg.Error) as error:
+        # Driver text can carry the connection parameters
+        # (docs/notes/database-error-text-carries-the-query-parameters.md): the class only.
+        print(
+            f"makna-eval: cannot run: the database failed ({type(error).__name__}); "
+            "check MAKNA_DATABASE_URL and that the database is up",
+            file=sys.stderr,
+        )
         return EXIT_SETUP
     finally:
         if runtime is not None:

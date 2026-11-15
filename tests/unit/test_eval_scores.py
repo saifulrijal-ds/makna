@@ -122,6 +122,8 @@ def test_confidence_scores() -> None:
         RetrievalRecord("G5", "en", "no_metric", "no_definition", confidence="low"),
         RetrievalRecord("G6", "en", "no_metric", "no_definition", confidence="medium"),
         RetrievalRecord("G7", "en", "no_metric", "dimension_not_available", confidence="medium"),
+        # A clarify question with low confidence is not an `answer`: it is not a false abstention.
+        RetrievalRecord("G8", "en", "clarify", None, confidence="low"),
     ]
     scores = score_confidence(records)
     assert scores["false_abstention_rate"] == 0.25 and scores["n_answer_confidence"] == 4

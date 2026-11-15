@@ -159,3 +159,15 @@ def test_a_difference_names_the_place_and_not_the_values() -> None:
     assert difference is not None
     assert "0.5" not in difference.describe()
     assert "0.5" in difference.describe(verbose=True)
+
+
+def test_text_is_case_sensitive() -> None:
+    table = parse_csv("k,v\nJawa,1\n")
+    assert (
+        compare_results(table, Table(("k", "v"), (("Jawa", 1),)), ["k", "v"], key_columns=["k"])
+        is None
+    )
+    difference = compare_results(
+        table, Table(("k", "v"), (("jawa", 1),)), ["k", "v"], key_columns=["k"]
+    )
+    assert difference is not None and difference.kind == "text"

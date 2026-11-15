@@ -38,7 +38,9 @@ from makna.search.hybrid import HybridSearch, SearchResult
 KINDS = ["metric", "glossary_term"]
 LIMIT = 10
 ROLE = "viewer"
-"""The search role of the service layer for a viewer or an agent token: approved objects only."""
+"""The search role of the service layer for a viewer or an agent token (EVALS section 1 says
+agent token): approved objects only and no personal columns, the same for both; the drift test
+checks both callers."""
 LATENCY_ROUNDS = 3
 """Every question is searched this many times to time it; the first round is the one scored."""
 

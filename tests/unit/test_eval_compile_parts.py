@@ -141,6 +141,13 @@ def test_a_failing_statement_is_reported_by_sqlstate_and_class_not_by_message() 
     assert SECRET not in repr(part_summary(items))
     # The text goes to the log function only, which the command passes for --verbose.
     assert logged == [f'm: invalid input syntax: "{SECRET}"']
+    # Without a log function the engine's text goes nowhere.
+    quiet = compile_eval.run_part_b(
+        [PartBRequest("m", "plain", QueryRequest(metric="m"))],
+        lambda r: response(),
+        FakeRunner(failure),
+    )
+    assert SECRET not in repr(quiet)
 
 
 # ---- part B ------
@@ -187,6 +194,19 @@ def test_part_b_requests_follow_the_stored_dimensions_and_default_grain() -> Non
     assert grain.grain == "month" and grain.time_end == "2026-07-01"
     assert (dimension.time_start, dimension.time_end) == ("2026-06-01", "2026-07-01")
     assert dimension.dimensions == ("branch.region_name",)
+
+
+def test_part_b_skips_an_unavailable_option_that_is_not_personal() -> None:
+    rows = [
+        stored(
+            "a",
+            [option("x.hidden", available=False, sensitivity="internal"), option("x.shown")],
+            None,
+        )
+    ]
+    assert [r.dimension for r in part_b_requests(rows, "fp") if r.kind == "dimension"] == [
+        "x.shown"
+    ]
 
 
 def test_part_b_refuses_dimensions_stored_under_another_policy() -> None:

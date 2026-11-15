@@ -118,7 +118,7 @@ jobs:
       - name: Search with the real embedding model, latency and ranking (WP-07 acceptance 8)
         run: docker compose -f deploy/docker-compose.yml exec -T app python -m deploy.check_search
       - name: Show service logs
-        if: failure()
+        if: failure() || steps.evals.outcome == 'failure'
         run: docker compose -f deploy/docker-compose.yml logs --no-color
       - name: Stop the stack
         if: always()
