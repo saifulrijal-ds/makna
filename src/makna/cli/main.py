@@ -65,6 +65,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--host", default="127.0.0.1", help="address to listen on")
     serve.add_argument("--port", type=int, default=8000, help="port to listen on")
+    commands.add_parser(
+        "mcp",
+        help="bridge an MCP client on standard input and output to the Makna server",
+        description=(
+            "Forward MCP messages between standard input and output and the /mcp endpoint of "
+            "a Makna server, for MCP clients that can only start a local process. Reads only "
+            "MAKNA_URL (the base URL of the application, for example http://localhost:8000; "
+            "/mcp is appended) and MAKNA_TOKEN (an API token; there is no option for it, "
+            "because an option shows in the process list). Needs no database setting. "
+            "Exits 2 when a variable is missing, 1 when the server refuses the token."
+        ),
+    )
     catalog = commands.add_parser(
         "catalog",
         help="sync the catalog copy, list reference issues, compare with the engine",
@@ -519,6 +531,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _validate(args.directory)
     if args.command == "serve":
         return _serve(args.host, args.port)
+    if args.command == "mcp":
+        # Imported here: the bridge holds no service or database code, and the command line
+        # does not load it for any other command.
+        from makna.mcp.bridge import main as bridge_main
+
+        return bridge_main()
     if args.command == "catalog":
         if args.catalog_command == "sync":
             return _catalog_sync(args.file, args.definitions)

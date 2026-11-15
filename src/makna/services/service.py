@@ -39,7 +39,7 @@ from makna.model.search import EmbeddingProvider, SearchSettings
 from makna.search.confidence import LOW_GUIDANCE
 from makna.search.embedding import EmbeddingError
 from makna.search.hybrid import HybridSearch, SearchError
-from makna.services import objects, permissions
+from makna.services import accounts, objects, permissions
 from makna.services.caller import Caller
 from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
@@ -399,6 +399,18 @@ class Services:
                 "is approved. Choose an approved metric.",
                 {"metric": metric, "status": row.status},
             )
+
+
+# --- authentication for an interface ---
+
+
+def authenticate_bearer_token(services: Services, raw: str, channel: str) -> Caller:
+    """The `Caller` of a bearer token on `channel`, on the database of `services`: what an
+    interface that authenticates each request (the MCP endpoint) calls, so it never holds the
+    database engine. It is `makna.services.accounts.authenticate_token` and raises what that
+    raises: `AuthenticationError` for any token that cannot act, and `AccountStoreError` when the
+    user store is down. Synchronous: it reads the database."""
+    return accounts.authenticate_token(services._engine, raw, channel)
 
 
 # --- the compile path shared with the evals ---

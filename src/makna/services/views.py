@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from makna.model.request import CompileResponse
+
 DESCRIPTION_LIMIT = 200
 
 
@@ -42,6 +44,14 @@ class View(BaseModel):
         result = compact(self.model_dump(mode="json"))
         assert isinstance(result, dict)
         return result
+
+
+def compile_to_dict(response: CompileResponse) -> dict[str, Any]:
+    """What `makna_compile_query` returns (section 12), shaped like every other view: short keys
+    that are full words, and no nulls or empty lists (`warnings` is absent when there is none)."""
+    result = compact(response.model_dump(mode="json"))
+    assert isinstance(result, dict)
+    return result
 
 
 # --- search ---
