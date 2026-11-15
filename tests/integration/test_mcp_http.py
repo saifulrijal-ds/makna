@@ -517,3 +517,23 @@ def test_the_text_of_an_error_in_a_service_never_leaves_the_server(
     logged = " ".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
     assert "RuntimeError" in logged  # the class is logged ...
     assert "connection lost" not in logged  # ... and nothing of its text
+
+
+def test_a_get_or_delete_of_the_2026_era_is_405_after_authentication(
+    service_world: tuple[Engine, Users], tokens: m.Tokens
+) -> None:
+    engine, _ = service_world
+    modern = {"MCP-Protocol-Version": "2026-07-28"}
+    auth = {"Authorization": f"Bearer {tokens.by_role['viewer']}"}
+
+    async def go() -> None:
+        app = m.make_app(engine)
+        async with m.serving(app):
+            async with m.http_client(app, **JSON_HEADERS) as http:
+                for method in ("GET", "DELETE"):
+                    refused = await http.request(method, "/mcp", headers=modern)
+                    assert refused.status_code == 401, method  # authentication first
+                    served = await http.request(method, "/mcp", headers={**auth, **modern})
+                    assert served.status_code == 405 and served.headers["allow"] == "POST"
+
+    anyio.run(go)
