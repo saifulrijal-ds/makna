@@ -217,8 +217,13 @@ def test_a_client_of_the_2025_protocol_works_through_the_bridge(
             process.stdin.close()  # the client is done: the bridge ends by itself, status 0
             assert process.wait(timeout=60) == 0
         finally:
+            # Not communicate(): on Python 3.12 it flushes stdin first, which fails once the test
+            # has closed it (3.13 skips a closed stdin).
             process.kill()
-            process.communicate()
+            process.wait()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
     rows = last_log_rows(engine, before)
     assert [(r.tool, r.channel, r.user_id, r.token_id) for r in rows] == [
         ("search", "mcp", users.ids["curator"], tokens.ids["curator"])
