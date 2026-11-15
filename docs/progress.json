@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-13",
+  "updated": "2026-11-15",
   "statuses": [
     "not_started",
     "in_progress",
@@ -294,7 +294,7 @@
         "WP-12"
       ],
       "suggested_model": "Haiku 5.5",
-      "status": "not_started"
+      "status": "in_progress"
     },
     {
       "id": "WP-13",
