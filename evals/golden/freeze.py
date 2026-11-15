@@ -1,12 +1,14 @@
-"""Write the expected CSVs of the golden set: `uv run python -m evals.golden.freeze`.
+"""Write the expected CSVs of the golden set: `uv run python -m evals freeze`.
+
+(`python -m evals.golden.freeze` still works and does the same.)
 
 Reads `MAKNA_ENGINE_URL` (the `lending` database as role `lending_reader`, as the app does),
 runs every file in `evals/golden/reference_sql/` and rewrites `evals/golden/expected/`. Run it
 only after a deliberate change to the data generator or to a definition; the engine test
 `tests/engine/test_golden_reference.py` fails when a committed CSV no longer matches.
 
-This is a stop-gap for WP-14. WP-15 replaces it with `makna-eval freeze` and reuses
-`evals.golden.reference` unchanged.
+`makna-eval freeze` (`evals/cli.py`) calls `main` here; the shared logic is in
+`evals.golden.reference`.
 """
 
 from __future__ import annotations

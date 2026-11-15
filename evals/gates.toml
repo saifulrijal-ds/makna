@@ -1,0 +1,24 @@
+# The gates of the retrieval and compile evals (docs/EVALS.md sections 3 and 4).
+#
+# A threshold changes only through a reviewed change to this file. Every gate below must be
+# present, and no other key is allowed, so a typo or a deleted line cannot switch a gate off.
+# Scores that are only reported (recall at 1, abstention recall, per-leg scores) have no gate.
+
+[retrieval]
+# Recall at 3 of the fused search over `answer` and `clarify` questions.
+recall_at_3_min = 0.90
+# Mean reciprocal rank of the fused search over `answer` questions.
+mrr_min = 0.75
+# Share of `answer` questions whose confidence band is `low`.
+false_abstention_rate_max = 0.05
+# Recall at 3 for English minus recall at 3 for Indonesian questions.
+indonesian_recall_gap_max = 0.10
+# 95th percentile of one search call, in milliseconds (NFR-2); strictly below.
+latency_p95_ms_below = 500
+
+[compile]
+# Share of the requests of each part that compile, run, and match (parts A and B) or are refused
+# with the expected code (part C).
+part_a_pass_rate_min = 1.0
+part_b_pass_rate_min = 1.0
+part_c_pass_rate_min = 1.0
