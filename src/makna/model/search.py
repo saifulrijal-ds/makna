@@ -39,7 +39,7 @@ def _status_weights() -> dict[str, float]:
 def _kind_weights() -> dict[str, float]:
     return {
         "metric": 1.0,
-        "glossary_term": 0.98,
+        "glossary_term": 0.96,
         "entity": 0.96,
         "dimension": 0.96,
         "rule": 0.96,

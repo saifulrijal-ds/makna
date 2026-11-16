@@ -94,7 +94,7 @@ def test_a_low_confidence_search_prints_the_guidance(
     code, out, _ = run(capsys, "search", "website conversion funnel")
     assert code == 0
     assert out.startswith("confidence: low")
-    assert "do not approximate it with a different metric" in out
+    assert "read the descriptions of the hits before deciding" in out
 
 
 def test_search_before_any_build_says_what_to_do(

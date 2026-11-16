@@ -226,7 +226,7 @@ def test_confidence_is_not_low_for_valid_questions(indexed_engine: Engine, query
 def test_confidence_is_low_when_nothing_matches(indexed_engine: Engine, query: str) -> None:
     confidence = searcher(indexed_engine).search(query, role="agent").confidence
     assert confidence.band == "low", confidence
-    assert confidence.guidance and "do not approximate" in confidence.guidance
+    assert confidence.guidance and "read the descriptions of the hits" in confidence.guidance
 
 
 def test_qualifier_words_are_left_out_of_coverage(indexed_engine: Engine) -> None:

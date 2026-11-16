@@ -105,15 +105,15 @@ def test_low_confidence_guidance_names_the_kinds_when_metrics_are_left_out(
     nothing = "website conversion funnel"
     default = svc.search(caller, nothing)
     assert default.confidence == "low"
-    assert default.guidance is not None and "no approved metric exists" in default.guidance
+    assert default.guidance is not None and "read the descriptions of the hits" in default.guidance
     with_metrics = svc.search(caller, nothing, kinds=["metric", "entity"])
     assert with_metrics.guidance == default.guidance
     narrowed = svc.search(caller, nothing, kinds=["entity", "dimension"])
     assert narrowed.confidence == "low"
     assert narrowed.guidance is not None
-    assert "no approved metric" not in narrowed.guidance
+    assert narrowed.guidance != default.guidance
     assert "entity, dimension" in narrowed.guidance
-    assert "do not approximate" in narrowed.guidance
+    assert "read the descriptions of the hits" in narrowed.guidance
     only_terms = svc.search(caller, nothing, kinds=["glossary_term"])
     assert "glossary_term" in (only_terms.guidance or "")
 

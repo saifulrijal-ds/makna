@@ -23,9 +23,9 @@ candidates = 30
 # heavier kind: with the former 0.8 for dimensions, a search for "region" listed six metrics that
 # only mention a region before `dimension:branch.region_name`, which is first in both lists. Every
 # weight is therefore between 0.9 and 1.0 and moves a hit by at most a few ranks. Metrics keep
-# 1.0 because they are what most questions ask for; a dimension, an entity and a rule lose 4
-# percent, a glossary term 2 percent, a domain 6 percent, a raw catalog column 8 percent (columns
-# are only searched when asked for).
+# 1.0 because they are what most questions ask for; a glossary term, an entity, a dimension, and a
+# rule lose 4 percent, so that a metric that matches as well as one of them comes first; a domain
+# loses 6 percent and a raw catalog column 8 percent (columns are only searched when asked for).
 [search.status_weights]
 approved = 1.0
 deprecated = 1.0   # shown only when the caller asks for deprecated objects; the hit carries its status
@@ -34,7 +34,7 @@ in_review = 0.95
 
 [search.kind_weights]
 metric = 1.0
-glossary_term = 0.98
+glossary_term = 0.96
 entity = 0.96
 dimension = 0.96
 rule = 0.96
