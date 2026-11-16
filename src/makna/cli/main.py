@@ -21,7 +21,6 @@ from makna.config import (
     load_tag_map,
 )
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
-from makna.definitions.validate import validate
 from makna.engine.base import EngineError
 from makna.engine.compare import catalog_schemas, compare
 from makna.engine.postgres import PostgresConnector
@@ -33,7 +32,7 @@ from makna.search.embedding import EmbeddingError, make_provider
 from makna.search.hybrid import ROLES, HybridSearch, SearchError
 from makna.services.caller import ROLES as USER_ROLES
 from makna.services.derive import make_derive
-from makna.services.examples import check_example_requests
+from makna.services.examples import validate_for_build
 
 DEFAULT_CATALOG_FILE = Path("data/catalog/lending.catalog.yaml")
 DEFAULT_DEFINITIONS = Path("semantic/definitions")
@@ -141,8 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Turn the definition files and the catalog copy into search documents with "
             "embeddings. Only differences are written; a run that finds none writes nothing. "
             "If the configured embedding model differs from the one that built the index, "
-            "every document is embedded again. Exits 0 on success, 1 if a definition file "
-            "cannot be read or the index cannot be written, 2 on bad usage or settings."
+            "every document is embedded again. It first runs the checks of `makna validate`, "
+            "including the example requests (V19), and refuses to index anything if they find a "
+            "problem: it prints each problem and writes nothing. Exits 0 on success, 1 if the "
+            "definitions have a problem or the index cannot be written, 2 on bad usage or "
+            "settings."
         ),
     )
     build.add_argument(
@@ -267,7 +269,7 @@ def _validate(directory: Path) -> int:
     if not directory.is_dir():
         print(f"makna validate: {directory} is not a directory", file=sys.stderr)
         return 2
-    issues = validate(load_definitions(directory), extra_checks=[check_example_requests])
+    issues = validate_for_build(load_definitions(directory))
     prefix = f"{directory.as_posix().rstrip('/')}/"
     for issue in issues:
         print(issue.format(prefix))
@@ -420,14 +422,18 @@ def _index_build(definitions: Path | None) -> int:
         print(f"makna index build: {error}", file=sys.stderr)
         return 2
     loaded = load_definitions(directory)
-    if loaded.load_issues:
-        for issue in loaded.load_issues:
+    problems = validate_for_build(loaded)
+    if problems:
+        # The same check as `makna validate`, V19 included (C-1): a definition that validation
+        # rejects is not served as approved. Nothing is written.
+        for issue in problems:
             print(issue.format(f"{directory.as_posix().rstrip('/')}/"), file=sys.stderr)
         print(
-            "makna index build: not indexing, because definition files cannot be read "
-            "(run `makna validate`)",
+            f"makna index build: not indexing, because the definitions have {len(problems)} "
+            "problem(s) (the list above is what `makna validate` reports)",
             file=sys.stderr,
         )
+        engine.dispose()
         return 1
     objects = definition_objects(loaded)
     if not objects:

@@ -66,14 +66,13 @@ def database(migrated_url: URL, migrated_engine: Engine, monkeypatch: pytest.Mon
 
 
 @pytest.mark.integration
-@pytest.mark.xfail(strict=True, reason="review finding 1: index build does not validate")
 def test_index_build_does_not_serve_a_definition_that_fails_validation(
     database: Engine, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """`makna validate` rejects this file twice: V10 (the filter value `actve` is not a value of
     `contract.contract_status`) and V19 (its example request cannot compile). `makna index build`
-    must not make it an approved metric that agents find and compile. Today it exits 0 and the
-    metric is served as approved; its SQL filters on `actve` and returns no amount."""
+    must not make it an approved metric that agents find and compile. Before WP-15C it exited 0
+    and served the metric as approved; its SQL filtered on `actve` and returned no amount."""
     definitions = tmp_path / "definitions"
     shutil.copytree(DEFINITIONS, definitions)
     (definitions / "lending" / "metrics" / "misspelt_active_principal.yaml").write_text(
@@ -87,7 +86,7 @@ def test_index_build_does_not_serve_a_definition_that_fails_validation(
             text("SELECT status FROM semantic_object WHERE id = :id"),
             {"id": "metric:misspelt_active_principal"},
         ).scalar_one_or_none()
-    assert code != 0 or status != "approved", f"exit {code}, served with status {status}"
+    assert code == 1 and status is None, f"exit {code}, served with status {status}"
 
 
 @pytest.mark.integration

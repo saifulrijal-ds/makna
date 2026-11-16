@@ -126,3 +126,30 @@ def test_build_index_refuses_a_directory_with_no_definitions(tmp_path: Path) -> 
     )
     with pytest.raises(init.InitError, match="no definition objects"):
         init.build_index_step(ctx)
+
+
+def test_build_index_refuses_definitions_that_fail_validation_before_touching_the_database(
+    tmp_path: Path,
+) -> None:
+    """C-1: `makna validate` and the build are one check. The database URL is not usable, so a
+    refusal that names the rule proves the check ran first."""
+    import shutil
+
+    from tests.catalog_support import DEFINITIONS
+
+    broken = tmp_path / "defs"
+    shutil.copytree(DEFINITIONS, broken)
+    path = broken / "lending" / "entities" / "contract.yaml"
+    path.write_text(
+        path.read_text().replace("disbursement_date IS NOT NULL", "disbursement_date ^ 2", 1)
+    )
+    ctx = Context(
+        data_dir=tmp_path,
+        seed=1,
+        scale=0.05,
+        database_url="postgresql://unused",
+        lending_loader_url="postgresql://unused",
+        definitions_dir=broken,
+    )
+    with pytest.raises(init.InitError, match=r"nothing was indexed: .*contract\.yaml.*V05"):
+        init.build_index_step(ctx)
