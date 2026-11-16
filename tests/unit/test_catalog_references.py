@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from makna.catalog.references import CatalogView, Finding, columns_read, find_issues
+from makna.catalog.references import CatalogView, Finding, find_issues
 from makna.model.definitions import Entity
 
 from ..catalog_support import dimension, make_entity, make_term
@@ -148,11 +148,3 @@ def test_each_rule_opens_exactly_its_own_issue() -> None:
     }
     for code, findings in cases.items():
         assert findings and {f.code for f in findings} == {code}, code
-
-
-def test_columns_are_extracted_from_expressions_with_sqlglot() -> None:
-    assert columns_read("CAST(Registered_At AS DATE)") == {"registered_at"}
-    assert columns_read("sts_putusan IN ('approved', 'rejected')") == {"sts_putusan"}
-    assert columns_read("NOT is_reversed") == {"is_reversed"}
-    assert columns_read(None) == set()
-    assert columns_read("a b c (") == set()

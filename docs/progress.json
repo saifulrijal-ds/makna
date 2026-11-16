@@ -95,6 +95,10 @@
       }
     },
     {
+      "id": "M1F",
+      "title": "Fixes after Fable review 1"
+    },
+    {
       "id": "M2",
       "title": "People path and release",
       "review_after": "Fable review 2: before the MVP release"
@@ -366,6 +370,81 @@
       "status": "done"
     },
     {
+      "id": "WP-15B",
+      "title": "Shared definition helpers and the golden procedure",
+      "milestone": "M1F",
+      "requirements": [
+        "QRY-1",
+        "QRY-2"
+      ],
+      "depends_on": [
+        "WP-15"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "done"
+    },
+    {
+      "id": "WP-15C",
+      "title": "Definition checks at build time and in the model",
+      "milestone": "M1F",
+      "requirements": [
+        "SEM-1",
+        "SEM-2",
+        "SEM-3",
+        "QRY-1"
+      ],
+      "depends_on": [
+        "WP-15B"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-15D",
+      "title": "Search ranking and the confidence guidance",
+      "milestone": "M1F",
+      "requirements": [
+        "SRC-1",
+        "SRC-2",
+        "SRC-3",
+        "EVL-2"
+      ],
+      "depends_on": [
+        "WP-15B"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-15E",
+      "title": "Compiler answers and texts",
+      "milestone": "M1F",
+      "requirements": [
+        "QRY-3",
+        "MCP-1"
+      ],
+      "depends_on": [
+        "WP-15B"
+      ],
+      "suggested_model": "Haiku 5.5",
+      "status": "not_started"
+    },
+    {
+      "id": "WP-14C",
+      "title": "Held-out questions, retuning, and the embedding model",
+      "milestone": "M1F",
+      "requirements": [
+        "EVL-1",
+        "EVL-2",
+        "SRC-2"
+      ],
+      "depends_on": [
+        "WP-15D"
+      ],
+      "suggested_model": "Sonnet 5.5",
+      "status": "not_started"
+    },
+    {
       "id": "WP-16",
       "title": "Web shell: layout, sign-in, sessions",
       "milestone": "M2",
@@ -401,7 +480,8 @@
         "GOV-1"
       ],
       "depends_on": [
-        "WP-12B"
+        "WP-12B",
+        "WP-15C"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
@@ -458,7 +538,8 @@
       ],
       "depends_on": [
         "WP-16",
-        "WP-15"
+        "WP-15",
+        "WP-14C"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
@@ -500,7 +581,9 @@
       ],
       "depends_on": [
         "WP-13",
-        "WP-22"
+        "WP-22",
+        "WP-14C",
+        "WP-20"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"
@@ -555,7 +638,12 @@
         "WP-21",
         "WP-22",
         "WP-22B",
-        "WP-22C"
+        "WP-22C",
+        "WP-15B",
+        "WP-15C",
+        "WP-15D",
+        "WP-15E",
+        "WP-14C"
       ],
       "suggested_model": "Sonnet 5.5",
       "status": "not_started"

@@ -23,11 +23,12 @@ The order gets a thin slice of the whole system running as early as possible: by
 M0 Foundations        WP-01 → WP-02, WP-03 → WP-04, WP-05
 M1 Agent path         WP-06 → WP-07; WP-08 → WP-09 → WP-10 → WP-10B, WP-11; WP-12 → WP-12B → WP-13; WP-14 (after WP-08) → WP-04B, WP-15
    -- Fable review 1: core complete (model, search, compiler) --
+M1 fixes             WP-15B → WP-15C, WP-15D, WP-15E; WP-15D → WP-14C
 M2 People path        WP-16 → WP-17; WP-18 → WP-19 → WP-19B; WP-19C; WP-20; WP-21; WP-22 → WP-22B; WP-22C; WP-23
    -- Fable review 2: before the MVP release --
 ```
 
-Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-04 with WP-05; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12, WP-12B, and WP-13; WP-17, WP-18, WP-21, WP-22, WP-22C with each other; WP-19B with WP-19C.
+Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-04 with WP-05; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12, WP-12B, and WP-13; WP-17, WP-18, WP-21, WP-22, WP-22C with each other; WP-19B with WP-19C; WP-15C, WP-15D, and WP-15E with each other. M2 packages that touch none of the fixes (WP-16, WP-21, WP-22, WP-22C) may run alongside the M1 fixes; WP-18 waits for WP-15C, and WP-20 and WP-22B wait for WP-14C.
 
 | ID | Title | Requirements | Depends on | Model |
 |---|---|---|---|---|
@@ -49,16 +50,21 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
 | WP-04B | Sample definition fixes | DAT-3, SEM-2, EVL-1 | WP-04, WP-14 | Sonnet 5.5 |
 | WP-14 | Golden question set | EVL-1 | WP-04, WP-05, WP-08 | Sonnet 5.5 (first 20 and review), Haiku 5.5 (drafting the rest) |
 | WP-15 | Eval runner: retrieval and compile | EVL-2, EVL-3, EVL-5, NFR-2 | WP-12, WP-14 | Sonnet 5.5 |
+| WP-15B | Shared definition helpers and the golden procedure | QRY-1, QRY-2 | WP-15 | Sonnet 5.5 |
+| WP-15C | Definition checks at build time and in the model | SEM-1, SEM-2, SEM-3, QRY-1 | WP-15B | Sonnet 5.5 |
+| WP-15D | Search ranking and the confidence guidance | SRC-1, SRC-2, SRC-3, EVL-2 | WP-15B | Sonnet 5.5 |
+| WP-15E | Compiler answers and texts | QRY-3, MCP-1 | WP-15B | Haiku 5.5 |
+| WP-14C | Held-out questions, retuning, and the embedding model | EVL-1, EVL-2, SRC-2 | WP-15D | Sonnet 5.5 |
 | WP-16 | Web shell: layout, sign-in, sessions | WEB-5 | WP-12B | Sonnet 5.5 |
 | WP-17 | Discovery pages | WEB-1 | WP-16 | Sonnet 5.5 (pages), Haiku 5.5 (templates and page tests) |
-| WP-18 | Definition store write path and lifecycle | SEM-3, WEB-3, GOV-1 | WP-12B | Sonnet 5.5 |
+| WP-18 | Definition store write path and lifecycle | SEM-3, WEB-3, GOV-1 | WP-12B, WP-15C | Sonnet 5.5 |
 | WP-19 | Editor and Check | WEB-2 | WP-16, WP-18 | Sonnet 5.5 |
 | WP-19B | Review queue and audit page | WEB-3, GOV-1 | WP-19 | Sonnet 5.5 |
 | WP-19C | Tool-call log and catalog admin pages | GOV-2, SEM-4 | WP-16, WP-18 | Haiku 5.5 |
-| WP-20 | Resolver and test bench | WEB-4 | WP-16, WP-15 | Sonnet 5.5 |
+| WP-20 | Resolver and test bench | WEB-4 | WP-16, WP-15, WP-14C | Sonnet 5.5 |
 | WP-21 | OpenMetadata connector | CON-2 | WP-06 | Sonnet 5.5 |
 | WP-22 | Agent eval scorer and report | EVL-4 | WP-14, WP-15 | Sonnet 5.5 |
-| WP-22B | Agent eval harness, Gemini adapter, and runs | EVL-4, EVL-5 | WP-13, WP-22 | Sonnet 5.5 |
+| WP-22B | Agent eval harness, Gemini adapter, and runs | EVL-4, EVL-5 | WP-13, WP-22, WP-14C, WP-20 | Sonnet 5.5 |
 | WP-22C | MCP client compatibility | MCP-3 | WP-13 | Haiku 5.5 |
 | WP-23 | Hardening and release check | NFR-1, NFR-2, NFR-3, NFR-5 | all others | Sonnet 5.5 |
 
@@ -290,6 +296,63 @@ Packages that can run in parallel once their dependencies are done: WP-02 with W
   7. The CI stack job runs `python -m evals all` and uploads the report.
 
 **Fable review 1 (core complete)** follows WP-15.
+
+## M1 fixes (after Fable review 1)
+
+Source: `docs/reviews/core-complete.md`; findings C-1 to C-13 and open questions Q1 to Q12 refer to it, and the owner's rulings are D-32. WP-15B comes first because the step-2 packages would each change a copy of the logic it removes, and because it states the golden-file procedure that every later compiler change follows. The review's proving tests (`tests/unit/test_review_core_complete.py`, `tests/integration/test_review_core_complete.py`) are `xfail(strict=True)`: a package that fixes a finding removes that test's marker, and the test passing is the proof.
+
+### WP-15B Shared definition helpers and the golden procedure
+
+- **Read**: review findings C-7 and C-11; D-32 (1); `docs/ARCHITECTURE.md` sections 2 (dependency rule), 7.5, 7.6.
+- **Build**: one function each in `makna.model` for: the columns an expression reads, a metric and everything it depends on, and the unit of a metric. Delete the copies in `makna.model.sensitivity`, `makna.catalog.references`, `makna.definitions.validate`, `makna.compiler.plan`, `makna.services.definitions`, and `makna.services.service`. An expression that does not parse gets one answer everywhere, chosen so that every caller fails closed for personal data. Write the D-32 (1) procedure into `tests/unit/golden/make_governance_golden.py` and `CLAUDE.md`.
+- **Acceptance**
+  1. Each helper exists once; a test fails if any of the removed functions is defined again.
+  2. The governance golden file is byte-identical and compile eval parts A, B, and C are unchanged (no change in behaviour).
+  3. An expression that does not parse fails closed in V12, V18, V20, R02, R03, the planner, and the final check; one test per caller.
+  4. The golden script and `CLAUDE.md` state the D-32 (1) procedure, and no other instruction in the repository contradicts it.
+
+### WP-15C Definition checks at build time and in the model
+
+- **Read**: review findings C-1, C-5, C-6, C-9, C-10, open questions Q1 and Q4; D-32 (2) to (4); `docs/ARCHITECTURE.md` sections 5, 7.3, 7.4, 8.4.
+- **Build**: `makna index build` and the stack's `init` run `validate` with the example-request check (V19) and refuse to index on any error (C-1); a validation rule that a relationship's `to` columns are the target entity's `primary_key`, and a reference issue when the catalog says a declared key is not one (C-6); D-32 (2) (C-5); time filter values only `YYYY-MM-DD` or `YYYY-MM-DD HH:MM[:SS]`, a boolean `limit` refused, and a filter value whose type cannot match the catalog `data_type` of a one-column dimension refused with `INVALID_FILTER` (C-9); D-32 (4) (C-10); a measure takes a list `rules`, all of which must hold (schema, V18, planner, `uses_rule` edges), with the sample metrics that repeat `in_book` migrated (Q1); D-32 (3) (Q4).
+- **Acceptance**
+  1. The review tests for C-1, C-5 (two), C-6, and C-9 pass with their markers removed.
+  2. A definitions directory that fails `validate` makes `makna index build` and `init` exit non-zero and index nothing (integration tier).
+  3. The sample definitions validate, the golden expected CSVs are unchanged, and the compile eval passes (the pull request states part B's new count).
+  4. A metric whose measure has two rules compiles to SQL that applies both (unit tier on DuckDB; engine tier passes).
+  5. `collection_rate` accepts contract and installment dimensions; two relationships with different roles to one entity (for example booking and servicing branch) still refuse a ratio.
+  6. A request that reaches a deprecated entity carries a warning with the reason and the replacement.
+  7. The schema and `docs/ARCHITECTURE.md` sections 5.1, 5.2, 7.3, and 7.4 describe the new rules; the governance golden file is regenerated per D-32 (1) if compiler output changed.
+
+### WP-15D Search ranking and the confidence guidance
+
+- **Read**: review findings C-2 and C-3; `docs/ARCHITECTURE.md` sections 8.1, 8.2; `docs/EVALS.md` section 3.
+- **Build**: kind and status weights between 0.9 and 1.0, with `deprecated` equal to `approved` (a deprecated hit appears only when asked for, and carries its status); the `low` confidence guidance becomes "no definition clearly matches; read the descriptions of the hits before deciding" in the services, the MCP tool texts, and the tool snapshot; about ten dimension and entity questions in the retrieval eval, written from the business meaning in `docs/SAMPLE_DOMAIN.md`, with recall at 3 reported per kind (no gate yet).
+- **Acceptance**
+  1. The review test for C-3 passes with its marker removed.
+  2. A deprecated hit that matches best, asked for with `include_deprecated`, ranks first; a search for "region" returns `branch.region_name` in the first three.
+  3. The retrieval gates still pass, and the report shows recall at 3 per kind.
+  4. `config/makna.toml` and `docs/ARCHITECTURE.md` section 8.2 state the new weights and why.
+
+### WP-15E Compiler answers and texts
+
+- **Read**: review findings C-4, C-8, C-12, C-13 and review section 7; D-32 (6); `docs/ARCHITECTURE.md` sections 7.6, 9, 12.
+- **Build**: when a request has a dimension or a grain, the explanation says that the result is cut at N rows in key order and that a result of exactly N rows may be incomplete (C-8); the `makna_search` description drops the `ambiguous_between` sentence until WP-20 builds it, and WP-20 puts it back (C-12); the D-32 (6) wording in `README.md` and section 7.6 (C-4); a note in `docs/progress.json` for requirements that are only partly met at this milestone (C-13); the source disagreements of review section 7 resolved or marked as known.
+- **Acceptance**
+  1. A compiled request with a dimension carries the limit sentence; one without dimension or grain does not (unit tier); the governance golden file is regenerated per D-32 (1).
+  2. The MCP tool snapshot no longer mentions `ambiguous_between`, and WP-20's build text says to restore it.
+  3. Each disagreement in review section 7 is fixed or recorded as known in the document it concerns.
+
+### WP-14C Held-out questions, retuning, and the embedding model
+
+- **Read**: review finding C-2 and open question Q7; D-32 (5); DR-9; `docs/EVALS.md` sections 2, 3, 7.
+- **Build**: a held-out split of the golden set from the D-32 (5) questions (at least 40, half English and half Indonesian, with the expected metric); the retrieval report shows the tuned and held-out splits side by side; tuning reads only the tuned split; one more tuning pass; the held-out split measured with at least one other multilingual model that fastembed offers, if it can be downloaded (otherwise the pull request says only the default was measured); DR-9 updated with the result; a held-out gate the owner approves.
+- **Acceptance**
+  1. The report shows both splits; a test proves the tuning code cannot read the held-out split.
+  2. The tuned-split gates pass, and the held-out gate approved by the owner passes.
+  3. DR-9 states the model decision with the held-out numbers.
+  4. Manual: the owner (or the business user the owner chose) wrote the held-out questions without reading the synonyms; the pull request says who.
+
 
 ## M2 People path
 

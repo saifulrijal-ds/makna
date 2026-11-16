@@ -10,6 +10,10 @@ the proposal. The file under check is always seen as itself: a proposal is check
 content of the proposal, so a draft change to an entity is validated with its own new content
 and the rest of the repository as it stands.
 
+V12, V18, and V20 look for personal columns in other expressions. An expression that does not
+parse reads columns nobody can list, so, when the entity has personal data, each of them reports
+it instead of passing (V05 reports the parse failure itself).
+
 Not here:
 
 - V19 (every example request compiles) needs the compiler (WP-08). `validate` accepts
@@ -24,7 +28,7 @@ import datetime
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import PurePosixPath
 
 import sqlglot
@@ -44,7 +48,9 @@ from makna.model.definitions import (
     Metric,
     RuleRef,
 )
+from makna.model.expressions import ExpressionError, columns_read, dimension_columns
 from makna.model.functions import first_disallowed_function
+from makna.model.metrics import direct_inputs
 
 ExtraCheck = Callable[[DefinitionSet], list[Issue]]
 
@@ -75,6 +81,8 @@ def _parse(sql: str) -> exp.Condition:
         raise _ExprError(f"does not parse as one SQL expression ({first})") from None
     if isinstance(tree, exp.Block):
         raise _ExprError("holds more than one statement")
+    if tree.find(exp.Command) is not None:
+        raise _ExprError("is not an expression sqlglot can read (it is kept as raw text)")
     for dialect in DIALECTS:
         try:
             tree.sql(dialect=dialect, unsupported_level=ErrorLevel.RAISE)
@@ -104,15 +112,30 @@ def _is_bare_column(sql: str | None) -> bool:
         return False
 
 
-def _columns(sql: str | None) -> set[str]:
-    """Lower-case names of the columns an expression reads (empty if it does not parse)."""
-    if sql is None:
-        return set()
-    try:
-        tree = _parse(sql)
-    except _ExprError:
-        return set()
-    return {c.name.lower() for c in tree.find_all(exp.Column)}
+@dataclass
+class _Personal:
+    """The personal columns of one entity, as far as they can be known."""
+
+    columns: set[str] = field(default_factory=set)
+    unknown: bool = False
+    """A personal dimension's expression does not parse, so the set above may have gaps."""
+
+    def overlap(self, read: Callable[[], Iterable[str]]) -> tuple[list[str], str | None]:
+        """The personal columns `read()` returns, and why it cannot be shown that there are no
+        others (None when it can). An expression that does not parse fails closed (V12, V18,
+        V20): the check reports it as a problem, and never passes because the parse failed."""
+        try:
+            names = set(read())
+        except ExpressionError as error:
+            if self.columns or self.unknown:
+                return [], f"its expression {error}"
+            return [], None  # nothing personal to protect; V05 reports the expression
+        found = sorted(names & self.columns)
+        if self.unknown and names - self.columns:
+            # it reads a column that the list of personal columns does not hold, and the list
+            # has a gap: the column may be one the broken dimension reads
+            return found, "the expression of a personal dimension of this entity does not parse"
+        return found, None
 
 
 # --------------------------------------------------------------------------------------
@@ -195,14 +218,6 @@ def _is_personal(entity: Entity, dimension: Dimension) -> bool:
 
 def _dimension(entity: Entity, name: str) -> Dimension | None:
     return next((d for d in entity.dimensions if d.name == name), None)
-
-
-def _metric_inputs(metric: Metric) -> list[str]:
-    if metric.type == "ratio":
-        return [n for n in (metric.numerator, metric.denominator) if n is not None]
-    if metric.type == "derived":
-        return list(metric.inputs or [])
-    return []
 
 
 # --------------------------------------------------------------------------------------
@@ -296,14 +311,17 @@ class _Checker:
     # Entity: V05, V06, V07, V11, V12, V16, V17, V18 -----------------------------------
 
     def entity_checks(self, e: Entity) -> None:
-        personal_columns: set[str] = set()
+        personal = _Personal()
         rules = {r.name for r in e.rules or []}
         for i, dim in enumerate(e.dimensions):
             if dim.expr is not None:
                 self.check_expression(dim.expr, f"dimension {dim.name}", "dimensions", i, "expr")
             self.v11_masking_fits(dim, i)
             if _is_personal(e, dim):
-                personal_columns |= _columns(dim.expr if dim.expr is not None else dim.name)
+                try:
+                    personal.columns.update(dimension_columns(dim))
+                except ExpressionError:
+                    personal.unknown = True
                 if dim.values:
                     self.add(
                         "V17",
@@ -316,9 +334,16 @@ class _Checker:
         for i, dim in enumerate(e.dimensions):
             if _is_personal(e, dim):
                 continue
-            copied = sorted(
-                _columns(dim.expr if dim.expr is not None else dim.name) & personal_columns
-            )
+            copied, unknown = personal.overlap(partial(dimension_columns, dim))
+            if unknown and not copied:
+                self.add(
+                    "V20",
+                    f"dimension {dim.name} is not personal, and it cannot be shown that it "
+                    f"does not read a personal column: {unknown}",
+                    "dimensions",
+                    i,
+                    "expr" if dim.expr is not None else "name",
+                )
             if copied:
                 self.add(
                     "V20",
@@ -330,7 +355,15 @@ class _Checker:
                 )
         for i, rule in enumerate(e.rules or []):
             self.check_expression(rule.expr, f"rule {rule.name}", "rules", i, "expr")
-            overlap = sorted(_columns(rule.expr) & personal_columns)
+            overlap, unknown = personal.overlap(partial(columns_read, rule.expr))
+            if unknown and not overlap:
+                self.add(
+                    "V18",
+                    f"rule {rule.name} cannot be shown not to read a personal column: {unknown}",
+                    "rules",
+                    i,
+                    "expr",
+                )
             if overlap:
                 self.add(
                     "V18",
@@ -349,7 +382,7 @@ class _Checker:
                     "to",
                 )
         for i, measure in enumerate(e.measures or []):
-            self.measure_checks(e, measure, i, personal_columns, rules)
+            self.measure_checks(e, measure, i, personal, rules)
 
     def check_expression(self, sql: str, what: str, *where: str | int) -> None:
         try:
@@ -388,7 +421,7 @@ class _Checker:
             )
 
     def measure_checks(
-        self, e: Entity, m: Measure, index: int, personal_columns: set[str], rules: set[str]
+        self, e: Entity, m: Measure, index: int, personal: _Personal, rules: set[str]
     ) -> None:
         what = f"measure {m.name}"
         if m.expr is not None:
@@ -414,7 +447,7 @@ class _Checker:
                 index,
                 "time_dimension",
             )
-        problem = self.v12_problem(m, personal_columns)
+        problem = self.v12_problem(m, personal)
         if problem is not None:
             self.add("V12", f"{what}: {problem}", "measures", index, "agg")
         if m.rule is not None and m.rule not in rules:
@@ -426,14 +459,19 @@ class _Checker:
                 "rule",
             )
 
-    def v12_problem(self, m: Measure, personal_columns: set[str]) -> str | None:
+    def v12_problem(self, m: Measure, personal: _Personal) -> str | None:
         """Why a measure may not read personal columns, or None. A measure may count rows or
         distinct values of the personal column itself, and nothing else: no other aggregate, no
         expression around the column (it could test one person's value), no filter on it."""
-        in_filter = sorted(_columns(m.filter) & personal_columns)
+        in_filter, gap = personal.overlap(partial(columns_read, m.filter))
         if in_filter:
             return f"its filter reads personal column {', '.join(in_filter)}"
-        read = sorted(_columns(m.expr) & personal_columns)
+        if gap:
+            return f"its filter cannot be shown not to read a personal column: {gap}"
+        read, gap = personal.overlap(partial(columns_read, m.expr))
+        if gap and not (m.agg in NOT_AGGREGATE_AGGS and _is_bare_column(m.expr)):
+            # counting a bare column is allowed whether or not it is personal
+            return f"its expression cannot be shown not to read a personal column: {gap}"
         if not read:
             return None
         if m.agg not in NOT_AGGREGATE_AGGS:
@@ -484,7 +522,7 @@ class _Checker:
 
     def on_cycle(self, m: Metric) -> bool:
         seen: set[str] = set()
-        todo = _metric_inputs(m)
+        todo = list(direct_inputs(m))
         while todo:
             name = todo.pop()
             if name == m.name:
@@ -494,7 +532,7 @@ class _Checker:
             seen.add(name)
             other = self.view.metric(name)
             if other is not None:
-                todo.extend(_metric_inputs(other))
+                todo.extend(direct_inputs(other))
         return False
 
     def derived_expression(self, m: Metric) -> None:
@@ -620,7 +658,7 @@ class _Checker:
                 entities[target] = None
                 for step in chain:
                     entities[step.partition(".")[0]] = None
-        for name in _metric_inputs(m):
+        for name in direct_inputs(m):
             metrics[name] = None
         for kind, names in (("entity", entities), ("metric", metrics)):
             for name in names:
@@ -655,7 +693,7 @@ class _Checker:
             assert m.measure is not None
             resolved = self.view.resolve_measure(m.measure)
             return resolved is not None and resolved[1].semi_additive == "last"
-        for name in _metric_inputs(m):
+        for name in direct_inputs(m):
             other = self.view.metric(name)
             if other is not None and self.has_balance(other, seen):
                 return True
