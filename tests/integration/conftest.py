@@ -155,3 +155,25 @@ def fresh_service_world(empty_database: URL) -> Iterator[tuple[Engine, Any]]:
     engine = create_engine(empty_database)
     yield engine, users
     engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def web_engine(test_database_url: URL) -> Iterator[Engine]:
+    """A migrated database for the web tests of one module. Each test makes its own users (with
+    unique emails), so tests do not see each other's changes."""
+    from makna.index import migrate
+
+    name = f"makna_test_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(test_database_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'CREATE DATABASE "{name}"'))
+    url = test_database_url.set(database=name)
+    try:
+        migrate.upgrade(url.render_as_string(hide_password=False))
+        engine = create_engine(url)
+        yield engine
+        engine.dispose()
+    finally:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        admin.dispose()
