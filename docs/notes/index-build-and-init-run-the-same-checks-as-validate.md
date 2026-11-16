@@ -1,0 +1,5 @@
+`makna index build` and the stack's `init` run `validate` with the example-request check (V19) and index nothing when it finds an error.
+
+Until WP-18 builds the lifecycle, the build is the only gate between a directory and "approved" in the index (C-1). It used to refuse only files it could not read (V01), so a metric with a misspelt filter value and an example request that could not compile was served as approved and compiled to SQL that returned NULL. Both entry points now call `makna.services.examples.validate_for_build` (the same call `makna validate` makes), print every problem with file, rule, and message, and stop: exit 1 for the CLI, `InitError` for the init step. The check runs before the database is touched, so a refused build leaves an existing index as it was.
+
+V19 lives in the services package because the definitions package cannot import the compiler (`v19-lives-in-services-because-two-packages-cannot-meet.md`), which is why the shared function is there too. WP-18 builds the index from `HEAD`, and must keep the gate for official files; a proposal file is indexed with its errors.

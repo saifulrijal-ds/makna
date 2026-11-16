@@ -158,7 +158,7 @@ The schema is `semantic/schema/makna.schema.json` (JSON Schema 2020-12). Validat
 | Kind | What it is | Key fields |
 |---|---|---|
 | `domain` | A business area used for browsing. | name, label, description |
-| `entity` | A business object backed by one physical table. | `source.table`, `primary_key`, `dimensions`, `measures`, `relationships`, `rules` |
+| `entity` | A business object backed by one physical table. | `source.table`, `primary_key`, `dimensions`, `measures` (each with its `rules`), `relationships`, `rules` |
 | `metric` | A number people ask for. | `type` (`simple`, `ratio`, `derived`), `measure` or `numerator`/`denominator` or `expr`/`inputs`, `filters`, `join_paths`, `format`, `time_grains`, `example_questions`, `example_requests`, `caveats` |
 | `glossary_term` | A business word and its meaning. | `related` (objects it explains), `catalog_term` |
 
@@ -167,9 +167,9 @@ Every object carries `name`, `label`, `description`, `owner`, `status`, `sensiti
 Inside an entity:
 
 - A **dimension** is a scalar SQL expression over the entity's own columns, with a type (`categorical`, `time`, `boolean`, `numeric`). Categorical dimensions may list their `values` so that people and agents can write filters without querying.
-- A **measure** is an aggregation (`sum`, `count`, `count_distinct`, `avg`, `min`, `max`) of an expression over the entity's own columns, with an optional row filter and exactly one `time_dimension`: the official date for that measure. `semi_additive: last` marks a balance measure.
-- A **rule** is a named boolean condition over the entity's own columns, written once and reused (D-17), for example `non_performing: days_past_due > 90`. A measure uses one with `rule:`; a metric uses one in `filters` as `{rule: entity.rule}`, on its measure's entity or an entity reachable from it. When a rule changes, review lists every measure and metric that uses it.
-- A **relationship** is an approved join from this entity (the "many" side) to another entity (the "one" side), by key columns. These are the only joins the compiler will ever write.
+- A **measure** is an aggregation (`sum`, `count`, `count_distinct`, `avg`, `min`, `max`) of an expression over the entity's own columns, with an optional row filter, an optional list of rules, and exactly one `time_dimension`: the official date for that measure. `semi_additive: last` marks a balance measure.
+- A **rule** is a named boolean condition over the entity's own columns, written once and reused (D-17), for example `non_performing: days_past_due > 90`. A measure uses rules with `rules: [non_performing, in_book]` (names of rules of its own entity): **every** rule must hold, and the measure is then the business number by itself, so a metric does not repeat them. The older `rule: name` key still reads as `rules: [name]`; giving both is an error, and new files write `rules`. A metric uses a rule in `filters` as `{rule: entity.rule}`, on its measure's entity or an entity reachable from it. When a rule changes, review lists every measure and metric that uses it.
+- A **relationship** is an approved join from this entity (the "many" side) to another entity (the "one" side), by key columns, and its `to` columns are exactly the target's `primary_key` (V21, and R06 against the catalog), so a join finds one row. These are the only joins the compiler will ever write. **A relationship's name is its role**: `contract` on a payment and on an installment both mean "the contract of this row", and `booking_branch` and `servicing_branch` are two meanings of "branch". Approval reviews the name, because the ratio rule of section 7.4 compares it.
 
 A **metric** is one of:
 
@@ -179,7 +179,7 @@ A **metric** is one of:
 
 Every approved metric also has at least one **example request** (D-18): a business question and the structured request (section 7.1, without `metric`) that answers it. It is a verified example an agent can copy, and it must compile (V19), so it cannot drift from the definition.
 
-Expressions (`expr` and `filter` on dimensions, measures, and rules) are plain SQL that sqlglot parses and prints for the target dialect (D-22). They may not contain subqueries, aggregates, or window functions. Metric `filters` and request filters are structured (`dimension`, `op`, `value`), never SQL text.
+Expressions (`expr` and `filter` on dimensions, measures, and rules) are plain SQL that sqlglot parses and prints for the target dialect (D-22). **They are written in sqlglot's neutral SQL, not in PostgreSQL** (D-32 ruling 2): Makna reads them with sqlglot's default parser, which differs from PostgreSQL in a few spellings, so V05 refuses what the two readings disagree on, with a message that says what to write instead: `^` (a power in PostgreSQL, an exclusive or in neutral SQL; write `POWER(x, y)`), the type names `int2`, `int4`, and `int8` (write `SMALLINT`, `INTEGER`, `BIGINT`), and any expression whose PostgreSQL text differs between the neutral parse and a PostgreSQL parse (`CONCAT(a, b)`, which neutral SQL writes as `a || b` and PostgreSQL does not read the same on NULL, is one). Two differences that mean the same are not counted: division (the neutral reading adds a floating-point cast, deliberately, see section 7.5) and `IS NOT NULL`. Field selection on a value, as in `(segment).email`, is refused too: the name after the dot is not a column of the table, so no check on columns could compare it with the personal columns. They may not contain subqueries, aggregates, or window functions. Metric `filters` and request filters are structured (`dimension`, `op`, `value`), never SQL text.
 
 ### 5.2 File layout and lifecycle states
 
@@ -196,13 +196,13 @@ Expressions (`expr` and `filter` on dimensions, measures, and rules) are plain S
 | `draft` | proposal file | Being written. Visible to curators. Never served to agents by default; never compiled. |
 | `in_review` | proposal file | Submitted. Waiting for an approver. |
 | `approved` | official file | The official version. `version` counts approvals. |
-| `deprecated` | official file | Hidden from search by default. Refused by the compiler. Carries a reason and an optional replacement. |
+| `deprecated` | official file | Hidden from search by default. A deprecated **metric** is refused by the compiler (`DEPRECATED`). A deprecated **entity** stays usable (D-32 ruling 4): its dimensions are offered, and a request that reaches it, by a join or as the entity of a measure, compiles and carries a warning with the entity, the reason, and the replacement. Carries a reason and an optional replacement. |
 
 An approved object with a pending change has both files: the official file keeps being served while the proposal is edited and reviewed. Approval replaces the official file with the proposal's content and deletes the proposal file, in one commit (section 10).
 
 ### 5.3 Validation rules
 
-Validation has two levels. **Definition errors** block saving a proposal as `in_review` and block approval. **Reference issues** (SEM-4) are found by comparing definitions with the synced catalog; they are reported after every sync and every index run, they block approval, and they make the compiler refuse the affected objects.
+Validation has two levels. **Definition errors** block saving a proposal as `in_review` and block approval, and until WP-18 they also block `makna index build` and the stack's `init`: both run all of V01 to V21 **including V19** (the example requests, which need the compiler) before they index anything, print each problem (file, rule, message), and index nothing when there is one (C-1). **Reference issues** (SEM-4) are found by comparing definitions with the synced catalog; they are reported after every sync and every index run, they block approval, and they make the compiler refuse the affected objects.
 
 Definition errors (`makna.definitions.validate`; each rule has a code used in tests and error messages):
 
@@ -212,7 +212,7 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V02 | The path matches the content: domain folder, kind folder, file name equals `name`. A proposal file has status `draft` or `in_review`; an official file has `approved` or `deprecated`. |
 | V03 | Names are unique per kind across the repository. Inside an entity, dimension, measure, and relationship names are unique. Entity and dimension names contain no double underscore, because `__` separates entity and dimension in result column names (section 7.2). |
 | V04 | `domain` names an existing domain. |
-| V05 | Every `expr` and `filter` parses with sqlglot and prints for both the `postgres` and `duckdb` dialects, and contains no subquery, aggregate, or window function, and calls only functions on the allow-list of `makna.model.functions` (WP-10B): conditionals and casts, arithmetic and rounding, text, and date functions. A cast may target only integer, numeric, floating, text, date, timestamp, or boolean types (no `regclass` or other `reg*` or user-defined types), and a schema-qualified function name such as `public.btrim(x)` is refused. Any other function, `set_config`, `current_setting`, `pg_*`, `nextval`, `random` included, is an error that names it. |
+| V05 | Every `expr` and `filter` parses with sqlglot and prints for both the `postgres` and `duckdb` dialects (a printer that fails is a V05 issue, never a crash), is written in neutral SQL (section 5.1: no `^`, no `int2`/`int4`/`int8`, and a PostgreSQL parse prints the same PostgreSQL text, division and `IS NOT NULL` excepted), selects no field of a value, and contains no subquery, aggregate, or window function, and calls only functions on the allow-list of `makna.model.functions` (WP-10B): conditionals and casts, arithmetic and rounding, text, and date functions. A cast may target only integer, numeric, floating, text, date, timestamp, or boolean types (no `regclass` or other `reg*` or user-defined types), and a schema-qualified function name such as `public.btrim(x)` is refused. Any other function, `set_config`, `current_setting`, `pg_*`, `nextval`, `random` included, is an error that names it. |
 | V06 | A measure's `time_dimension` names a dimension of type `time` on the same entity. |
 | V07 | A relationship's `to` names an existing entity. |
 | V08 | A simple metric's `measure` resolves. Ratio and derived metrics resolve to existing metrics, with no cycle. A derived `expr` uses only names in `inputs` and only `+ - * /`, parentheses, numbers, `NULLIF`, and `COALESCE`. |
@@ -225,9 +225,10 @@ Definition errors (`makna.definitions.validate`; each rule has a code used in te
 | V15 | `default_grain` is one of `time_grains`. A metric with a balance measure among its inputs does not offer `day` or `week`. |
 | V16 | A measure's `time_dimension` is not a personal dimension (a time range would filter on raw personal dates, and freshness would show one). |
 | V17 | A personal dimension has no `values` (they would be returned by `get_definition` and indexed for search). |
-| V18 | A measure's `rule` names a rule on the same entity; a metric's `{rule: entity.rule}` names a rule on an entity reachable from its measure; a rule's `expr` reads no column of a personal dimension. |
+| V18 | Each name in a measure's `rules` (or its older `rule`) names a rule on the same entity; a metric's `{rule: entity.rule}` names a rule on an entity reachable from its measure; a rule's `expr` reads no column of a personal dimension. |
 | V19 | Every example request plans and compiles with no error (checked with the compiler by `makna.services.examples`, which `makna validate` runs, and at submit and approve). "Compiles" means: it plans, SQL is generated for the `postgres` dialect, and that SQL re-parses with sqlglot's `postgres` dialect. Nothing is executed, so the check needs no database. It does not need the metric to be approved yet. |
 | V20 | A dimension that is not personal reads no column of a personal dimension on the same entity (a copy would bypass masking and refusals). |
+| V21 | The `to` columns of a relationship are exactly the `primary_key` of its target entity, so that a join finds one row of the target and cannot multiply the rows of a measure (section 7.3). |
 
 Reference issues (`makna.catalog.references`):
 
@@ -238,10 +239,11 @@ Reference issues (`makna.catalog.references`):
 | R03 | A dimension reads a column whose catalog tags map to a stricter sensitivity than the dimension declares (section 7.6). The dimension is treated at the stricter level until a curator fixes the file. |
 | R04 | `catalog_term` on a glossary term does not exist in the catalog. |
 | R05 | A metric reads a column that is personal (the catalog marks it, or a definition declares it) where personal data is not allowed: in a metric filter, a rule, a measure filter, or a join key. Found by the indexer, not by the catalog check, because it needs the compiler (WP-12, below). |
+| R06 | The `primary_key` of an entity is not the primary key the catalog reports for its table: a declared column the catalog does not mark as a key, or a key column the entity leaves out. Raised only when the catalog marks a key for the table, and it makes the compiler refuse the entity (V21 trusts the declared key, so a wrong one would let a join multiply rows). |
 
 **R05 (WP-12).** The compiler's final check refuses SQL that reads a personal column outside a mask or a count (section 7.6). A definition can still make it do so when the catalog tags a column personal that the definition reads in a filter, a rule, or as a join key: `verify` then raises `GovernanceError`, an internal error that fails closed and gives an agent nothing to act on. Two places turn it into a structured refusal:
 
-- **Index time, where it is cheap.** `makna index build` compiles each approved metric with no dimensions under the configured governance policy. If that raises `GovernanceError` about a personal column, the indexer opens `R05` on `metric:<name>` (part `column:<table>.<column>`, a message that names the table and column and never a value). It closes the row when the compile works again. The catalog sync leaves `R05` rows alone (`makna.catalog.references.plan_changes` closes only R01 to R04), and `makna catalog issues` lists them. A request with no dimension never reads a join key, so a personal join key is found at request time.
+- **Index time, where it is cheap.** `makna index build` compiles each approved metric with no dimensions under the configured governance policy. If that raises `GovernanceError` about a personal column, the indexer opens `R05` on `metric:<name>` (part `column:<table>.<column>`, a message that names the table and column and never a value). It closes the row when the compile works again. The catalog sync leaves `R05` rows alone (`makna.catalog.references.plan_changes` closes only R01 to R04 and R06), and `makna catalog issues` lists them. A request with no dimension never reads a join key, so a personal join key is found at request time.
 - **Request time.** `compile_query` refuses a metric (or an input of it) with an open `R05` before it plans, and turns a `GovernanceError` that names a table and column into the same refusal: `BROKEN_REFERENCE` with `details.issues` holding one issue with code `R05`, and a message that says a curator must change the definition or the catalog tags. The compiler's internal reason goes to the application log at warning level, as table and column names only. A `GovernanceError` that names no column (a function that is not allowed, a clash of result column names) is an internal error of the generator, not a catalog problem, and is `INTERNAL`.
 
 When the reference check has also opened R03 for a dimension the catalog tags (the definitions were given to the sync), the planner's `BROKEN_REFERENCE` for R03 comes first.
@@ -345,7 +347,7 @@ All tables are in the `makna` database. Everything in the first two groups can b
 |---|---|
 | `semantic_object` | `id` (`kind:name`), `kind`, `name`, `domain`, `label`, `status` (state of the version being served: `approved`, `deprecated`, or, for an object with no official file, `draft`/`in_review`), `has_proposal`, `proposal_status`, `official` jsonb (the official file's content), `proposal` jsonb, `official_path`, `official_commit`, `proposal_commit`, `version`, `owner_team`, `sensitivity`, `derived` jsonb (section 5.4), `updated_at` |
 | `object_edge` | `src_id`, `dst_id`, `type` (`input_of`, `measured_on`, `joins_to`, `uses_rule`, `explains`, `replaced_by`; `same_entity` is read from `measured_on`, not stored) |
-| `reference_issue` | `id`, `object_id`, `part` (for example `dimension:phone_number`), `code` (R01 to R05), `message`, `opened_at`, `closed_at` |
+| `reference_issue` | `id`, `object_id`, `part` (for example `dimension:phone_number`), `code` (R01 to R06), `message`, `opened_at`, `closed_at` |
 | `search_document` | `id`, `object_id`, `kind` (`metric`, `entity`, `dimension`, `rule`, `glossary_term`, `domain`, `column`), `status`, `domain`, `names` text, `description` text, `extra` text, `tsv` tsvector (generated), `embedding` vector, `text_hash` |
 | `index_state` | `key`, `value` (`last_indexed_commit`, `definitions_version`, `embedding_model`, and since WP-12 `governance_fingerprint`, `derived_definitions_version`, `derived_catalog_marker`) |
 | `data_freshness` | `object_id`, `latest_value` (the newest value of the measure's time dimension), `checked_at` |
@@ -404,7 +406,7 @@ Details settled in WP-10:
 
 ### 7.3 Join paths (QRY-1 "only approved join paths")
 
-Relationships form a directed graph from "many" to "one". To reach entity B from a measure's entity A, the compiler may only walk relationships forward. Walking forward can never multiply rows of A, so no join can inflate a measure.
+Relationships form a directed graph from "many" to "one". To reach entity B from a measure's entity A, the compiler may only walk relationships forward. Walking forward can never multiply rows of A, so no join can inflate a measure. That holds because each relationship's target columns are the target's primary key, which validation checks (V21) and the catalog check confirms (R06); without those checks it would be an unchecked declaration.
 
 Rule for choosing the path from A to B:
 
@@ -420,7 +422,7 @@ In the sample domain, `contract` reaches `branch` by `contract.booking_branch` a
 - For a **simple metric**: every dimension of the measure's entity and of every entity reachable by rule 7.3.
 - For a **ratio or derived metric**: a dimension `E.d` is available only if every input can reach `E` **and every input's path enters `E` through the same final relationship**. This prevents dividing a number by booking branch by a number by servicing branch.
 - A personal dimension without a masking rule is listed as unavailable with the reason, so agents do not try it.
-- "The same final relationship" compares relationship names: two inputs from different tables (for example `payment.contract` and `installment.contract`) enter `contract` through different relationships, so a ratio of them does not offer `contract` dimensions until one input pins a chain that ends in the same relationship (for example `join_paths: {contract: [payment.installment, installment.contract]}` on the payment input). An entity that one input reads itself (`installment` for a ratio with a metric measured on installments) cannot be aligned by a pin. Entities left out because of an ambiguous path or inconsistent inputs are recorded with the reason, and the reason is the warning for curators.
+- "The same final relationship" compares a relationship's own name and its target, not the name with its entity in front (D-32 ruling 3). A relationship's name is its role (section 5.1). `payment.contract` and `installment.contract` are both the relationship `contract` to `contract`: the contract the row belongs to, one meaning in two tables, so a ratio of payments and installments offers `contract` dimensions. `contract.booking_branch` and `contract.servicing_branch` are two meanings of "branch" (a ratio of one by the other would divide unlike numbers), and so are a billing and a shipping link to one region: they differ, and the entity's dimensions are left out until the inputs pin chains that end in relationships of the same name. No rule on the shape of the graph can tell the two cases apart, so the naming is a rule that approval reviews. An entity that one input reads itself (`installment` for `collection_rate`, whose denominator is measured on installments) has no relationship to compare and cannot be aligned by a pin, so it is left out. Entities left out because of an ambiguous path or inconsistent inputs are recorded with the reason, and the reason is the warning for curators.
 
 ### 7.5 SQL generation
 
@@ -430,7 +432,7 @@ For each input (simple metric), one subquery:
 SELECT [date_trunc(grain, <time dimension>) AS metric_time,] <dimension exprs>, <agg>(<measure expr>) AS <input name>
 FROM <measure entity table> AS t0
 LEFT JOIN <next entity on the path> AS t1 ON <relationship keys> ...
-WHERE (<measure filter>) AND <metric filters> AND <request filters>
+WHERE (<measure filter>) AND (<each rule of the measure>) AND <metric filters> AND <request filters>
   AND <time dimension> >= DATE time_start AND <time dimension> < DATE time_end
   [AND <time dimension> IN (<last snapshot date per period>)]      -- balance measures only
 GROUP BY <the same key expressions>
@@ -513,10 +515,10 @@ Compilation fails with one structured error. Each error has a code, a message th
 | `DIMENSION_NOT_AVAILABLE` | It exists but this metric cannot be grouped or filtered by it. | reason, available dimensions |
 | `NO_JOIN_PATH`, `AMBIGUOUS_JOIN_PATH` | Section 7.3. Normally caught earlier as `DIMENSION_NOT_AVAILABLE`. | candidate paths |
 | `INVALID_GRAIN` | Grain not offered by the metric. | allowed grains |
-| `INVALID_FILTER` | Operator or value does not fit the dimension. | expected type, allowed values |
+| `INVALID_FILTER` | Operator or value does not fit the dimension: a time value that is not `YYYY-MM-DD` or `YYYY-MM-DD HH:MM[:SS]`, and (from the service, which has the catalog) a value that cannot be compared with the column of a dimension that reads one column. | expected type, allowed values, and the catalog type when the catalog decided |
 | `INVALID_TIME_RANGE` | Not ISO dates, or start is not before end. | |
 | `PERSONAL_DATA_REFUSED` | Section 7.6. The governance policy (D-29) decides which uses are refused: under `strict` all of them. | the dimension, and whether a masked form exists |
-| `LIMIT_EXCEEDED` | Limit above 10000 (or below 1). | the limit and the maximum |
+| `LIMIT_EXCEEDED` | Limit above 10000 (or below 1). A boolean limit is not a number, and the service refuses it as an invalid input (section 12) before planning. | the limit and the maximum |
 
 The service layer adds five codes of its own, which are not in this table (section 12, "Service errors"). A compiler error passes through the services with its own code. `BROKEN_REFERENCE` can also carry an `R05` issue (section 5.3). A curator, approver, or admin who asks for a draft metric gets `NOT_APPROVED`; a viewer or token gets `UNKNOWN_METRIC`, as for an id that does not exist, because the compiler plans against the approved snapshot only.
 
@@ -535,7 +537,7 @@ The sentences come in a fixed order: the formula and how the inputs are combined
 
 After the join sentences, each selected personal dimension that is masked gets a sentence that says it is masked and how (`redact`, `truncate_date` with its grain, or `bucket` with its width). When the governance policy relaxes at least one rule (D-29), one last sentence names the mode and each relaxed rule, for example "This server runs in governance mode custom, which relaxes allow_personal_filters = true (filters on personal dimensions are allowed), so the personal-data protection that applies by default is reduced for this result." Under `strict`, and under `custom` with nothing relaxed, there is no such sentence.
 
-It also returns `warnings`, for example "Outstanding Principal is a balance: the value for each quarter is the balance at its last month end.", or, for a request with a personal dimension, "Groups built from fewer than 10 Customer records are left out of this result to protect personal data. This does not stop someone from comparing two requests that differ by one person. The number of groups left out is in the result column `__groups_left_out`, the same on every row. A result with no rows can mean that every group was left out." The warning names the column and does not state the number, because the number is only known when the SQL runs (section 7.2). When the policy relaxes a rule, `warnings` ends with one more warning that names the mode and each relaxed rule with its value: "Governance mode off relaxes min_group_size = 0 (no group is left out for being small), allow_personal_filters = true (filters on personal dimensions are allowed), apply_masks = false (masked personal dimensions are returned unmasked) and allow_unmasked_personal = true (personal dimensions without a masking rule are returned unmasked). The server configuration sets this, not the request. Personal-data protection is reduced: check that the people and agents who can read this result may see the data it can contain." A rule is listed only if the policy relaxes it, in this order: `min_group_size`, `allow_personal_filters`, `apply_masks`, `allow_unmasked_personal`. With `min_group_size = 0` there is no minimum-group-size warning.
+It also returns `warnings`, for example "Outstanding Principal is a balance: the value for each quarter is the balance at its last month end.", or, for each deprecated entity the request reaches (by a join or as the entity of a measure; D-32 ruling 4), "The entity Region (region), which this result reads, is deprecated: Regions were merged into areas. Its replacement is entity:area. It still works, and a curator should move the definitions that use it to its replacement." (each entity once, in the order of their names, after the balance warnings), or, for a request with a personal dimension, "Groups built from fewer than 10 Customer records are left out of this result to protect personal data. This does not stop someone from comparing two requests that differ by one person. The number of groups left out is in the result column `__groups_left_out`, the same on every row. A result with no rows can mean that every group was left out." The warning names the column and does not state the number, because the number is only known when the SQL runs (section 7.2). When the policy relaxes a rule, `warnings` ends with one more warning that names the mode and each relaxed rule with its value: "Governance mode off relaxes min_group_size = 0 (no group is left out for being small), allow_personal_filters = true (filters on personal dimensions are allowed), apply_masks = false (masked personal dimensions are returned unmasked) and allow_unmasked_personal = true (personal dimensions without a masking rule are returned unmasked). The server configuration sets this, not the request. Personal-data protection is reduced: check that the people and agents who can read this result may see the data it can contain." A rule is listed only if the policy relaxes it, in this order: `min_group_size`, `allow_personal_filters`, `apply_masks`, `allow_unmasked_personal`. With `min_group_size = 0` there is no minimum-group-size warning.
 
 ## 8. Search and question resolution
 
@@ -586,7 +588,7 @@ The evals measure how often this works (EVL-2 abstention score, and the no-answe
 
 ### 8.4 From a question to a request (Q-3, DR-3)
 
-In the main flow the **agent** does this: it calls `makna_search`, reads the candidates, calls `makna_get_definition` for the one it picks, builds a request, and calls `makna_compile_query`. The compiler validates everything, so a wrong request fails with an actionable error instead of producing wrong SQL.
+In the main flow the **agent** does this: it calls `makna_search`, reads the candidates, calls `makna_get_definition` for the one it picks, builds a request, and calls `makna_compile_query`. The compiler validates everything, so a wrong request fails with an actionable error instead of producing wrong SQL. That includes the values of filters: a time value is `YYYY-MM-DD` or `YYYY-MM-DD HH:MM[:SS]` and nothing else (the planner), and a value that cannot be compared with the column a dimension reads, such as a number against a text column, is `INVALID_FILTER` (the service, from the `data_type` the synced catalog gives that column: the planner plans against definitions and does not know column types, while compiling needs a catalog, D-30). A dimension that reads an expression, not one column, is not checked against a column type.
 
 For the test bench (WEB-4) and as a baseline in the evals, Makna has a **rule-based resolver** (`makna.resolve`). It never calls a language model.
 
@@ -654,12 +656,12 @@ If step 4 fails, git is ahead of the index. `makna index sync` (also run at star
 **Commits made outside the application are not trusted.** A commit is an application commit only if its sha is in `audit_event`, or it matches an open intent row as above. Commit trailers are not proof, because anyone can write them. Any other commit is an **external change**: a merged pull request, a hand edit, or a coding agent's commit. For each object such a commit touches, `index sync`:
 
 - logs `external_change` with the commit's author;
-- indexes the new content as a proposal with status `in_review` and `drafted_by: external:<author email>`, with its validation errors if any (V01 to V20);
+- indexes the new content as a proposal with status `in_review` and `drafted_by: external:<author email>`, with its validation errors if any (V01 to V21);
 - keeps serving the official content of the last application commit for that file (`git show <official_commit>:<path>`).
 
 An external change is therefore never served to agents or viewers as approved, and never skips the rules of section 11. It appears in `/review` like any proposal. Approving it is a normal `approve` by a user who may approve (section 11). That writes a new application commit with `version` + 1. Rejecting it moves the external content to `<name>.draft.yaml` with status `draft` and restores the official file to its last approved content, in one application commit. An organization that reviews definitions as pull requests in a git host can keep doing so, but the merged result still needs one approval in Makna, and that is the approval that counts.
 
-`makna index build` rebuilds the index from `HEAD` and `audit_event`. For each official file it serves the newest version written by an application commit, found with `git log` on the file and matched against `audit_event`. Later external commits on that file become a proposal as above. `init` seeds the repository from `semantic/definitions/` as an application action (`seed`, recorded in `audit_event`), so the sample definitions are approved on a fresh install. In this source repository, those sample definitions are reviewed through the project's own pull requests.
+`makna index build` rebuilds the index from `HEAD` and `audit_event`, and keeps the build gate of section 5.3 (C-1): before it serves an official file it runs the same validation as `makna validate`, V19 included, and it indexes nothing when an official file fails it. A proposal file (and an external change) is indexed with its errors, as above. For each official file it serves the newest version written by an application commit, found with `git log` on the file and matched against `audit_event`. Later external commits on that file become a proposal as above. `init` seeds the repository from `semantic/definitions/` as an application action (`seed`, recorded in `audit_event`), so the sample definitions are approved on a fresh install. In this source repository, those sample definitions are reviewed through the project's own pull requests.
 
 Agents see a change as soon as step 3 commits: every service call reads the index, and the in-memory model snapshot is refreshed when `definitions_version` changes. No restart or redeploy is involved.
 
@@ -832,7 +834,7 @@ FastAPI serves HTML rendered with Jinja templates. HTMX (one vendored script) gi
 | `/domains/<name>` | Objects of a domain, grouped by kind. | WEB-1 |
 | `/metrics/<name>` | Plain-language meaning first; then formula in words, owner, status and version, freshness ("data up to 2026-06-30, checked 2 hours ago"), caveats, example questions (each opens the test bench), dimensions and grains, related objects; for curators: the YAML, history, and reference issues. | WEB-1 |
 | `/entities/<name>`, `/glossary/<name>` | The same pattern. | WEB-1 |
-| `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V20) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
+| `/edit/<kind>/<name>`, `/new/<kind>` | Ace editor with the YAML. "Check" posts the text and shows errors with line numbers (V01 to V21) without saving. "Save draft" and "Submit for review" ask for a reason. A side-by-side difference with the official version. New objects start from a template per kind. | WEB-2 |
 | `/review` | Queue of proposals in review: object, author, reason, difference, validation result, reference issues. Approve and Reject ask for a reason. Buttons are shown only to users who may approve that object. | WEB-3 |
 | `/bench` | Type a question. Shows, in order: search hits with scores and matched terms; the resolution (status, chosen metric or the candidates, dimensions, filters, time, unresolved words); the request as JSON, editable; and the SQL and explanation (with a copy button). The bench does not run the SQL (D-21). | WEB-4 |
 | `/audit`, `/logs/tool-calls` | Filterable tables (built in WP-19B and WP-19C). | GOV-1, GOV-2 |
@@ -883,7 +885,7 @@ Details settled in WP-15:
 | SEM-1 | 5.1 (including rules and example requests), `semantic/schema/` | WP-03, WP-08 (V19) |
 | SEM-2 | 5.1 common fields | WP-03, WP-04 |
 | SEM-3 | 5.2, 10 | WP-03, WP-18 |
-| SEM-4 | 5.3 reference issues R01 to R04, 6.4 `reference_issue`, 13 `/admin/catalog` | WP-06, WP-19C |
+| SEM-4 | 5.3 reference issues R01 to R04 and R06, 6.4 `reference_issue`, 13 `/admin/catalog` | WP-06, WP-19C |
 | SEM-5 | Not in MVP. DR-1 names Apache Ossie as the target. | — |
 | SRC-1 | 8.2 | WP-07 |
 | SRC-2 | 8.2 (`simple` configuration, synonyms in `names`), 8.1 (multilingual model) | WP-07 |
