@@ -10,6 +10,10 @@ the proposal. The file under check is always seen as itself: a proposal is check
 content of the proposal, so a draft change to an entity is validated with its own new content
 and the rest of the repository as it stands.
 
+V12, V18, and V20 look for personal columns in other expressions. An expression that does not
+parse reads columns nobody can list, so, when the entity has personal data, each of them reports
+it instead of passing (V05 reports the parse failure itself).
+
 Not here:
 
 - V19 (every example request compiles) needs the compiler (WP-08). `validate` accepts

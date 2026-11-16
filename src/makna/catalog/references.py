@@ -6,6 +6,10 @@ Codes:
 - R02  A column read by a primary key, relationship key, `expr`, or `filter` is not in the table.
 - R03  A dimension reads a column whose catalog tags map to a stricter sensitivity than the
        dimension declares.
+
+An expression that does not parse reads columns nobody can list, so its part gets an R02 finding
+(and, for a dimension, an R03 finding): the check fails closed (docs/notes/an-expression-that-
+does-not-parse-must-stop-the-check.md).
 - R04  `catalog_term` of a glossary term does not exist in the catalog (matched against the
        catalog id or the name of a catalog glossary term).
 
