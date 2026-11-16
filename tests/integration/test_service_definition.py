@@ -129,7 +129,8 @@ def test_a_simple_metric_and_a_collection_metric_show_their_time_dimensions(
     assert "note" not in simple["time"]  # not a balance
     assert simple["inputs"] == ["measure:contract.disbursed_principal"]
     mixed = definition(service_world, "viewer", "metric:collection_rate")
-    assert sorted(mixed["time"]["dimensions"]) == ["installment.due_date", "payment.posting_date"]
+    # inputs in the order the definition lists them (numerator first), as the planner does
+    assert mixed["time"]["dimensions"] == ["payment.posting_date", "installment.due_date"]
     assert "dimension" not in mixed["time"]
 
 

@@ -32,11 +32,17 @@ class ExpressionError(ValueError):
 
 @lru_cache(maxsize=4096)
 def _read(sql: str) -> tuple[str, ...]:
+    # The message never quotes the text: it reaches agents (the planner's refusal), and an
+    # expression can hold a table's column names. Curators get the detail from V05.
     try:
         tree = sqlglot.parse_one(sql, into=exp.Condition)
-    except SqlglotError as error:
-        first = str(error).splitlines()[0] if str(error) else "no detail"
-        raise ExpressionError(f"does not parse as one SQL expression ({first})") from None
+    except SqlglotError:
+        raise ExpressionError("does not parse as one SQL expression") from None
+    if tree.find(exp.Command) is not None:
+        # sqlglot gives up on some texts (one that starts with `IF`) and keeps them as raw text
+        # that the printer writes out as it is. Such a node reads no columns that we can see, and
+        # PostgreSQL may read some: it is not an expression we can reason about.
+        raise ExpressionError("is not an expression sqlglot can read (it is kept as raw text)")
     return tuple(dict.fromkeys(c.name.lower() for c in tree.find_all(exp.Column)))
 
 

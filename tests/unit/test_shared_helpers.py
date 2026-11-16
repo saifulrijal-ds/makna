@@ -1,7 +1,9 @@
 """WP-15B criteria 1 and 2 (C-7): each shared definition helper exists once.
 
 The columns an expression reads, a metric and what it depends on, and the unit of a metric are
-written in `makna.model` (`expressions.py`, `metrics.py`) and nowhere else. The scan below parses
+written in `makna.model` (`expressions.py`, `metrics.py`) and nowhere else. The scan goes by name
+(and by one attribute path for the unit): a copy written under a new name is not caught, so it is
+a guard against putting a removed copy back, not proof that no other copy exists. It parses
 every module of `src/makna` and fails when
 - a function with the name of a removed copy is defined again (the names, and where a name is
   still legitimate, are in `REMOVED`);

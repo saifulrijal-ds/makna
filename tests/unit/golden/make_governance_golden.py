@@ -24,6 +24,12 @@ The procedure (D-32 (1)). There is one, and it applies to every package:
    category, and no case outside the categories changed.
 4. The owner's merge approves the diff of the file.
 
+`tests/unit/golden/compiler_sql_before_wp10.json` is a second pinned file: the PostgreSQL text of
+nine requests as the compiler wrote it before WP-10, read by `test_compiler_group_size.py`. It has
+no script. The same procedure applies to it: a package that changes that text edits the file by
+hand in the same pull request, lists the changed cases with the reason, and the same review and
+approval follow.
+
 The script reads only the sample definitions under `semantic/definitions` and the product
 packages. It calls the compiler with default arguments only. Requests come from a seeded
 `random.Random` and are drawn from the model (sorted names), so the same definitions and the same

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlglot import exp
 
 from makna.catalog.references import CatalogView, find_issues
 from makna.compiler import governance as final_check
@@ -24,6 +25,7 @@ from makna.definitions.loader import load_definitions
 from makna.definitions.validate import validate
 from makna.model.definitions import Dimension, Entity
 from makna.model.expressions import ExpressionError, columns_read, dimension_columns
+from makna.model.functions import node_problem
 from makna.model.governance import STRICT
 from makna.model.request import ErrorCode, QueryError
 from makna.model.sensitivity import effective_level
@@ -241,3 +243,105 @@ def test_a_model_whose_expressions_parse_is_planned_as_before() -> None:
     model = shop()
     plan = plan_request(model, request("order_count"))
     assert ("shop.core.customers", "email") in plan.personal_columns
+
+
+# --- text that sqlglot keeps as raw text (exp.Command) -----------------------------------
+# sqlglot gives up on some texts, for example one that starts with `IF`, and keeps them as raw
+# text that the printer writes out unchanged. Such a node reads no columns, and PostgreSQL may
+# read some (a table with a column called `if`): it must be refused everywhere.
+
+RAW = ["IF || email", "IF email", "IF.email", "if email = 'a' then 1 end", "IF 1, email"]
+
+
+@pytest.mark.parametrize("sql", RAW)
+def test_text_kept_as_raw_text_does_not_read_columns_it_raises(sql: str) -> None:
+    with pytest.raises(ExpressionError):
+        columns_read(sql)
+
+
+@pytest.mark.parametrize("sql", RAW)
+def test_v05_and_v20_refuse_raw_text_in_a_dimension(sql: str, tmp_path: Path) -> None:
+    def mutate(files: Files) -> None:
+        _customer(files)["dimensions"].append(
+            fx._dim("leak", "categorical", expr=sql, sensitivity="internal")
+        )
+
+    issues = _issues(mutate, tmp_path)
+    assert {"V05", "V20"} <= _codes(issues), issues
+
+
+@pytest.mark.parametrize("sql", RAW)
+def test_r02_refuses_raw_text_in_a_dimension(sql: str) -> None:
+    from ..catalog_support import dimension
+
+    assert ("R02", "dimension:leak") in _codes_of_findings(_entity_with(dimension("leak", sql)))
+
+
+def _model_with_leak(sql: str) -> Any:
+    def mutate(files: Files) -> None:
+        files["shop/entities/customer.yaml"]["dimensions"].append(
+            fx._dim("leak", "categorical", expr=sql, sensitivity="internal")
+        )
+
+    return shop(mutate)
+
+
+@pytest.mark.parametrize("sql", RAW)
+def test_the_planner_refuses_raw_text_in_a_dimension(sql: str) -> None:
+    with pytest.raises(QueryError) as caught:
+        plan_request(_model_with_leak(sql), request("revenue", dimensions=["customer.leak"]))
+    assert caught.value.code is ErrorCode.BROKEN_REFERENCE
+
+
+def test_the_final_check_refuses_raw_text_in_the_statement() -> None:
+    plan = plan_request(shop(), request("order_count"))
+    raw = exp.Command(this="IF", expression=" || email")
+    tree = exp.select(exp.alias_(raw, "leak", quoted=True)).from_("t")
+    with pytest.raises(final_check.GovernanceError, match="raw text"):
+        final_check.verify(tree, plan)
+    assert node_problem(raw) is not None
+
+
+# --- the refusal for a dimension that does not parse -------------------------------------
+
+
+def test_the_refusal_names_a_problem_in_the_definitions_and_never_quotes_the_expression() -> None:
+    with pytest.raises(QueryError) as caught:
+        plan_request(_broken_shop(), request("order_count"))
+    error = caught.value
+    assert error.message.startswith("A definition in the model cannot be read")
+    assert "dimension order.band" in error.message
+    assert "this metric depends on" not in error.message
+    assert BAD not in error.message and BAD not in str(error.details)
+    assert error.details["issues"][0]["object"] == "dimension:order.band"
+
+
+# --- V12 when a personal dimension does not parse ----------------------------------------
+
+
+def test_v12_says_expression_not_filter_and_allows_counting_a_bare_column(tmp_path: Path) -> None:
+    def mutate(files: Files) -> None:
+        _customer(files)["dimensions"][2]["expr"] = "lower(email"  # the personal one
+        _customer(files)["measures"].append(
+            fx._measure("mixed", "count", "registered_date", expr="CASE WHEN city > 'm' THEN 1 END")
+        )
+
+    issues = _issues(mutate, tmp_path)
+    v12 = [m for c, m in issues if c == "V12"]
+    assert len(v12) == 1 and "measure mixed" in v12[0], v12  # not signups, not distinct_emails
+    assert "its expression cannot be shown" in v12[0] and "filter" not in v12[0]
+
+
+def test_v12_reports_the_gap_when_the_expression_also_reads_a_known_personal_column(
+    tmp_path: Path,
+) -> None:
+    def mutate(files: Files) -> None:
+        _customer(files)["dimensions"][2]["expr"] = "lower(email"
+        _customer(files)["measures"].append(
+            fx._measure(
+                "both", "count", "registered_date", expr="CASE WHEN birth_date > city THEN 1 END"
+            )
+        )
+
+    issues = _issues(mutate, tmp_path)
+    assert any(c == "V12" and "both" in m and "cannot be shown" in m for c, m in issues), issues

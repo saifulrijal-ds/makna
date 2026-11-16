@@ -506,8 +506,12 @@ def _personal_and_raw_columns(
         )
     except ExpressionError as error:
         name = ".".join(error.where)
-        what = f"dimension {name}: expression {error}" if name else str(error)
-        raise _broken(("V05", f"dimension:{name}", what)) from None
+        raise QueryError(
+            ErrorCode.BROKEN_REFERENCE,
+            "A definition in the model cannot be read, so no query can be compiled until it is "
+            "fixed: dimension " + name + ". A curator must fix it.",
+            {"issues": [{"code": "V05", "object": "dimension:" + name, "message": str(error)}]},
+        ) from None
 
 
 def _unknown_metric(model: Model, name: str) -> QueryError:

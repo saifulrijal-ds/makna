@@ -72,8 +72,12 @@ def node_problem(node: exp.Expr) -> str | None:
     - a function that is not on the allow-list (named);
     - a schema-qualified function name such as `public.btrim(x)`, which calls whatever function
       of that schema has the name;
-    - a cast to a type that is not on the list of cast types.
+    - a cast to a type that is not on the list of cast types;
+    - raw text (`exp.Command`): sqlglot keeps a text it cannot read, such as one starting with
+      `IF`, as a string that the printer writes out unchanged, so nothing in it was checked.
     """
+    if isinstance(node, exp.Command):
+        return "raw text that is not an expression"
     if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func):
         return "the schema-qualified function " + function_name(node.expression)
     if isinstance(node, exp.Cast):

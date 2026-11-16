@@ -81,6 +81,8 @@ def _parse(sql: str) -> exp.Condition:
         raise _ExprError(f"does not parse as one SQL expression ({first})") from None
     if isinstance(tree, exp.Block):
         raise _ExprError("holds more than one statement")
+    if tree.find(exp.Command) is not None:
+        raise _ExprError("is not an expression sqlglot can read (it is kept as raw text)")
     for dialect in DIALECTS:
         try:
             tree.sql(dialect=dialect, unsupported_level=ErrorLevel.RAISE)
@@ -129,7 +131,9 @@ class _Personal:
                 return [], f"its expression {error}"
             return [], None  # nothing personal to protect; V05 reports the expression
         found = sorted(names & self.columns)
-        if self.unknown:
+        if self.unknown and names - self.columns:
+            # it reads a column that the list of personal columns does not hold, and the list
+            # has a gap: the column may be one the broken dimension reads
             return found, "the expression of a personal dimension of this entity does not parse"
         return found, None
 
@@ -459,14 +463,15 @@ class _Checker:
         """Why a measure may not read personal columns, or None. A measure may count rows or
         distinct values of the personal column itself, and nothing else: no other aggregate, no
         expression around the column (it could test one person's value), no filter on it."""
-        in_filter, unknown = personal.overlap(lambda: columns_read(m.filter))
+        in_filter, gap = personal.overlap(partial(columns_read, m.filter))
         if in_filter:
             return f"its filter reads personal column {', '.join(in_filter)}"
-        if unknown:
-            return f"its filter cannot be shown not to read a personal column: {unknown}"
-        read, unknown = personal.overlap(lambda: columns_read(m.expr))
-        if unknown and not read:
-            return f"its expression cannot be shown not to read a personal column: {unknown}"
+        if gap:
+            return f"its filter cannot be shown not to read a personal column: {gap}"
+        read, gap = personal.overlap(partial(columns_read, m.expr))
+        if gap and not (m.agg in NOT_AGGREGATE_AGGS and _is_bare_column(m.expr)):
+            # counting a bare column is allowed whether or not it is personal
+            return f"its expression cannot be shown not to read a personal column: {gap}"
         if not read:
             return None
         if m.agg not in NOT_AGGREGATE_AGGS:
