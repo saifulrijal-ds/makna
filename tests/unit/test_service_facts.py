@@ -18,9 +18,9 @@ from makna.config import ConfigError, load_governance_runtime, load_settings
 from makna.definitions.loader import definition_objects, load_definitions
 from makna.index import indexer
 from makna.model.definitions import Dimension, Entity
+from makna.model.expressions import dimension_columns
 from makna.model.governance import STRICT, GovernancePolicy
 from makna.model.request import QueryRequest
-from makna.model.expressions import dimension_columns
 from makna.model.sensitivity import effective_level
 from makna.services import ServiceError, Services
 
