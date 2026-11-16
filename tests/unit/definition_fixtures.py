@@ -543,6 +543,10 @@ def v18_measure_rule_not_on_entity(files: Files) -> None:
     _named(_entity(files, "order")["measures"], "orders")["rule"] = "late_order"
 
 
+def v18_measure_rules_name_a_rule_not_on_entity(files: Files) -> None:
+    _named(_entity(files, "order")["measures"], "orders")["rules"] = ["big_order", "late_order"]
+
+
 def v18_metric_rule_entity_not_reachable(files: Files) -> None:
     # The measure is on customer, which reaches region but not order, where the rule lives.
     _metric_doc(files, "order_count")["measure"] = "customer.signups"
@@ -672,6 +676,7 @@ FIXTURES: dict[str, list[Mutation]] = {
     "V17": [v17_personal_dimension_lists_values],
     "V18": [
         v18_measure_rule_not_on_entity,
+        v18_measure_rules_name_a_rule_not_on_entity,
         v18_metric_rule_entity_not_reachable,
         v18_metric_rule_does_not_exist,
         v18_rule_reads_personal_column,

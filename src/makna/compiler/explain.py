@@ -195,10 +195,8 @@ def _definition_sentences(model: Model, item: InputPlan) -> list[str]:
         found.append(
             f"{label}: only rows where {item.measure.filter} count (part of the measure definition)"
         )
-    if item.measure_rule is not None:
-        found.append(
-            f"{label}: only rows where {_rule(item.measure_rule)} count (part of the measure)"
-        )
+    for measure_rule in item.measure_rules:
+        found.append(f"{label}: only rows where {_rule(measure_rule)} count (part of the measure)")
     for each in item.definition_filters:
         what = _rule(each) if isinstance(each, PlannedRule) else _filter(each)
         found.append(f"{label}: only rows where {what} count (part of the metric definition)")

@@ -552,8 +552,7 @@ def _plan_tables(model: Model, plan: QueryPlan) -> set[str]:
     names |= {g.entity for g in plan.guard}
     for item in plan.inputs:
         names.add(item.measure_entity)
-        if item.measure_rule is not None:
-            names.add(item.measure_rule.entity)
+        names |= {r.entity for r in item.measure_rules}
         names |= {f.entity for f in item.definition_filters}
         for entity_path in item.paths:
             names.add(entity_path.entity)

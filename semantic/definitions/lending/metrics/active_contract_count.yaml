@@ -17,8 +17,6 @@ synonyms:
 version: 1
 type: simple
 measure: contract_snapshot.active_contracts
-filters:
-  - {rule: contract_snapshot.in_book}
 join_paths:
   branch: [contract_snapshot.contract, contract.servicing_branch]
 format: {kind: count, unit: contracts, decimals: 0}

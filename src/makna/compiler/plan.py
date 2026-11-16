@@ -195,7 +195,8 @@ class InputPlan:
     measure_entity: str
     measure: Measure
     time_dimension: Dimension
-    measure_rule: PlannedRule | None
+    measure_rules: tuple[PlannedRule, ...]
+    """The rules of the measure, in the order the definition lists them; every one must hold."""
     definition_filters: tuple[PlannedFilter | PlannedRule, ...]
     paths: tuple[EntityPath, ...]
 
@@ -965,9 +966,9 @@ def _plan_input(
         raise _unresolved(
             leaf.name, f"time dimension {entity.name}.{measure.time_dimension} does not exist"
         )
-    measure_rule = None
-    if measure.rule is not None:
-        measure_rule = _planned_rule(model, leaf, f"{entity.name}.{measure.rule}")
+    measure_rules = tuple(
+        _planned_rule(model, leaf, f"{entity.name}.{name}") for name in measure.rule_names
+    )
 
     definition_filters: list[PlannedFilter | PlannedRule] = []
     for item in leaf.filters or []:
@@ -990,7 +991,7 @@ def _plan_input(
         measure_entity=entity.name,
         measure=measure,
         time_dimension=time_found,
-        measure_rule=measure_rule,
+        measure_rules=measure_rules,
         definition_filters=tuple(definition_filters),
         paths=tuple(EntityPath(name, path) for name, path in paths.items()),
     )

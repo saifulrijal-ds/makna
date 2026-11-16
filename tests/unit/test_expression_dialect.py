@@ -90,8 +90,9 @@ def test_a_quoted_column_called_int8_is_a_string_not_a_type(tmp_path: Path) -> N
 
 
 def test_the_sample_definitions_still_validate() -> None:
-    from .compiler_support import DEFINITIONS
     from makna.services.examples import check_example_requests
+
+    from .compiler_support import DEFINITIONS
 
     issues = validate(load_definitions(DEFINITIONS), extra_checks=[check_example_requests])
     assert [i.format() for i in issues] == []

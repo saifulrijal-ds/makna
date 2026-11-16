@@ -450,10 +450,25 @@
           "type": "string",
           "minLength": 10
         },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/name"
+          },
+          "description": "Names of rules on the same entity. Every rule must hold: rows that fail any of them are excluded before aggregation, together with `filter` if both are given. Write the rules that make the measure the business number (for example the rule that leaves out rows that are not in the book), so that a metric does not have to repeat them."
+        },
         "rule": {
           "$ref": "#/$defs/name",
-          "description": "Name of a rule on the same entity. Rows that do not match are excluded before aggregation, together with `filter` if both are given."
+          "description": "The older spelling of a measure with one rule, read as `rules` with one item. Do not give both `rule` and `rules`; write `rules` in new files."
         }
+      },
+      "not": {
+        "required": [
+          "rule",
+          "rules"
+        ]
       },
       "if": {
         "properties": {

@@ -561,14 +561,18 @@ class _Checker:
         problem = self.v12_problem(m, personal)
         if problem is not None:
             self.add("V12", f"{what}: {problem}", "measures", index, "agg")
-        if m.rule is not None and m.rule not in rules:
-            self.add(
-                "V18",
-                f"{what}: rule {m.rule} is not a rule of {e.name}",
-                "measures",
-                index,
-                "rule",
-            )
+        for position, name in enumerate(m.rule_names):
+            if name not in rules:
+                where: tuple[str | int, ...] = (
+                    ("rules", position) if m.rules is not None else ("rule",)
+                )
+                self.add(
+                    "V18",
+                    f"{what}: rule {name} is not a rule of {e.name}",
+                    "measures",
+                    index,
+                    *where,
+                )
 
     def v12_problem(self, m: Measure, personal: _Personal) -> str | None:
         """Why a measure may not read personal columns, or None. A measure may count rows or

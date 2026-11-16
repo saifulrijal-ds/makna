@@ -271,8 +271,8 @@ def _input_query(model: Model, plan: QueryPlan, item: InputPlan) -> exp.Select:
     where: list[exp.Expr] = []
     if item.measure.filter is not None:
         where.append(exp.paren(_bind(item.measure.filter, "t0")))
-    if item.measure_rule is not None:
-        where.append(exp.paren(_bind(item.measure_rule.expr, "t0")))
+    for measure_rule in item.measure_rules:
+        where.append(exp.paren(_bind(measure_rule.expr, "t0")))
     for definition_filter in item.definition_filters:
         where.append(_definition_condition(joins, definition_filter))
     for request_filter in plan.filters:

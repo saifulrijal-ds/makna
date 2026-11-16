@@ -421,10 +421,11 @@ def test_a_plan_holds_the_inputs_dimensions_columns_and_paths() -> None:
     npf = plan.inputs[0]
     assert npf.measure_entity == "contract_snapshot"
     assert npf.measure.name == "npf_outstanding_principal"
-    assert (
-        npf.measure_rule is not None and npf.measure_rule.ref == "contract_snapshot.non_performing"
-    )
-    assert npf.measure_rule.expr == "days_past_due > 90"
+    assert [r.ref for r in npf.measure_rules] == [
+        "contract_snapshot.non_performing",
+        "contract_snapshot.in_book",
+    ]
+    assert npf.measure_rules[0].expr == "days_past_due > 90"
     assert npf.time_dimension.name == "snapshot_date"
     assert {p.entity for p in npf.paths} == {"branch", "product", "customer"}
     assert [s.name for s in npf.join_steps] == [
@@ -481,28 +482,23 @@ def test_each_input_of_a_ratio_gets_its_own_path_to_the_same_entity() -> None:
 
 def test_a_measure_with_a_rule_plans_and_adds_no_join() -> None:
     plan = plan_request(lending(), request("npf_outstanding_principal"))
-    rule = plan.inputs[0].measure_rule
-    assert rule is not None
-    assert (rule.ref, rule.entity, rule.name) == (
-        "contract_snapshot.non_performing",
-        "contract_snapshot",
-        "non_performing",
-    )
-    assert plan.inputs[0].join_steps == ()
-    # the metric also applies the rule that leaves out the write-off row (WP-04B, D-31)
-    assert [getattr(r, "ref") for r in plan.inputs[0].definition_filters] == [  # noqa: B009
-        "contract_snapshot.in_book"
+    rules = plan.inputs[0].measure_rules
+    assert [(r.ref, r.entity, r.name) for r in rules] == [
+        ("contract_snapshot.non_performing", "contract_snapshot", "non_performing"),
+        # the measure also applies the rule that leaves out the write-off row (WP-04B, D-31)
+        ("contract_snapshot.in_book", "contract_snapshot", "in_book"),
     ]
+    assert plan.inputs[0].join_steps == ()
+    assert plan.inputs[0].definition_filters == ()
 
 
 def test_a_metric_filter_rule_on_a_joined_entity_plans_and_adds_the_join_to_contract() -> None:
     model = lending()
     plan = plan_request(model, request("restructured_outstanding_principal"))
     only = plan.inputs[0]
-    assert only.measure_rule is None
+    assert [r.ref for r in only.measure_rules] == ["contract_snapshot.in_book"]
     assert [getattr(r, "ref") for r in only.definition_filters] == [  # noqa: B009
         "contract.restructured",
-        "contract_snapshot.in_book",
     ]
     assert [(p.entity, [s.name for s in p.steps]) for p in only.paths] == [
         ("contract", ["contract_snapshot.contract"])

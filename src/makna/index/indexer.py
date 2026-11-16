@@ -486,8 +486,9 @@ def object_edges(obj: DefinitionObject, lookup: _Lookup) -> set[Edge]:
             entity_name = served.measure.partition(".")[0]
             edges.add((obj.id, f"entity:{entity_name}", "measured_on"))
             entity, measure = lookup.measure(served.measure)
-            if entity is not None and measure is not None and measure.rule:
-                edges.add((obj.id, f"rule:{entity.name}.{measure.rule}", "uses_rule"))
+            if entity is not None and measure is not None:
+                for rule_name in measure.rule_names:
+                    edges.add((obj.id, f"rule:{entity.name}.{rule_name}", "uses_rule"))
             for item in served.filters or []:
                 if isinstance(item, RuleRef):
                     edges.add((obj.id, f"rule:{item.rule}", "uses_rule"))
