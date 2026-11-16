@@ -600,6 +600,34 @@ def v21_relationship_joins_more_than_the_key(files: Files) -> None:
     )
 
 
+# --- V22 ---
+
+
+def v22_personal_dimension_casts_to_a_number(files: Files) -> None:
+    # `CAST(x AS BIGINT)` of a text column fails on "NID-1", and PostgreSQL prints that value
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "email_number",
+            "numeric",
+            expr="CAST(email AS BIGINT)",
+            sensitivity="personal",
+            masking={"method": "bucket", "width": 10},
+        )
+    )
+
+
+def v22_personal_dimension_casts_to_a_date(files: Files) -> None:
+    _named(_entity(files, "customer")["dimensions"], "birth_year")["expr"] = (
+        "CAST(birth_date AS DATE)"
+    )
+
+
+def v22_personal_dimension_converts_to_a_date(files: Files) -> None:
+    _named(_entity(files, "customer")["dimensions"], "birth_year")["expr"] = (
+        "TS_OR_DS_TO_DATE(birth_date)"
+    )
+
+
 # (rule, fixture name) -> mutation. Each must make the validator report exactly that code.
 FIXTURES: dict[str, list[Mutation]] = {
     "V01": [v01_metric_without_id_synonym, v01_unknown_key],
@@ -686,5 +714,10 @@ FIXTURES: dict[str, list[Mutation]] = {
         v21_relationship_joins_a_column_that_is_not_the_key,
         v21_relationship_joins_part_of_a_composite_key,
         v21_relationship_joins_more_than_the_key,
+    ],
+    "V22": [
+        v22_personal_dimension_casts_to_a_number,
+        v22_personal_dimension_casts_to_a_date,
+        v22_personal_dimension_converts_to_a_date,
     ],
 }

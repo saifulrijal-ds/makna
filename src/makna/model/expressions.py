@@ -43,6 +43,9 @@ def _read(sql: str) -> tuple[str, ...]:
         # that the printer writes out as it is. Such a node reads no columns that we can see, and
         # PostgreSQL may read some: it is not an expression we can reason about.
         raise ExpressionError("is not an expression sqlglot can read (it is kept as raw text)")
+    if tree.find(exp.Bracket) is not None:
+        # `segment['email']` takes a key of a JSON or hstore column, as `->` does (refused too).
+        raise ExpressionError("subscripts a value, which cannot be checked")
     if tree.find(exp.Dot) is not None:
         # `(segment).email` selects a field of a composite value. The field name after the dot is
         # not a column of the table, so no list of columns can say what it reads, and a field of

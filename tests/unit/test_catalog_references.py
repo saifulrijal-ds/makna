@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from makna.catalog.references import CatalogView, Finding, find_issues
 from makna.model.definitions import Entity
 
@@ -189,3 +191,67 @@ def test_r06_leaves_a_missing_column_to_r02() -> None:
     assert codes(find_issues([entity], [], keyed_view("thing_id"))) == [
         ("R02", "entity:thing", "primary_key")
     ]
+
+
+# --- R07: a mask over a column it cannot take -----------------------------------------------
+
+
+def typed_view(**types: str) -> CatalogView:
+    base = view()
+    columns = {name: None for name in types} | dict(base.tables[TABLE])
+    return CatalogView({TABLE: columns}, base.terms, column_types={TABLE: dict(types)})
+
+
+def masked(name: str, method: dict[str, object], sensitivity: str = "personal") -> Entity:
+    return make_entity(
+        dimensions=[dimension(name, sensitivity=sensitivity, masking=method)],
+    )
+
+
+def test_r07_a_bucket_mask_over_a_text_column() -> None:
+    entity = masked("amount", {"method": "bucket", "width": 10})
+    found = find_issues([entity], [], typed_view(amount="string"))
+    assert codes(found) == [("R07", "entity:thing", "dimension:amount")]
+    assert "string" in found[0].message and "bucket" in found[0].message
+
+
+def test_r07_a_truncate_date_mask_over_a_column_that_is_not_a_date() -> None:
+    entity = masked("amount", {"method": "truncate_date", "grain": "year"})
+    assert codes(find_issues([entity], [], typed_view(amount="integer"))) == [
+        ("R07", "entity:thing", "dimension:amount")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "data_type"),
+    [
+        ({"method": "bucket", "width": 10}, "integer"),
+        ({"method": "bucket", "width": 10}, "decimal"),
+        ({"method": "bucket", "width": 10}, "float"),
+        ({"method": "truncate_date", "grain": "year"}, "date"),
+        ({"method": "truncate_date", "grain": "year"}, "timestamp"),
+        ({"method": "bucket", "width": 10}, "other"),
+        ({"method": "redact"}, "string"),
+    ],
+)
+def test_r07_says_nothing_when_the_mask_can_take_the_column(
+    method: dict[str, object], data_type: str
+) -> None:
+    assert find_issues([masked("amount", method)], [], typed_view(amount=data_type)) == []
+
+
+def test_r07_leaves_a_dimension_that_is_not_personal_alone() -> None:
+    entity = masked("amount", {"method": "bucket", "width": 10}, sensitivity="internal")
+    assert find_issues([entity], [], typed_view(amount="string")) == []
+
+
+def test_r07_follows_the_catalog_tag_that_makes_a_dimension_personal() -> None:
+    entity = masked("amount", {"method": "bucket", "width": 10}, sensitivity="internal")
+    base = typed_view(amount="string")
+    tagged = CatalogView(
+        {TABLE: {**base.tables[TABLE], "amount": "personal"}},
+        base.terms,
+        column_types=base.column_types,
+    )
+    # R03 says the dimension is declared below the catalog level; R07 is the mask problem
+    assert ("R07", "entity:thing", "dimension:amount") in codes(find_issues([entity], [], tagged))

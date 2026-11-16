@@ -1,4 +1,4 @@
-"""Definition errors V01 to V18, V20, and V21 (ARCHITECTURE section 5.3).
+"""Definition errors V01 to V18 and V20 to V22 (ARCHITECTURE section 5.3).
 
 `validate` takes a `DefinitionSet` and returns every problem as an `Issue`. V01 problems are
 found while loading; a file that failed V01 is left out of the other checks, so one broken
@@ -49,7 +49,7 @@ from makna.model.definitions import (
     RuleRef,
 )
 from makna.model.expressions import ExpressionError, bare_column, columns_read, dimension_columns
-from makna.model.functions import first_disallowed_function
+from makna.model.functions import first_disallowed_function, first_value_dependent_cast
 from makna.model.metrics import direct_inputs
 from makna.model.values import value_fits_dimension
 
@@ -440,6 +440,9 @@ class _Checker:
                     i,
                     "expr" if dim.expr is not None else "name",
                 )
+        for i, dim in enumerate(e.dimensions):
+            if _is_personal(e, dim) and dim.expr is not None:
+                self.v22_personal_casts_text_only(dim, i)
         for i, rule in enumerate(e.rules or []):
             self.check_expression(rule.expr, f"rule {rule.name}", "rules", i, "expr")
             overlap, unknown = personal.overlap(partial(columns_read, rule.expr))
@@ -473,6 +476,27 @@ class _Checker:
                 self.v21_keys_are_the_primary_key(rel, target, i)
         for i, measure in enumerate(e.measures or []):
             self.measure_checks(e, measure, i, personal, rules)
+
+    def v22_personal_casts_text_only(self, dim: Dimension, index: int) -> None:
+        """An expression that reads a personal column casts only to text. Another cast fails on
+        a value that does not fit, and PostgreSQL prints that value in its error (open question
+        5, docs/notes/engine-error-text-can-carry-a-personal-value.md)."""
+        assert dim.expr is not None
+        try:
+            tree = _parse(dim.expr)
+        except _ExprError:
+            return  # V05 reports it
+        found = first_value_dependent_cast(tree)
+        if found is not None:
+            self.add(
+                "V22",
+                f"personal dimension {dim.name} uses {found}; the expression of a personal "
+                "dimension may cast only to text, because a value that does not fit would be "
+                "printed in the error of the engine",
+                "dimensions",
+                index,
+                "expr",
+            )
 
     def v21_keys_are_the_primary_key(self, rel: Relationship, target: Entity, index: int) -> None:
         """The `to` columns of a relationship are exactly the primary key of the target entity,

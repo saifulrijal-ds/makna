@@ -30,9 +30,8 @@ _NODE_NAMES = (
     "Lower", "Upper", "Initcap", "Trim", "Substring", "Length", "Concat", "ConcatWs",
     "Left", "Right", "Replace", "StrPosition", "SplitPart", "Pad",
     # dates: truncation, extraction, differences
-    "TimestampTrunc", "DateTrunc", "Extract", "Year", "Month", "Day", "Quarter", "Week",
-    "DayOfWeek", "DayOfMonth", "DayOfYear", "DateDiff", "DateAdd", "DateSub", "TsOrDsToDate",
-    "TsOrDsAdd", "TsOrDsDiff", "ToChar",
+    "TimestampTrunc", "DateTrunc", "Extract", "Year", "Month", "Day",
+    "DateAdd", "DateSub", "TsOrDsToDate", "TsOrDsAdd", "ToChar",
 )  # fmt: skip
 ALLOWED_NODES: tuple[type[exp.Expr], ...] = tuple(
     node for name in _NODE_NAMES if isinstance(node := getattr(exp, name, None), type)
@@ -51,6 +50,30 @@ ALLOWED_CAST_TYPES: frozenset[object] = frozenset(
     )
     if hasattr(exp.DataType.Type, name)
 )  # fmt: skip
+
+
+# The only types an expression that reads a personal column may cast to (V22). A cast to another
+# type fails on a value that does not fit, and PostgreSQL then prints the value in its error
+# message, which a caller that runs the SQL sees.
+TEXT_CAST_TYPES: frozenset[object] = frozenset(
+    getattr(exp.DataType.Type, name)
+    for name in ("TEXT", "VARCHAR", "CHAR")
+    if hasattr(exp.DataType.Type, name)
+)
+
+
+def first_value_dependent_cast(tree: exp.Expr) -> str | None:
+    """The first cast in `tree` to a type that is not text, or a function that casts to a date
+    inside (`TS_OR_DS_TO_DATE`), as a phrase; None if there is none."""
+    for node in tree.walk():
+        if isinstance(node, exp.Cast):
+            target = node.args.get("to")
+            if not isinstance(target, exp.DataType) or target.this not in TEXT_CAST_TYPES:
+                shown = target.sql() if isinstance(target, exp.DataType) else "an unknown type"
+                return "a cast to " + shown
+        elif isinstance(node, exp.TsOrDsToDate):
+            return "a conversion to a date"
+    return None
 
 
 def function_name(node: exp.Expr) -> str:
@@ -73,6 +96,12 @@ def node_problem(node: exp.Expr) -> str | None:
     - a schema-qualified function name such as `public.btrim(x)`, which calls whatever function
       of that schema has the name;
     - a cast to a type that is not on the list of cast types;
+    - date arithmetic that PostgreSQL and DuckDB read differently: `DATE_ADD`, `DATE_SUB`, and
+      `TS_OR_DS_ADD` with no unit (PostgreSQL adds a second, DuckDB a day), and `DATEDIFF`
+      (PostgreSQL divides a number of seconds, DuckDB counts day boundaries). Write
+      `d + INTERVAL '1 day'` and `d1 - d2`;
+    - subscripting a value (`segment['email']`, `x[1]`): on a JSON or hstore column it takes a key,
+      as `->` does, which is refused too;
     - field selection on a value (`(segment).email`): the name after the dot is not a column of
       the table, so no check on columns can compare it with the personal columns;
     - raw text (`exp.Command`): sqlglot keeps a text it cannot read, such as one starting with
@@ -80,6 +109,16 @@ def node_problem(node: exp.Expr) -> str | None:
     """
     if isinstance(node, exp.Command):
         return "raw text that is not an expression"
+    if isinstance(node, exp.Bracket):
+        return "subscripting a value"
+    if isinstance(node, (exp.DateDiff, exp.TsOrDsDiff)):
+        return "DATEDIFF, which PostgreSQL and DuckDB count differently (write d1 - d2)"
+    if isinstance(node, (exp.DateAdd, exp.DateSub, exp.TsOrDsAdd)):
+        if node.args.get("unit") is None and not isinstance(node.expression, exp.Interval):
+            return (
+                "date arithmetic with no unit, which PostgreSQL reads as seconds and DuckDB as "
+                "days (write d + INTERVAL '1 day')"
+            )
     if isinstance(node, exp.Dot):
         if isinstance(node.expression, exp.Func):
             return "the schema-qualified function " + function_name(node.expression)

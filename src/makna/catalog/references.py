@@ -18,6 +18,12 @@ does-not-parse-must-stop-the-check.md).
 - R04  `catalog_term` of a glossary term does not exist in the catalog (matched against the
        catalog id or the name of a catalog glossary term).
 
+- R07  A personal dimension has a `bucket` mask over a column the catalog types as something
+       other than a number, or a `truncate_date` mask over a column that is not a date or a
+       timestamp. The mask casts the column, and when a value does not cast PostgreSQL prints
+       the value in its error message, which an agent that runs the SQL sees (open question 5,
+       docs/notes/engine-error-text-can-carry-a-personal-value.md).
+
 `R05` (a metric reads a column the catalog marks personal where personal data is not allowed) is
 found by the indexer, not by this check: it needs the planner. Its rows share the table, and
 `plan_changes` leaves every open issue whose code is not R01 to R04 as it is.
@@ -39,10 +45,10 @@ from sqlalchemy import Connection, and_, insert, select, update
 from makna.index.tables import catalog_column, catalog_dataset, catalog_glossary_term
 from makna.index.tables import reference_issue as issue_table
 from makna.model.definitions import Dimension, Entity, GlossaryTerm
-from makna.model.expressions import ExpressionError, columns_read, dimension_columns
+from makna.model.expressions import ExpressionError, bare_column, columns_read, dimension_columns
 from makna.model.sensitivity import rank
 
-CHECK_CODES = ("R01", "R02", "R03", "R04", "R06")
+CHECK_CODES = ("R01", "R02", "R03", "R04", "R06", "R07")
 """The codes this check finds and therefore may close."""
 
 
@@ -69,6 +75,8 @@ class CatalogView:
     primary_keys: Mapping[str, frozenset[str]] = field(default_factory=dict)
     """engine_fqn -> lower-case names of the columns the catalog marks as primary key. A table
     with no entry, or an empty one, has no key in the catalog, and R06 says nothing about it."""
+    column_types: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """engine_fqn -> {lower-case column name -> the catalog's data_type}, for R07."""
 
 
 @dataclass(frozen=True)
@@ -142,6 +150,38 @@ def _key_findings(
     ]
 
 
+_MASK_COLUMN_TYPES = {
+    "bucket": ("integer", "decimal", "float"),
+    "truncate_date": ("date", "timestamp"),
+}
+
+
+def _mask_finding(
+    entity: Entity,
+    dimension: Dimension,
+    column: str,
+    level: str | None,
+    types: Mapping[str, str],
+) -> Finding | None:
+    """R07: a mask that casts a column whose catalog type it cannot take."""
+    masking = dimension.masking
+    if masking is None or masking.method not in _MASK_COLUMN_TYPES:
+        return None
+    if "personal" not in (_declared(entity, dimension), level):
+        return None
+    data_type = types.get(column)
+    if data_type is None or data_type == "other" or data_type in _MASK_COLUMN_TYPES[masking.method]:
+        return None
+    return Finding(
+        f"entity:{entity.name}",
+        f"dimension:{dimension.name}",
+        "R07",
+        f"dimension {dimension.name} has a {masking.method} mask over column {column}, which the "
+        f"catalog types as {data_type}; the mask casts the column, and a value that does not cast "
+        "would be printed in the error of the engine",
+    )
+
+
 def _entity_findings(
     entity: Entity, by_name: Mapping[str, Entity], view: CatalogView
 ) -> list[Finding]:
@@ -178,6 +218,13 @@ def _entity_findings(
                 )
             continue
         report_missing(part, read)
+        own = bare_column(dimension.expr) if dimension.expr else dimension.name.lower()
+        if own is not None and own in columns:
+            found = _mask_finding(
+                entity, dimension, own, columns[own], view.column_types.get(table, {})
+            )
+            if found is not None:
+                findings.append(found)
         declared = _declared(entity, dimension)
         stricter = []
         for column in sorted(read & set(columns)):
@@ -260,12 +307,14 @@ def load_view(connection: Connection) -> CatalogView:
     """The catalog view from the catalog tables (datasets not marked removed)."""
     tables: dict[str, dict[str, str | None]] = {}
     keys: dict[str, set[str]] = {}
+    types: dict[str, dict[str, str]] = {}
     rows = connection.execute(
         select(
             catalog_dataset.c.engine_fqn,
             catalog_column.c.name,
             catalog_column.c.derived_sensitivity,
             catalog_column.c.is_primary_key,
+            catalog_column.c.data_type,
         )
         .select_from(
             catalog_dataset.outerjoin(
@@ -274,10 +323,11 @@ def load_view(connection: Connection) -> CatalogView:
         )
         .where(catalog_dataset.c.removed_at.is_(None))
     )
-    for fqn, name, derived, is_key in rows:
+    for fqn, name, derived, is_key, data_type in rows:
         columns = tables.setdefault(fqn, {})
         if name is not None:
             columns[name.lower()] = derived
+            types.setdefault(fqn, {})[name.lower()] = data_type
             if is_key:
                 keys.setdefault(fqn, set()).add(name.lower())
     terms: set[str] = set()
@@ -285,7 +335,7 @@ def load_view(connection: Connection) -> CatalogView:
         select(catalog_glossary_term.c.catalog_id, catalog_glossary_term.c.name)
     ):
         terms.update(value for value in (catalog_id, name) if value)
-    return CatalogView(tables, frozenset(terms), {k: frozenset(v) for k, v in keys.items()})
+    return CatalogView(tables, frozenset(terms), {k: frozenset(v) for k, v in keys.items()}, types)
 
 
 def open_issues(connection: Connection) -> list[Finding]:

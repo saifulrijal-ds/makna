@@ -945,6 +945,10 @@ def index_object(
 ) -> IndexResult:
     """Refresh the rows of one object (for an entity also its dimensions and rules).
 
+    **Not gated.** It runs only on a definition set that passed `validate_for_build` (the checks
+    of `makna validate`, V19 included): `makna index build` and `init` run them before they index
+    anything (C-1), and a caller of this function must do the same.
+
     `others` are the other objects of the repository; they only supply labels for the formula
     line. No other object's rows are read or written, except that the edges `obj` states are
     replaced, and that `index_state.definitions_version` moves on when anything changed, so a

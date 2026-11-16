@@ -316,6 +316,26 @@ def test_r06_opens_exactly_r06_and_closes_when_the_key_is_declared_right(
     assert summary["reference_issues"] == {"opened": 0, "closed": 1, "reworded": 0}
 
 
+def test_r07_opens_for_a_bucket_mask_over_a_text_column(migrated_engine: Engine) -> None:
+    """`customers.city` is text in the catalog; a bucket mask casts it to a number, and a value
+    that does not cast would be printed by the engine."""
+    entity = make_entity(
+        table="lending.core.customers",
+        primary_key=("customer_id",),
+        dimensions=[
+            dimension(
+                "city_band",
+                "city",
+                type="numeric",
+                sensitivity="personal",
+                masking={"method": "bucket", "width": 10},
+            )
+        ],
+    )
+    sync(migrated_engine, entities=[entity], glossary_terms=[])
+    assert issues(migrated_engine) == [("R07", "entity:thing", "dimension:city_band")]
+
+
 # --- Acceptance 6: sample definitions and sample export give zero open issues ---
 
 

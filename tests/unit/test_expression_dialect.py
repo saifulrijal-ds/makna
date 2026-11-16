@@ -181,3 +181,75 @@ def test_the_final_check_refuses_field_selection_in_the_statement() -> None:
     tree = exp.select(exp.alias_(selected, "leak", quoted=True)).from_("t")
     with pytest.raises(final_check.GovernanceError, match="field selection"):
         final_check.verify(tree, plan)
+
+
+# --- I-1: date functions the engines read differently ----------------------------------------
+
+DATE_REFUSED = [
+    "DATE_ADD(order_date, 1)",
+    "DATE_SUB(order_date, 1)",
+    "TS_OR_DS_ADD(order_date, 1)",
+    "DATEDIFF(order_date, order_date)",
+    "DATE_DIFF(order_date, order_date)",
+    "DAYOFWEEK(order_date)",
+    "DAYOFMONTH(order_date)",
+    "DAYOFYEAR(order_date)",
+    "QUARTER(order_date)",
+    "WEEK(order_date)",
+]
+DATE_ACCEPTED = [
+    "DATE_ADD(order_date, 1, 'day')",
+    "DATE_ADD(order_date, INTERVAL 1 DAY)",
+    "order_date + INTERVAL '1 day'",
+    "TS_OR_DS_ADD(order_date, 2, 'day')",
+    "EXTRACT(DOW FROM order_date)",
+]
+
+
+@pytest.mark.parametrize("expr", DATE_REFUSED)
+def test_v05_refuses_date_functions_that_postgresql_and_duckdb_read_differently(
+    expr: str, tmp_path: Path
+) -> None:
+    issues = _revenue_issues(expr, tmp_path)
+    assert [c for c, _ in issues] == ["V05"], issues
+
+
+@pytest.mark.parametrize("expr", DATE_ACCEPTED)
+def test_v05_accepts_date_arithmetic_with_an_explicit_unit(expr: str, tmp_path: Path) -> None:
+    assert _revenue_issues(expr, tmp_path) == []
+
+
+@pytest.mark.parametrize("expr", DATE_REFUSED)
+def test_the_final_check_refuses_them_too(expr: str) -> None:
+    import sqlglot
+
+    tree = sqlglot.parse_one(expr, into=exp.Condition)
+    assert any(node_problem(node) for node in tree.walk()), expr
+
+
+# --- M-1: subscripting a value ------------------------------------------------------------------
+
+SUBSCRIPTS = ["segment['email']", "x[1]", "(ARRAY[1, 2])[1]"]
+
+
+@pytest.mark.parametrize("sql", SUBSCRIPTS)
+def test_subscripting_is_refused_everywhere(sql: str, tmp_path: Path) -> None:
+    import sqlglot
+
+    with pytest.raises(ExpressionError, match="subscripts"):
+        columns_read(sql)
+    tree = sqlglot.parse_one(sql, into=exp.Condition)
+    bracket = next(tree.find_all(exp.Bracket))
+    assert node_problem(bracket) == "subscripting a value"
+    assert "V05" in {c for c, _ in _revenue_issues(sql, tmp_path)}
+
+
+def test_the_final_check_refuses_a_subscript_in_the_statement() -> None:
+    import sqlglot
+
+    plan = plan_request(shop(), request("order_count"))
+    tree = exp.select(
+        exp.alias_(sqlglot.parse_one("segment['email']", into=exp.Condition), "leak", quoted=True)
+    ).from_("t")
+    with pytest.raises(final_check.GovernanceError, match="subscripting"):
+        final_check.verify(tree, plan)
