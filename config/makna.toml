@@ -19,8 +19,8 @@ candidates = 30
 
 # Status and kind weights are tie-breakers, not tiers (review finding C-3, WP-15D). Fused scores
 # of neighbouring ranks differ by only 1 to 2 percent and ranks 1 and 30 of one list by a factor
-# of 0.68, so any weight below about 0.9 puts the best match of a kind below every candidate of a
-# heavier kind: with the former 0.8 for dimensions, a search for "region" listed six metrics that
+# of 0.68, so a weight below 0.68 puts the best match of a kind below every candidate of a heavier
+# kind, and one of 0.8 below about the first ten to fifteen: with the former 0.8 for dimensions, a search for "region" listed six metrics that
 # only mention a region before `dimension:branch.region_name`, which is first in both lists. Every
 # weight is therefore between 0.9 and 1.0 and moves a hit by at most a few ranks. Metrics keep
 # 1.0 because they are what most questions ask for; a glossary term, an entity, a dimension, and a
