@@ -158,6 +158,19 @@ class McpSettings(BaseModel):
         return value
 
 
+class WebSettings(BaseModel):
+    """`[web]` of `config/makna.toml`: the web pages (ARCHITECTURE section 13).
+
+    `development` is for the local development stack, which is served over plain HTTP: it leaves
+    the `Secure` flag off the session cookie, because a browser would not send a `Secure` cookie
+    back over `http://`. It is false unless set, and `MAKNA_WEB_DEVELOPMENT` overrides the file.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    development: StrictBool = False
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -180,6 +193,7 @@ class Settings(BaseModel):
     sensitivity: SensitivitySettings = Field(default_factory=SensitivitySettings)
     engine: EngineSettings = Field(default_factory=EngineSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
 
 
 _ENV_FIELDS = (
@@ -216,6 +230,9 @@ def _collect_values(env: Mapping[str, str], config_path: Path | str | None) -> d
         embedding = dict(values.get("embedding") or {})
         embedding["fastembed"] = {**(embedding.get("fastembed") or {}), "cache_dir": cache_dir}
         values["embedding"] = embedding
+    development = env.get(ENV_PREFIX + "WEB_DEVELOPMENT")
+    if development:
+        values["web"] = {**(values.get("web") or {}), "development": _env_bool(development)}
     allow = env.get(ENV_PREFIX + "EMBEDDING_ALLOW_DOWNLOAD")
     if allow:
         embedding = dict(values.get("embedding") or {})
@@ -224,11 +241,20 @@ def _collect_values(env: Mapping[str, str], config_path: Path | str | None) -> d
     return values
 
 
+def _env_bool(value: str) -> bool | str:
+    """`true` or `false` in any letter case is a boolean; anything else stays text, so that the
+    settings model names the mistake (a typo must not turn the Secure flag off silently)."""
+    lowered = value.strip().lower()
+    return {"true": True, "false": False}.get(lowered, value)
+
+
 def _problems(error: ValidationError) -> str:
     problems = []
     for item in error.errors():
         where = ".".join(str(part) for part in item["loc"])
         name = ENV_PREFIX + where.upper() if where in _ENV_FIELDS else where
+        if where == "web.development":
+            name = "web.development (MAKNA_WEB_DEVELOPMENT)"
         problems.append(f"{name}: {item['msg']}")
     return "Invalid settings: " + "; ".join(problems)
 

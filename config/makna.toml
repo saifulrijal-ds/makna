@@ -97,6 +97,13 @@ statement_timeout_seconds = 30
 [mcp]
 # allowed_hosts = ["makna.example.org"]
 
+# The web pages (ARCHITECTURE section 13). development = true leaves the Secure flag off the session
+# cookie, because the development stack is served over plain http:// and a browser does not send a
+# Secure cookie back over it. Never set it for a deployment behind https. MAKNA_WEB_DEVELOPMENT
+# (true or false) overrides it.
+[web]
+development = false
+
 [sensitivity.tag_map]
 "PII.Sensitive" = "personal"
 "PersonalData.Personal" = "personal"

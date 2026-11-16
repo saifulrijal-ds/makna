@@ -52,6 +52,8 @@ services:
       MAKNA_DATABASE_URL: postgresql://makna:${MAKNA_DB_PASSWORD:-makna_dev_makna}@postgres:5432/makna
       MAKNA_ENGINE_URL: postgresql://lending_reader:${MAKNA_LENDING_READER_PASSWORD:-makna_dev_reader}@postgres:5432/lending
       MAKNA_SECRET_KEY: ${MAKNA_SECRET_KEY:?set MAKNA_SECRET_KEY (see deploy/README.md)}
+      # The stack is served over plain http://, so the session cookie cannot be Secure here.
+      MAKNA_WEB_DEVELOPMENT: "true"
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

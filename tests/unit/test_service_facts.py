@@ -215,8 +215,10 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
     assert services.policy == STRICT
     response = TestClient(app).get("/healthz")  # no database runs at localhost: still ok
     assert response.status_code == 200 and response.json() == {"status": "ok"}
-    # The MCP endpoint (WP-13) is the one route beside /healthz; the web pages (WP-16) add theirs.
-    assert {getattr(route, "path", None) for route in app.routes} == {"/healthz", "/mcp", "/mcp/"}
+    # /healthz, the MCP endpoint (WP-13), and the static files of the web pages (WP-16); the
+    # web routes themselves are included routers, listed by tests/integration/test_web_access.
+    paths = {getattr(route, "path", None) for route in app.routes}
+    assert {"/healthz", "/mcp", "/mcp/", "/static"} <= paths
 
 
 def test_create_app_builds_the_services_with_the_configured_policy(tmp_path: Path) -> None:
