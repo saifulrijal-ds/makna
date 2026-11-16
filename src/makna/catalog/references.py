@@ -25,14 +25,12 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-import sqlglot
 from sqlalchemy import Connection, and_, insert, select, update
-from sqlglot import exp
-from sqlglot.errors import SqlglotError
 
 from makna.index.tables import catalog_column, catalog_dataset, catalog_glossary_term
 from makna.index.tables import reference_issue as issue_table
 from makna.model.definitions import Dimension, Entity, GlossaryTerm
+from makna.model.expressions import ExpressionError, columns_read, dimension_columns
 from makna.model.sensitivity import rank
 
 CHECK_CODES = ("R01", "R02", "R03", "R04")
@@ -86,19 +84,12 @@ class Changes:
         return not (self.to_open or self.to_close or self.to_reword)
 
 
-def columns_read(sql: str | None) -> set[str]:
-    """Lower-case names of the columns an SQL expression reads (empty if it does not parse)."""
-    if not sql:
-        return set()
-    try:
-        tree = sqlglot.parse_one(sql, into=exp.Condition)
-    except SqlglotError:
-        return set()
-    return {c.name.lower() for c in tree.find_all(exp.Column)}
-
-
 def _declared(entity: Entity, dimension: Dimension) -> str:
     return dimension.sensitivity or entity.sensitivity
+
+
+def _unreadable(what: str, error: ExpressionError) -> str:
+    return f"{what}: its expression {error}, so the columns it reads cannot be checked"
 
 
 def _missing_columns(
@@ -131,8 +122,19 @@ def _entity_findings(
 
     report_missing("primary_key", entity.primary_key)
     for dimension in entity.dimensions:
-        read = columns_read(dimension.expr if dimension.expr is not None else dimension.name)
         part = f"dimension:{dimension.name}"
+        try:
+            read = set(dimension_columns(dimension))
+        except ExpressionError as error:
+            # The columns cannot be listed, so neither "all in the table" (R02) nor "none tagged
+            # stricter than declared" (R03) can be shown: both are reported.
+            for code in ("R02", "R03"):
+                findings.append(
+                    Finding(
+                        object_id, part, code, _unreadable(f"dimension {dimension.name}", error)
+                    )
+                )
+            continue
         report_missing(part, read)
         declared = _declared(entity, dimension)
         stricter = []
@@ -151,10 +153,21 @@ def _entity_findings(
                 )
             )
     for measure in entity.measures or []:
-        read = columns_read(measure.expr) | columns_read(measure.filter)
-        report_missing(f"measure:{measure.name}", read)
+        part = f"measure:{measure.name}"
+        try:
+            report_missing(part, (*columns_read(measure.expr), *columns_read(measure.filter)))
+        except ExpressionError as error:
+            findings.append(
+                Finding(object_id, part, "R02", _unreadable(f"measure {measure.name}", error))
+            )
     for rule in entity.rules or []:
-        report_missing(f"rule:{rule.name}", columns_read(rule.expr))
+        part = f"rule:{rule.name}"
+        try:
+            report_missing(part, columns_read(rule.expr))
+        except ExpressionError as error:
+            findings.append(
+                Finding(object_id, part, "R02", _unreadable(f"rule {rule.name}", error))
+            )
     for relationship in entity.relationships or []:
         part = f"relationship:{relationship.name}"
         report_missing(part, (k.from_ for k in relationship.keys))

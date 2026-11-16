@@ -24,7 +24,7 @@ import datetime
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import PurePosixPath
 
 import sqlglot
@@ -44,6 +44,7 @@ from makna.model.definitions import (
     Metric,
     RuleRef,
 )
+from makna.model.expressions import ExpressionError, columns_read, dimension_columns
 from makna.model.functions import first_disallowed_function
 
 ExtraCheck = Callable[[DefinitionSet], list[Issue]]
@@ -104,15 +105,28 @@ def _is_bare_column(sql: str | None) -> bool:
         return False
 
 
-def _columns(sql: str | None) -> set[str]:
-    """Lower-case names of the columns an expression reads (empty if it does not parse)."""
-    if sql is None:
-        return set()
-    try:
-        tree = _parse(sql)
-    except _ExprError:
-        return set()
-    return {c.name.lower() for c in tree.find_all(exp.Column)}
+@dataclass
+class _Personal:
+    """The personal columns of one entity, as far as they can be known."""
+
+    columns: set[str] = field(default_factory=set)
+    unknown: bool = False
+    """A personal dimension's expression does not parse, so the set above may have gaps."""
+
+    def overlap(self, read: Callable[[], Iterable[str]]) -> tuple[list[str], str | None]:
+        """The personal columns `read()` returns, and why it cannot be shown that there are no
+        others (None when it can). An expression that does not parse fails closed (V12, V18,
+        V20): the check reports it as a problem, and never passes because the parse failed."""
+        try:
+            names = set(read())
+        except ExpressionError as error:
+            if self.columns or self.unknown:
+                return [], f"its expression {error}"
+            return [], None  # nothing personal to protect; V05 reports the expression
+        found = sorted(names & self.columns)
+        if self.unknown:
+            return found, "the expression of a personal dimension of this entity does not parse"
+        return found, None
 
 
 # --------------------------------------------------------------------------------------
@@ -296,14 +310,17 @@ class _Checker:
     # Entity: V05, V06, V07, V11, V12, V16, V17, V18 -----------------------------------
 
     def entity_checks(self, e: Entity) -> None:
-        personal_columns: set[str] = set()
+        personal = _Personal()
         rules = {r.name for r in e.rules or []}
         for i, dim in enumerate(e.dimensions):
             if dim.expr is not None:
                 self.check_expression(dim.expr, f"dimension {dim.name}", "dimensions", i, "expr")
             self.v11_masking_fits(dim, i)
             if _is_personal(e, dim):
-                personal_columns |= _columns(dim.expr if dim.expr is not None else dim.name)
+                try:
+                    personal.columns.update(dimension_columns(dim))
+                except ExpressionError:
+                    personal.unknown = True
                 if dim.values:
                     self.add(
                         "V17",
@@ -316,9 +333,16 @@ class _Checker:
         for i, dim in enumerate(e.dimensions):
             if _is_personal(e, dim):
                 continue
-            copied = sorted(
-                _columns(dim.expr if dim.expr is not None else dim.name) & personal_columns
-            )
+            copied, unknown = personal.overlap(partial(dimension_columns, dim))
+            if unknown and not copied:
+                self.add(
+                    "V20",
+                    f"dimension {dim.name} is not personal, and it cannot be shown that it "
+                    f"does not read a personal column: {unknown}",
+                    "dimensions",
+                    i,
+                    "expr" if dim.expr is not None else "name",
+                )
             if copied:
                 self.add(
                     "V20",
@@ -330,7 +354,15 @@ class _Checker:
                 )
         for i, rule in enumerate(e.rules or []):
             self.check_expression(rule.expr, f"rule {rule.name}", "rules", i, "expr")
-            overlap = sorted(_columns(rule.expr) & personal_columns)
+            overlap, unknown = personal.overlap(partial(columns_read, rule.expr))
+            if unknown and not overlap:
+                self.add(
+                    "V18",
+                    f"rule {rule.name} cannot be shown not to read a personal column: {unknown}",
+                    "rules",
+                    i,
+                    "expr",
+                )
             if overlap:
                 self.add(
                     "V18",
@@ -349,7 +381,7 @@ class _Checker:
                     "to",
                 )
         for i, measure in enumerate(e.measures or []):
-            self.measure_checks(e, measure, i, personal_columns, rules)
+            self.measure_checks(e, measure, i, personal, rules)
 
     def check_expression(self, sql: str, what: str, *where: str | int) -> None:
         try:
@@ -388,7 +420,7 @@ class _Checker:
             )
 
     def measure_checks(
-        self, e: Entity, m: Measure, index: int, personal_columns: set[str], rules: set[str]
+        self, e: Entity, m: Measure, index: int, personal: _Personal, rules: set[str]
     ) -> None:
         what = f"measure {m.name}"
         if m.expr is not None:
@@ -414,7 +446,7 @@ class _Checker:
                 index,
                 "time_dimension",
             )
-        problem = self.v12_problem(m, personal_columns)
+        problem = self.v12_problem(m, personal)
         if problem is not None:
             self.add("V12", f"{what}: {problem}", "measures", index, "agg")
         if m.rule is not None and m.rule not in rules:
@@ -426,14 +458,18 @@ class _Checker:
                 "rule",
             )
 
-    def v12_problem(self, m: Measure, personal_columns: set[str]) -> str | None:
+    def v12_problem(self, m: Measure, personal: _Personal) -> str | None:
         """Why a measure may not read personal columns, or None. A measure may count rows or
         distinct values of the personal column itself, and nothing else: no other aggregate, no
         expression around the column (it could test one person's value), no filter on it."""
-        in_filter = sorted(_columns(m.filter) & personal_columns)
+        in_filter, unknown = personal.overlap(lambda: columns_read(m.filter))
         if in_filter:
             return f"its filter reads personal column {', '.join(in_filter)}"
-        read = sorted(_columns(m.expr) & personal_columns)
+        if unknown:
+            return f"its filter cannot be shown not to read a personal column: {unknown}"
+        read, unknown = personal.overlap(lambda: columns_read(m.expr))
+        if unknown and not read:
+            return f"its expression cannot be shown not to read a personal column: {unknown}"
         if not read:
             return None
         if m.agg not in NOT_AGGREGATE_AGGS:

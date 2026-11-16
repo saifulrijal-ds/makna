@@ -36,6 +36,7 @@ from makna.model.definitions import (
 )
 from makna.model.definitions import Domain as DomainDefinition
 from makna.model.governance import GovernancePolicy
+from makna.model.metrics import dependency_closure, metric_unit
 from makna.model.sensitivity import effective_level, stricter
 from makna.services import objects
 from makna.services.derive import dimension_options
@@ -136,26 +137,6 @@ def dimension_view(
 
 def _synonyms(synonyms: dict[str, list[str]] | None) -> list[str]:
     return [word for lang in sorted(synonyms or {}) for word in (synonyms or {})[lang]]
-
-
-def _closure(model: Model, metric: Metric) -> list[Metric]:
-    found: list[Metric] = []
-    stack = [metric]
-    while stack:
-        current = stack.pop()
-        if any(m.name == current.name for m in found):
-            continue
-        found.append(current)
-        names = [current.numerator, current.denominator, *(current.inputs or [])]
-        for name in names:
-            child = model.metrics.get(name) if name else None
-            if child is not None:
-                stack.append(child)
-    return found
-
-
-def _unit(metric: Metric) -> str | None:
-    return metric.format.unit or ("percent" if metric.format.kind == "percent" else None)
 
 
 class PolicyHolder(Protocol):
@@ -298,7 +279,7 @@ class DefinitionReader:
         rules: list[RuleView] = []
         if in_model:
             served = model.metrics.get(metric.name, metric)
-            members = _closure(model, served)
+            members = dependency_closure(model.metrics, served, strict=False)
             options: dict[str, Any] | None = self._usable_stored(row, snapshot)
             if options is None:
                 try:
@@ -347,7 +328,7 @@ class DefinitionReader:
             formula=derived.get("formula"),
             type=metric.type,
             inputs=list(derived.get("inputs", [])),
-            unit=_unit(metric),
+            unit=metric_unit(metric),
             time=time,
             dimensions=dimensions,
             unavailable_dimensions=unavailable,

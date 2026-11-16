@@ -43,10 +43,17 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
-from makna.model.definitions import MaskBucket, Masking, MaskRedact, MaskTruncateDate
+from makna.model.definitions import (
+    Dimension,
+    Entity,
+    MaskBucket,
+    Masking,
+    MaskRedact,
+    MaskTruncateDate,
+)
+from makna.model.expressions import ExpressionError, dimension_columns
 from makna.model.functions import node_problem
 from makna.model.governance import GovernancePolicy
-from makna.model.sensitivity import columns_read
 
 if TYPE_CHECKING:
     from makna.compiler.plan import QueryPlan
@@ -97,17 +104,29 @@ def _number(value: float) -> exp.Expr:
 # Which columns are personal
 
 
+def _read_by(entity: Entity, dimension: Dimension) -> tuple[str, ...]:
+    """The columns a dimension reads. An expression that does not parse raises
+    `ExpressionError`, which the planner turns into a refusal: the personal columns cannot be
+    listed, and a list with a gap would let a personal column through."""
+    try:
+        return dimension_columns(dimension)
+    except ExpressionError as error:
+        error.where = (entity.name, dimension.name)
+        raise
+
+
 def personal_columns(model: Model) -> frozenset[tuple[str, str]]:
     """`(table, column)`, lower case, for every column that is personal in either way: read by
     a dimension whose effective sensitivity is personal (selected or not), or tagged personal by
     the catalog itself (`model.derived_sensitivity`), whether or not any dimension reads it.
-    `table` is the entity's `source.table`."""
+    `table` is the entity's `source.table`. Raises `ExpressionError` when an expression of the
+    model does not parse."""
     found: set[tuple[str, str]] = set()
     for entity in model.entities.values():
         table = entity.source.table.lower()
         for dimension in entity.dimensions:
             if model.effective_sensitivity(entity, dimension) == "personal":
-                found.update((table, name.lower()) for name in columns_read(dimension))
+                found.update((table, name) for name in _read_by(entity, dimension))
     for (table, column), level in model.derived_sensitivity.items():
         if level == "personal":
             found.add((table.lower(), column.lower()))
@@ -128,7 +147,7 @@ def raw_returnable_columns(model: Model, policy: GovernancePolicy) -> frozenset[
                 continue
             ok = policy.may_return_raw(dimension.masking is not None)
             target = allowed if ok else refused
-            target.update((table, name.lower()) for name in columns_read(dimension))
+            target.update((table, name) for name in _read_by(entity, dimension))
     return frozenset(allowed - refused)
 
 

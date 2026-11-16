@@ -30,7 +30,14 @@ from makna.compiler.graph import JoinPath, JoinStep, path_names, resolve_path
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Dimension, Entity, Grain, Measure, Metric, RuleRef, Scalar
 from makna.model.definitions import Filter as DefinitionFilter
+from makna.model.expressions import ExpressionError
 from makna.model.governance import STRICT, GovernancePolicy
+from makna.model.metrics import (
+    MetricDependencyError,
+    dependency_closure,
+    direct_inputs,
+    metric_unit,
+)
 from makna.model.request import (
     FILTER_OPS,
     MAX_LIMIT,
@@ -259,38 +266,16 @@ def _in_metric(metric: str, error: QueryError) -> QueryError:
 # Expanding a metric
 
 
-def _direct_inputs(metric: Metric) -> tuple[str, ...]:
-    if metric.type == "ratio":
-        return tuple(n for n in (metric.numerator, metric.denominator) if n is not None)
-    if metric.type == "derived":
-        return tuple(metric.inputs or ())
-    return ()
-
-
-def _closure(model: Model, root: Metric) -> list[Metric]:
-    """The metric and everything it depends on, inputs first, the metric last."""
-    order: list[Metric] = []
-    done: set[str] = set()
-
-    def visit(metric: Metric, trail: tuple[str, ...]) -> None:
-        if metric.name in done:
-            return
-        if metric.name in trail:
-            raise _unresolved(root.name, f"metric {metric.name} depends on itself")
-        for name in _direct_inputs(metric):
-            child = model.metrics.get(name)
-            if child is None:
-                raise _unresolved(root.name, f"{metric.name} uses {name}, which is not a metric")
-            visit(child, (*trail, metric.name))
-        done.add(metric.name)
-        order.append(metric)
-
-    visit(root, ())
-    return order
+def _expand(model: Model, root: Metric) -> list[Metric]:
+    """The metric and everything it depends on (`dependency_closure`), as a planner refusal."""
+    try:
+        return dependency_closure(model.metrics, root)
+    except MetricDependencyError as error:
+        raise _unresolved(error.metric, error.message) from None
 
 
 def _leaves(model: Model, root: Metric) -> list[Metric]:
-    return [m for m in _closure(model, root) if m.type == "simple"]
+    return [m for m in _expand(model, root) if m.type == "simple"]
 
 
 def _leaf_measure(model: Model, leaf: Metric) -> tuple[Entity, Measure]:
@@ -300,14 +285,10 @@ def _leaf_measure(model: Model, leaf: Metric) -> tuple[Entity, Measure]:
     return found
 
 
-def _unit(metric: Metric) -> str | None:
-    return metric.format.unit or ("percent" if metric.format.kind == "percent" else None)
-
-
 def allowed_grains(model: Model, metric: Metric) -> tuple[str, ...]:
     """The grains the metric offers: its `time_grains` (all if unset) and those of its inputs."""
     allowed = set(GRAINS)
-    for member in _closure(model, metric):
+    for member in _expand(model, metric):
         allowed &= set(member.time_grains or GRAINS)
     return tuple(g for g in GRAINS if g in allowed)
 
@@ -456,7 +437,8 @@ def plan_request(
     metric = model.metrics.get(request.metric)
     if metric is None:
         raise _unknown_metric(model, request.metric)
-    closure = _closure(model, metric)
+    personal, raw = _personal_and_raw_columns(model, governance)
+    closure = _expand(model, metric)
     if enforce_status:
         _check_status(closure)
     leaves = [m for m in closure if m.type == "simple"]
@@ -479,7 +461,7 @@ def plan_request(
         model, request, [measures[leaf.name] for leaf in leaves]
     )
     guard = _guard(model, dimensions, governance, list(date_entities))
-    _check_guardable_dates(model, guard, date_entities)
+    _check_guardable_dates(model, guard, date_entities, personal)
     inputs = tuple(
         _plan_input(model, leaf, *measures[leaf.name], dimensions, filters, guard)
         for leaf in leaves
@@ -494,7 +476,7 @@ def plan_request(
         metric=metric.name,
         version=metric.version,
         nodes=tuple(
-            MetricNode(m.name, m.type, _direct_inputs(m), m.expr, _unit(m)) for m in closure
+            MetricNode(m.name, m.type, direct_inputs(m), m.expr, metric_unit(m)) for m in closure
         ),
         inputs=inputs,
         dimensions=dimensions,
@@ -506,9 +488,26 @@ def plan_request(
         columns=_columns(metric, closure, request.grain, dimensions, guard),
         governance=governance,
         guard=guard,
-        personal_columns=personal_data.personal_columns(model),
-        raw_columns=personal_data.raw_returnable_columns(model, governance),
+        personal_columns=personal,
+        raw_columns=raw,
     )
+
+
+def _personal_and_raw_columns(
+    model: Model, governance: GovernancePolicy
+) -> tuple[frozenset[tuple[str, str]], frozenset[tuple[str, str]]]:
+    """The personal columns of the model, and those that may be returned raw. A dimension
+    expression that does not parse makes the list impossible to write, so the request is refused:
+    a list with a gap would let a personal column through (BROKEN_REFERENCE)."""
+    try:
+        return (
+            personal_data.personal_columns(model),
+            personal_data.raw_returnable_columns(model, governance),
+        )
+    except ExpressionError as error:
+        name = ".".join(error.where)
+        what = f"dimension {name}: expression {error}" if name else str(error)
+        raise _broken(("V05", f"dimension:{name}", what)) from None
 
 
 def _unknown_metric(model: Model, name: str) -> QueryError:
@@ -899,13 +898,13 @@ def _check_guardable_dates(
     model: Model,
     guard: Sequence[GuardedEntity],
     date_entities: dict[str, str],
+    personal: frozenset[tuple[str, str]],
 ) -> None:
     """The records of an entity are counted by its primary key. When a composite key holds a
     personal column (the snapshot date of a balance table), the count is a tuple that reads it,
     which the final check cannot accept, so the minimum group size cannot be applied to a grain
     on that date: PERSONAL_DATA_REFUSED. A key of one column is counted as a bare
     `COUNT(DISTINCT key)`, which is accepted."""
-    personal = personal_data.personal_columns(model)
     for guarded in guard:
         if guarded.entity not in date_entities:
             continue
@@ -1051,10 +1050,10 @@ def _columns(
         columns.append(ResultColumn(name="metric_time", role="time"))
     columns.extend(ResultColumn(name=d.column, role="dimension") for d in dimensions)
     columns.extend(
-        ResultColumn(name=name, role="input", unit=_unit(by_name[name]))
-        for name in _direct_inputs(metric)
+        ResultColumn(name=name, role="input", unit=metric_unit(by_name[name]))
+        for name in direct_inputs(metric)
     )
-    columns.append(ResultColumn(name=metric.name, role="metric", unit=_unit(metric)))
+    columns.append(ResultColumn(name=metric.name, role="metric", unit=metric_unit(metric)))
     if guard:
         columns.append(ResultColumn(name=personal_data.GROUPS_LEFT_OUT, role="governance"))
     names = [c.name for c in columns]
