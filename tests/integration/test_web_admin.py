@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine, select
 
-from makna.index.tables import api_token
+from makna.index.tables import api_token, app_user
 from makna.services import accounts
 from makna.services.accounts import AccountError
 
@@ -379,3 +379,55 @@ def test_an_admin_sees_other_users_tokens_only_on_the_tokens_page(
     # The admin cannot revoke someone else's token from /account either.
     token_id = accounts.list_tokens(web_engine, other.email)[0].id
     assert post(client, f"/account/tokens/{token_id}/revoke", {}, "/account").status_code == 404
+
+
+def test_two_admins_demoting_or_deactivating_each_other_at_once_leave_an_admin(
+    migrated_engine: Engine,
+) -> None:
+    import threading
+
+    engine = migrated_engine
+    store = accounts.AccountStore(engine)
+    for round_number in range(20):
+        with engine.begin() as connection:  # only the two new admins are active admins
+            connection.execute(
+                app_user.update().where(app_user.c.role == "admin").values(is_active=False)
+            )
+        first = w.make_user(engine, "admin")
+        second = w.make_user(engine, "admin")
+        barrier = threading.Barrier(2)
+        outcomes: list[str] = []
+
+        def change(
+            target: str,
+            deactivate: bool,
+            barrier: threading.Barrier = barrier,
+            outcomes: list[str] = outcomes,
+        ) -> None:
+            barrier.wait()
+            try:
+                if deactivate:
+                    store.deactivate_user(target)
+                else:
+                    store.update_user(target, role="viewer", teams=None)
+                outcomes.append("done")
+            except AccountError:
+                outcomes.append("refused")
+
+        deactivate = round_number % 2 == 1
+        threads = [
+            threading.Thread(target=change, args=(first.email, deactivate)),
+            threading.Thread(target=change, args=(second.email, deactivate)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        with engine.connect() as connection:
+            active = connection.execute(
+                select(app_user.c.id).where(
+                    app_user.c.role == "admin", app_user.c.is_active.is_(True)
+                )
+            ).all()
+        assert len(active) >= 1, (round_number, outcomes)
+        assert sorted(outcomes) == ["done", "refused"], (round_number, outcomes)

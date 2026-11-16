@@ -1,7 +1,7 @@
 # Vendored files
 
 These files are copied unchanged from npm tarballs, so the pages need no Node.js, no bundler, and
-no request to a CDN (ARCHITECTURE section 13, D-8). A test (`tests/unit/test_web_vendored.py`)
+no request to a CDN (ARCHITECTURE section 13, D-8). A test (`tests/unit/test_web_security.py`)
 checks that each file below still has the SHA-256 recorded here.
 
 To update one: download the tarball from the URL with a newer version (at least two weeks old),
