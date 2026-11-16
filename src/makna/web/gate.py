@@ -38,9 +38,8 @@ from makna.services import Services
 from makna.services.accounts import AccountStoreError, AuthenticationError
 from makna.web.pages import CSRF_FAILED, SCOPE_KEY, Pages, WebContext
 from makna.web.security import (
-    LOGIN_COOKIE,
-    SESSION_COOKIE,
     CookieCodec,
+    CookieNames,
     safe_next,
     tokens_match,
 )
@@ -51,6 +50,7 @@ MCP_PATH = "/mcp"
 LOGIN_PATH = "/login"
 CHANNEL = "web"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+HSTS = "max-age=31536000"
 MAX_BODY = 1024 * 1024
 """Bytes of a request body the gate reads to find the CSRF field (a form, not an upload)."""
 
@@ -98,11 +98,12 @@ class WebGate:
         self._codec = codec
         self._pages = pages
         self._development = development
+        self._names = CookieNames.for_mode(development)
 
     # --- cookies ---
 
     def clear_session_cookie(self, response: Response) -> None:
-        response.delete_cookie(SESSION_COOKIE, **session_cookie_options(self._development))
+        response.delete_cookie(self._names.session, **session_cookie_options(self._development))
 
     # --- the request ---
 
@@ -120,7 +121,7 @@ class WebGate:
         static = is_static(path)
         send = self._with_headers(send, cache=not static)
         if static or path == "/healthz":
-            await self._app(scope, receive, send)
+            await self._run(scope, receive, send)
             return
         try:
             admitted = await self._admit(scope, receive, send, path)
@@ -131,7 +132,26 @@ class WebGate:
             await self._pages.error(scope, 503)(scope, receive, send)
             return
         if admitted is not None:
-            await self._app(admitted[0], admitted[1], send)
+            await self._run(admitted[0], admitted[1], send)
+
+    async def _run(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Run the page. A crash is answered here with the fixed 500 page and logged by its class
+        only: it is not raised on to the server, which would log the traceback and the message
+        (they can hold a value of the request)."""
+        started = False
+
+        async def tracking(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self._app(scope, receive, tracking)
+        except Exception as error:
+            logger.error("web: unhandled error: error=%s", type(error).__name__)
+            if not started:
+                await self._pages.error(scope, 500)(scope, receive, send)
 
     def _with_headers(self, send: Send, *, cache: bool) -> Send:
         async def wrapped(message: Message) -> None:
@@ -139,6 +159,9 @@ class WebGate:
                 headers = MutableHeaders(scope=message)
                 for name, value in SECURITY_HEADERS:
                     headers.setdefault(name, value)
+                if not self._development:
+                    # The pages are meant for https only (the cookies are `Secure`).
+                    headers.setdefault("Strict-Transport-Security", HSTS)
                 if cache:
                     headers.setdefault("Cache-Control", "no-store")
             await send(message)
@@ -155,7 +178,7 @@ class WebGate:
         web: WebContext | None = None
         clear = False
         if path != LOGIN_PATH:
-            raw = request.cookies.get(SESSION_COOKIE)
+            raw = request.cookies.get(self._names.session)
             session = self._codec.load_session(raw)
             clear = bool(raw) and session is None
             if session is not None:
@@ -178,7 +201,7 @@ class WebGate:
             secret = (
                 web.session.csrf
                 if web
-                else self._codec.load_login(request.cookies.get(LOGIN_COOKIE))
+                else self._codec.load_login(request.cookies.get(self._names.login))
             )
             outcome = await self._check_csrf(scope, receive, secret)
             if isinstance(outcome, Response):

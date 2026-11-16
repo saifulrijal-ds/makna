@@ -16,7 +16,6 @@ from sqlalchemy import Engine
 from makna.mcp.http import UNAUTHORIZED_BODY
 from makna.services import accounts
 from makna.services.accounts import AccountStore, AccountStoreError
-from makna.web.security import LOGIN_COOKIE, SESSION_COOKIE
 
 from . import web_support as w
 
@@ -164,13 +163,13 @@ def test_the_login_form_is_protected_by_its_own_cookie(web_engine: Engine, app: 
     other_token = w.csrf_in(other.get("/login").text)
     assert client.post("/login", data={**form, "csrf_token": other_token}).status_code == 403
     assert client.post("/login", data={**form, "csrf_token": token}).status_code == 303
-    assert SESSION_COOKIE in client.cookies
+    assert w.PROD.session in client.cookies
 
 
 def test_the_form_page_reuses_the_login_cookie_so_two_tabs_both_work(app: Any) -> None:
     client = w.make_client(app)
     first = client.get("/login")
-    assert LOGIN_COOKIE in first.headers["set-cookie"]
+    assert w.PROD.login in first.headers["set-cookie"]
     second = client.get("/login")
     assert "set-cookie" not in second.headers
     assert w.csrf_in(first.text) == w.csrf_in(second.text)
@@ -210,7 +209,7 @@ def test_the_session_cookie_is_httponly_samesite_lax_and_secure(
     login_cookie = attributes(page.headers["set-cookie"])
     response = w.sign_in(client, user.email)
     cookies = response.headers.get_list("set-cookie")
-    session = attributes(next(c for c in cookies if c.startswith(f"{SESSION_COOKIE}=")))
+    session = attributes(next(c for c in cookies if c.startswith(f"{w.PROD.session}=")))
     for cookie in (session, login_cookie):
         assert "httponly" in cookie
         assert cookie["samesite"].lower() == "lax"
@@ -218,9 +217,9 @@ def test_the_session_cookie_is_httponly_samesite_lax_and_secure(
         assert "domain" not in cookie  # host-only: sent to the host that set it, nowhere else
     assert session["path"] == "/"
     assert session["max-age"] == str(8 * 3600)
-    assert login_cookie["path"] == "/login"
+    assert login_cookie["path"] == "/"
     # The login cookie is removed once it has done its job.
-    gone = attributes(next(c for c in cookies if c.startswith(f"{LOGIN_COOKIE}=")))
+    gone = attributes(next(c for c in cookies if c.startswith(f"{w.PROD.login}=")))
     assert gone["max-age"] == "0"
 
 
@@ -236,7 +235,7 @@ def test_in_development_mode_the_cookie_is_not_secure_but_still_httponly_and_lax
             next(
                 c
                 for c in response.headers.get_list("set-cookie")
-                if c.startswith(f"{SESSION_COOKIE}=")
+                if c.startswith(f"{w.DEV.session}=")
             )
         )
         assert "secure" not in session
@@ -411,14 +410,14 @@ def test_a_copied_session_cookie_outlives_logout_but_not_deactivation(
     is the stop that works at once (the test above)."""
     user = w.make_user(web_engine)
     client = w.signed_in(app, user)
-    copy = client.cookies[SESSION_COOKIE]
+    copy = client.cookies[w.PROD.session]
     token = w.page_csrf(client)
     response = client.post("/logout", data={"csrf_token": token})
     assert response.status_code == 303 and response.headers["location"] == "/login"
     assert "max-age=0" in response.headers["set-cookie"].lower()
     assert client.get("/account").status_code == 303
     thief = w.make_client(app)
-    w.plant(thief, SESSION_COOKIE, copy)
+    w.plant(thief, w.PROD.session, copy)
     assert thief.get("/account").status_code == 200
     accounts.deactivate_user(web_engine, user.email)
     assert thief.get("/account").status_code == 303
@@ -456,7 +455,7 @@ def test_a_database_that_is_down_gives_a_503_page_that_names_nothing() -> None:
     try:
         value, _ = app.state.web.codec.issue_session(1)
         client = w.make_client(app)
-        w.plant(client, SESSION_COOKIE, value)
+        w.plant(client, w.PROD.session, value)
         response = client.get("/account")
         assert response.status_code == 503
         for text in ("127.0.0.1", "postgresql", "nothing", "makna:", "Traceback", "psycopg"):
@@ -546,3 +545,100 @@ def test_the_navigation_depends_on_the_role_and_links_only_to_pages_that_exist(
         assert ("/admin/users" in links) == (role == "admin")
         assert ("/admin/tokens" in links) == (role == "admin")
         assert "/account" in links
+
+
+# --- fix round 1 ---
+
+
+def test_a_crash_in_a_web_route_gives_the_500_page_and_is_not_raised_to_the_server(
+    web_engine: Engine, app: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    from fastapi.testclient import TestClient
+
+    marker = "marker-" + secrets.token_hex(6)
+
+    async def boom() -> None:
+        raise RuntimeError(marker)
+
+    app.add_api_route("/boom", boom, methods=["GET"])
+    user = w.make_user(web_engine)
+    client = TestClient(
+        app, base_url="https://testserver", follow_redirects=False, raise_server_exceptions=True
+    )
+    assert w.sign_in(client, user.email).status_code == 303
+    with caplog.at_level(logging.DEBUG):
+        response = client.get("/boom")  # raises here if the error is passed on to the server
+    assert response.status_code == 500
+    assert "could not complete the request" in response.text
+    assert marker not in response.text
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["cache-control"] == "no-store"
+    assert marker not in caplog.text
+    assert not [r for r in caplog.records if r.exc_info]
+    assert any("RuntimeError" in r.getMessage() for r in caplog.records)
+
+
+def test_the_cookies_use_the_host_prefix_outside_development_mode_only(
+    web_engine: Engine, app: Any
+) -> None:
+    user = w.make_user(web_engine)
+    client = w.make_client(app)
+    first = client.get("/login")
+    assert first.headers["set-cookie"].startswith("__Host-makna_login=")
+    response = w.sign_in(client, user.email)
+    cookies = response.headers.get_list("set-cookie")
+    assert any(c.startswith("__Host-makna_session=") for c in cookies)
+    # `__Host-` needs Secure, Path=/ and no Domain: all three are there.
+    for cookie in cookies:
+        attrs = attributes(cookie)
+        assert "secure" in attrs and attrs["path"] == "/" and "domain" not in attrs
+    # A plain `makna_session` cookie (planted by a sibling site, say) is not a session.
+    thief = w.make_client(app)
+    w.plant(thief, "makna_session", client.cookies[w.PROD.session])
+    assert thief.get("/account").status_code == 303
+    dev = w.make_app(web_engine.url, development=True)
+    try:
+        dev_client = w.make_client(dev, development=True)
+        assert dev_client.get("/login").headers["set-cookie"].startswith("makna_login=")
+    finally:
+        dev.state.services.dispose()
+
+
+def test_strict_transport_security_is_sent_outside_development_mode_only(
+    web_engine: Engine, app: Any
+) -> None:
+    assert (
+        w.make_client(app).get("/login").headers["strict-transport-security"].startswith("max-age=")
+    )
+    dev = w.make_app(web_engine.url, development=True)
+    try:
+        response = w.make_client(dev, development=True).get("/login")
+        assert "strict-transport-security" not in response.headers
+    finally:
+        dev.state.services.dispose()
+
+
+def test_no_path_is_redirected_to_a_host_taken_from_the_request(
+    web_engine: Engine, app: Any
+) -> None:
+    client = w.signed_in(app, w.make_user(web_engine, "admin"))
+    evil = {"Host": "evil.example"}
+    for path in (
+        "/account/",
+        "/admin/users/",
+        "/admin/tokens/",
+        "/login/",
+        "/static",
+        "//evil.example",
+    ):
+        response = client.get(path, headers=evil)
+        assert "evil.example" not in response.headers.get("location", ""), path
+    assert client.get("/account/", headers=evil).status_code == 404
+    # `/mcp` and `/mcp/` are routed by themselves and answer as before: 401 without a token.
+    for path in ("/mcp", "/mcp/"):
+        assert w.make_client(app).post(path, json={}).status_code == 401
+
+
+def test_the_note_on_rotating_the_secret_key_is_in_the_architecture() -> None:
+    text = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    assert "Rotating `MAKNA_SECRET_KEY` is the only way to end all sessions at once" in text

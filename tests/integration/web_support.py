@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 import secrets
-from collections.abc import Iterator
 from typing import Any
 
 from fastapi import FastAPI
@@ -19,9 +18,14 @@ from sqlalchemy.engine import URL
 from makna.app import create_app
 from makna.config import Settings
 from makna.services import accounts
+from makna.web.security import CookieNames
+from tests.route_support import fill as fill
+from tests.route_support import iter_routes as iter_routes
 
 HOST = "testserver"
 SECRET_KEY = secrets.token_hex(32)
+PROD = CookieNames.for_mode(False)
+DEV = CookieNames.for_mode(True)
 PASSWORD = secrets.token_urlsafe(18)
 """The password of every user these tests create (random for each run)."""
 
@@ -103,31 +107,6 @@ def page_csrf(client: TestClient, path: str = "/account") -> str:
     response = client.get(path)
     assert response.status_code == 200
     return csrf_in(response.text)
-
-
-def iter_routes(app: FastAPI) -> Iterator[tuple[str, frozenset[str]]]:
-    """Every (path, methods) of the application, including routes of included routers, which
-    FastAPI wraps in a private class. A route nobody wrapped is listed as it is."""
-
-    def walk(routes: list[Any], prefix: str) -> Iterator[tuple[str, frozenset[str]]]:
-        for route in routes:
-            inner = getattr(route, "original_router", None)
-            if inner is not None:
-                extra = getattr(getattr(route, "include_context", None), "prefix", "")
-                yield from walk(list(inner.routes), prefix + extra)
-                continue
-            path = getattr(route, "path", None)
-            if path is None:
-                continue
-            methods = getattr(route, "methods", None) or {"GET"}
-            yield prefix + path, frozenset(methods)
-
-    yield from walk(list(app.routes), "")
-
-
-def fill(path: str) -> str:
-    """A concrete path for a route with parameters."""
-    return re.sub(r"\{[^}]+\}", "1", path)
 
 
 def plant(client: TestClient, name: str, value: str) -> None:

@@ -41,7 +41,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             services.dispose()
 
-    app = FastAPI(title="Makna", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    # No slash redirects: a redirect on `/account/` would be built from the request's `Host`, and
+    # `/mcp` and `/mcp/` are both routed below anyway.
+    app = FastAPI(
+        title="Makna",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+        redirect_slashes=False,
+    )
     app.state.settings = settings
     app.state.services = services
 
