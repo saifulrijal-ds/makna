@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 from pathlib import Path
 
 import pytest
@@ -213,7 +214,10 @@ def test_a_very_long_email_is_one_bounded_key() -> None:
 
 # --- the settings ---
 
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@localhost/x", "MAKNA_SECRET_KEY": "k"}
+ENV = {
+    "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/x",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
+}
 
 
 def test_development_mode_is_off_unless_set(tmp_path: Path) -> None:

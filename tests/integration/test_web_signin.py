@@ -276,7 +276,7 @@ def test_a_forged_or_foreign_cookie_is_signed_out(web_engine: Engine, app: Any) 
     user = w.make_user(web_engine)
     client = w.signed_in(app, user)
     good = client.cookies[SESSION_COOKIE]
-    other_app = create_app(w.make_settings(web_engine.url, secret_key="x" * 40))
+    other_app = create_app(w.make_settings(web_engine.url, secret_key=secrets.token_hex(32)))
     foreign, _ = other_app.state.web.codec.issue_session(user.id)
     other_app.state.services.dispose()
     payload, _, signature = good.rpartition(".")

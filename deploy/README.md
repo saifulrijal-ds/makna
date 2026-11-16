@@ -4,7 +4,7 @@
 needs Docker with Compose v2 and one environment variable, with no default:
 
 ```
-export MAKNA_SECRET_KEY=$(openssl rand -hex 32)
+export MAKNA_SECRET_KEY=$(openssl rand -hex 32)   # at least 32 characters; the app refuses a shorter key
 export MAKNA_DEMO_PASSWORD=...             # optional, at least 12 characters: see "Demo users"
 docker compose -f deploy/docker-compose.yml up -d --wait
 curl http://127.0.0.1:8000/healthz        # {"status":"ok"}

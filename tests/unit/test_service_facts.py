@@ -5,6 +5,7 @@ application's services, and the governance settings the indexer's hook needs."""
 from __future__ import annotations
 
 import dataclasses
+import secrets
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,10 @@ from makna.services import ServiceError, Services
 
 from .compiler_support import DEFINITIONS, lending
 
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna", "MAKNA_SECRET_KEY": "k"}
+ENV = {
+    "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
+}
 
 
 def sample_objects() -> list:  # type: ignore[type-arg]

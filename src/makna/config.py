@@ -158,6 +158,9 @@ class McpSettings(BaseModel):
         return value
 
 
+MIN_SECRET_KEY_LENGTH = 32
+
+
 class WebSettings(BaseModel):
     """`[web]` of `config/makna.toml`: the web pages (ARCHITECTURE section 13).
 
@@ -184,6 +187,18 @@ class Settings(BaseModel):
     openmetadata_token: SecretStr | None = None
     # Two-person approval is on unless this is true (D-11).
     allow_self_approval: bool = False
+
+    @field_validator("secret_key")
+    @classmethod
+    def _long_enough(cls, value: SecretStr) -> SecretStr:
+        # The session cookies are signed with a key derived from this value, and a viewer holds
+        # one of them, so a short value can be recovered from it offline. Never show the value.
+        if len(value.get_secret_value()) < MIN_SECRET_KEY_LENGTH:
+            raise ValueError(
+                f"must be at least {MIN_SECRET_KEY_LENGTH} characters, for example "
+                "the output of: openssl rand -hex 32"
+            )
+        return value
 
     # From config/makna.toml.
     dialect: str = "postgres"
