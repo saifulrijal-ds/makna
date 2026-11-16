@@ -147,8 +147,13 @@ def test_the_committed_config_names_the_defaults() -> None:
     # The weights tuned in WP-15 (docs/EVALS.md, "Tuning (WP-15)").
     assert (runtime.search.w_keyword, runtime.search.w_vector) == (4.0, 0.25)
     assert runtime.search.candidates == 30
-    assert runtime.search.status_weights["draft"] == 0.5
-    assert runtime.search.kind_weights["column"] == 0.6
+    # Weights break ties, they do not decide (WP-15D, review finding C-3): all within 0.9 to 1.0,
+    # and a deprecated hit weighs what an approved one does.
+    weights = [*runtime.search.status_weights.values(), *runtime.search.kind_weights.values()]
+    assert all(0.9 <= weight <= 1.0 for weight in weights)
+    assert runtime.search.status_weights["deprecated"] == runtime.search.status_weights["approved"]
+    assert runtime.search.status_weights["draft"] == 0.95
+    assert runtime.search.kind_weights["column"] == 0.92
 
 
 def test_a_bad_search_setting_is_reported(tmp_path: Path) -> None:

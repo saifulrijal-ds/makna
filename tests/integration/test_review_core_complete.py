@@ -91,14 +91,14 @@ def test_index_build_does_not_serve_a_definition_that_fails_validation(
 
 
 @pytest.mark.integration
-@pytest.mark.xfail(strict=True, reason="review finding 3: kind weights act as tiers")
 def test_a_search_for_a_dimension_returns_it_in_the_first_five(
     database: Engine, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`makna_search` says it finds dimensions, and its default limit is 5. "region" is the name
     of `branch.region_name` and matches it best in the keyword list. With the configured weights
-    it must be among the first five hits. Today six metrics that only mention a region in an
-    example question come first, because the kind weight 0.8 outweighs any difference of rank."""
+    it must be among the first five hits. Before WP-15D six metrics that only mention a region in
+    an example question came first, because the kind weight 0.8 outweighed any difference of
+    rank."""
     assert main(["index", "build", "--definitions", str(DEFINITIONS)]) == 0
     capsys.readouterr()
     settings = load_search_runtime()
