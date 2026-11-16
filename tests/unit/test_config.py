@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ from makna.model.governance import RULES, GovernancePolicy
 
 GOOD_ENV = {
     "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
-    "MAKNA_SECRET_KEY": "not-a-real-secret",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
 }
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -112,7 +113,7 @@ def test_search_and_embedding_settings_have_a_section_each(tmp_path: Path) -> No
         '[embedding.fastembed]\ncache_dir = "/models"\n'
     )
     settings = load_settings(
-        {"MAKNA_DATABASE_URL": "postgresql://x", "MAKNA_SECRET_KEY": "k"}, config
+        {"MAKNA_DATABASE_URL": "postgresql://x", "MAKNA_SECRET_KEY": secrets.token_hex(32)}, config
     )
     assert settings.embedding_provider == "hash"
     assert settings.search.w_keyword == 0.5
@@ -311,3 +312,58 @@ def test_the_minimum_hint_about_zero_appears_only_in_custom(tmp_path: Path) -> N
     assert "or 0" not in refused(tmp_path, 'mode = "strict"\nmin_group_size = 1', "min_group_size")
     assert "or 0" not in refused(tmp_path, 'mode = "off"\nmin_group_size = 1', "min_group_size")
     assert "or 0" in refused(tmp_path, 'mode = "custom"\nmin_group_size = 1', "min_group_size")
+
+
+@pytest.mark.parametrize("length", [1, 16, 31])
+def test_a_secret_key_shorter_than_32_characters_is_refused_without_showing_it(
+    length: int, tmp_path: Path
+) -> None:
+    short = "q7" * 20
+    short = short[:length]
+    with pytest.raises(ConfigError) as info:
+        load_settings({**GOOD_ENV, "MAKNA_SECRET_KEY": short}, tmp_path / "none.toml")
+    text = str(info.value)
+    assert "MAKNA_SECRET_KEY" in text and "32" in text
+    assert short not in text.replace("MAKNA_SECRET_KEY", "")
+
+
+def test_a_secret_key_of_32_characters_is_accepted(tmp_path: Path) -> None:
+    load_settings({**GOOD_ENV, "MAKNA_SECRET_KEY": "a" * 32}, tmp_path / "none.toml")
+
+
+def test_a_refused_secret_key_or_database_url_is_in_no_error_text_or_traceback() -> None:
+    import traceback
+
+    from makna.app import create_app
+    from makna.config import Settings
+
+    marker = "marker" + secrets.token_hex(4)
+    password = "pw" + secrets.token_hex(4)
+    for call in (
+        lambda: Settings.model_validate(
+            {"database_url": f"postgresql://u:{password}@h/x", "secret_key": marker}
+        ),
+        lambda: Settings.model_validate(
+            {"database_url": f"postgresql://u:{password}@h/x", "secret_key": marker, "bogus": 1}
+        ),
+        lambda: create_app(
+            Settings.model_validate(
+                {"database_url": f"postgresql://u:{password}@h/x", "secret_key": marker}
+            )
+        ),
+        lambda: load_settings(
+            {
+                "MAKNA_DATABASE_URL": f"postgresql://u:{password}@h/x",
+                "MAKNA_SECRET_KEY": marker,
+            },
+            "none.toml",
+        ),
+    ):
+        with pytest.raises(Exception) as raised:
+            call()
+        text = (
+            str(raised.value)
+            + repr(raised.value)
+            + "".join(traceback.format_exception(raised.value))
+        )
+        assert marker not in text and password not in text

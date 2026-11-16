@@ -4,7 +4,7 @@
 needs Docker with Compose v2 and one environment variable, with no default:
 
 ```
-export MAKNA_SECRET_KEY=$(openssl rand -hex 32)
+export MAKNA_SECRET_KEY=$(openssl rand -hex 32)   # at least 32 characters; the app refuses a shorter key
 export MAKNA_DEMO_PASSWORD=...             # optional, at least 12 characters: see "Demo users"
 docker compose -f deploy/docker-compose.yml up -d --wait
 curl http://127.0.0.1:8000/healthz        # {"status":"ok"}
@@ -74,7 +74,7 @@ For the development stack only. When `MAKNA_DEMO_PASSWORD` is set (at least 12 c
 | `approver@demo.example` | approver | `data-governance` |
 | `admin@demo.example` | admin | none |
 
-There is no default password in any committed file: choose one when you start the stack, for example `export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)`. Without it, `init` still succeeds and creates no demo user. A later run with another password does not change existing users; to change one, use `docker compose down -v` or the `makna user` commands. Create real users and API tokens with `makna user create` and `makna token create` (they need `MAKNA_DATABASE_URL`).
+There is no default password in any committed file: choose one when you start the stack, for example `export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)`. Without it, `init` still succeeds and creates no demo user. A later run with another password does not change existing users; to change one, use `docker compose down -v` or the `makna user` commands. Sign in at `http://localhost:8000/login` with one of them (the stack sets `MAKNA_WEB_DEVELOPMENT=true`, because the session cookie is `Secure` otherwise and a browser does not send it back over plain http). Create real users and API tokens with `makna user create` and `makna token create` (they need `MAKNA_DATABASE_URL`).
 
 ## The embedding model and the offline check
 
