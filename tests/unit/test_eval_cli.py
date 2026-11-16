@@ -9,8 +9,8 @@ import pytest
 from evals import cli
 
 
-def test_the_four_commands_exist_and_agent_is_not_there_yet() -> None:
-    assert set(cli.COMMANDS) == {"all", "retrieval", "compile", "freeze"}
+def test_the_commands_exist_and_agent_is_not_there_yet() -> None:
+    assert set(cli.COMMANDS) == {"all", "retrieval", "compile", "tune", "freeze"}
     parser = cli.build_parser()
     for command in cli.COMMANDS:
         assert parser.parse_args([command]).command == command

@@ -148,6 +148,116 @@ def _render_by_kind(by_kind: Mapping[str, Any] | None) -> list[str]:
     return lines
 
 
+def _split_row(name: str, n: object, scores: Mapping[str, Any]) -> list[str]:
+    fused = scores["fused"]
+    return [
+        name,
+        _num(n),
+        _num(fused["recall_at_3"]),
+        _num(fused["recall_at_1"]),
+        _num(fused["mrr"]),
+        _num(fused["by_language"]["en"]["recall_at_3"]),
+        _num(fused["by_language"]["id"]["recall_at_3"]),
+        _num(fused["false_abstention_rate"]),
+    ]
+
+
+def _render_splits(section: Mapping[str, Any]) -> list[str]:
+    """The tuned and the held-out split side by side (WP-14C), with the held-out detail."""
+    heldout = section.get("heldout")
+    if not heldout:
+        return []
+    lines = [
+        "### Tuned and held-out splits",
+        "",
+        "The fused search over each split. The tuned split is the golden set, which the weights "
+        "were tuned on and which carries the gates above; the held-out split "
+        "(`evals/golden/heldout_questions.yaml`) was never tuned on. Recall at 1 and mean "
+        "reciprocal rank are over `answer` questions; the last column is the share of valid "
+        "questions whose confidence band is `low`.",
+        "",
+        "Held-out provenance: " + heldout["provenance"],
+        "",
+    ]
+    rows = [
+        _split_row("tuned (golden)", section["n_questions"], section["scores"]),
+        _split_row("held-out", heldout["n_questions"], heldout["scores"]),
+    ]
+    lines += _table(
+        [
+            "Split",
+            "Questions",
+            "Recall at 3",
+            "Recall at 1",
+            "MRR",
+            "Recall at 3 en",
+            "Recall at 3 id",
+            "Low band",
+        ],
+        rows,
+    ) + [""]
+    system_rows = [
+        [
+            name,
+            _num(heldout["scores"][name]["recall_at_3"]),
+            _num(heldout["scores"][name]["recall_at_1"]),
+            _num(heldout["scores"][name]["mrr"]),
+            _num(heldout["scores"][name]["by_language"]["en"]["recall_at_3"]),
+            _num(heldout["scores"][name]["by_language"]["id"]["recall_at_3"]),
+        ]
+        for name in SYSTEMS
+    ]
+    lines += ["Held-out split, each search:", ""]
+    lines += _table(
+        ["Search", "Recall at 3", "Recall at 1", "MRR", "Recall at 3 en", "Recall at 3 id"],
+        system_rows,
+    ) + [""]
+    confidence = heldout["confidence"]
+    band_rows = []
+    for label, part in (
+        ("all", confidence),
+        ("en", confidence["by_language"]["en"]),
+        ("id", confidence["by_language"]["id"]),
+    ):
+        band_rows.append(
+            [
+                label,
+                _num(part["n"]),
+                _num(part["bands"]["high"]),
+                _num(part["bands"]["medium"]),
+                _num(part["bands"]["low"]),
+                _num(part["low_found_at_3"]),
+            ]
+        )
+    lines += [
+        "Confidence bands of the held-out questions (every one has a defined metric, so a `low` "
+        "band is a false abstention; the last column counts the `low` ones whose right metric "
+        "is in the first 3 hits):",
+        "",
+    ]
+    lines += _table(
+        ["Language", "Questions", "high", "medium", "low", "low with the metric in the first 3"],
+        band_rows,
+    ) + [""]
+    missed = [q for q in heldout["questions"] if not q["found_at_3"]["fused"]]
+    if missed:
+        lines += ["Held-out questions not found in the first 3:", ""]
+        lines += _table(
+            ["Id", "Language", "Expected", "Fused top 3", "Confidence"],
+            [
+                [
+                    q["id"],
+                    q["language"],
+                    ", ".join(q["expected"]),
+                    ", ".join(q["rankings"]["fused"][:3]) or "none",
+                    q["confidence"],
+                ]
+                for q in missed
+            ],
+        ) + [""]
+    return lines
+
+
 def _render_retrieval(section: Mapping[str, Any]) -> list[str]:
     scores = section["scores"]
     lines = ["## Retrieval (EVL-2)", ""]
@@ -185,6 +295,7 @@ def _render_retrieval(section: Mapping[str, Any]) -> list[str]:
             ],
         ],
     ) + [""]
+    lines += _render_splits(section)
     lines += _render_by_kind(section.get("by_kind"))
     lines += ["### By language", ""]
     language_rows: list[list[str]] = []

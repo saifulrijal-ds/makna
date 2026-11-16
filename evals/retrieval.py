@@ -109,7 +109,9 @@ def run_kind_recall(
             continue
         ids = default_search_hits(searcher, question.question).ids
         ranked = distinct_metrics(ids, related_metrics(engine, ids))
-        metric_found.append(bool(recall_hit(_record(question, {"fused": ranked}, ""), ranked)))
+        metric_found.append(
+            bool(recall_hit(question_record(question, {"fused": ranked}, ""), ranked))
+        )
     rows = [_kind_row("metric", "golden questions, default search", metric_found)]
     details: list[dict[str, Any]] = []
     by_kind: dict[str, list[bool]] = {kind: [] for kind in KIND_ROWS}
@@ -155,7 +157,23 @@ def related_metrics(engine: Engine, object_ids: Sequence[str]) -> dict[str, list
         }
 
 
-def _record(question: Question, rankings: dict[str, list[str]], confidence: str) -> RetrievalRecord:
+def rank_systems(
+    engine: Engine, searchers: Searchers, query: str, fused: SearchResult | None = None
+) -> tuple[dict[str, SearchResult], dict[str, list[str]]]:
+    """The fused search and each leg alone for one query: the three results, and for each the
+    ranked list of distinct metrics. `fused` is a result already at hand (the timed one)."""
+    results: dict[str, SearchResult] = {
+        "fused": fused if fused is not None else search_hits(searchers.fused, query),
+        "keyword": search_hits(searchers.keyword, query),
+        "vector": search_hits(searchers.vector, query),
+    }
+    related = related_metrics(engine, [i for r in results.values() for i in r.ids])
+    return results, {name: distinct_metrics(r.ids, related) for name, r in results.items()}
+
+
+def question_record(
+    question: Question, rankings: dict[str, list[str]], confidence: str
+) -> RetrievalRecord:
     expected = question.expected
     return RetrievalRecord(
         id=question.id,
@@ -200,15 +218,8 @@ def run_retrieval(
             times.append(elapsed)
             if round_index > 0:
                 continue
-            legs = {
-                "keyword": search_hits(searchers.keyword, question.question),
-                "vector": search_hits(searchers.vector, question.question),
-            }
-            results: Mapping[str, SearchResult] = {"fused": fused, **legs}
-            all_ids = [i for r in results.values() for i in r.ids]
-            related = related_metrics(engine, all_ids)
-            rankings = {name: distinct_metrics(r.ids, related) for name, r in results.items()}
-            record = _record(question, rankings, fused.confidence.band)
+            results, rankings = rank_systems(engine, searchers, question.question, fused)
+            record = question_record(question, rankings, fused.confidence.band)
             records.append(record)
             details.append(_detail(question, record, results, elapsed))
     return {

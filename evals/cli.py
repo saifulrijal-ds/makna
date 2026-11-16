@@ -3,6 +3,7 @@
     all         retrieval and compile; writes report.md and report.json; exit 1 if a gate fails
     retrieval   the retrieval eval only (docs/EVALS.md section 3)
     compile     the compile correctness eval only (section 4)
+    tune        grid over the weights on the tuned split; prints the setting the rule chooses
     freeze      re-run the reference SQL and rewrite evals/golden/expected/ (after a deliberate
                 change of the data or of a definition)
 
@@ -24,8 +25,9 @@ from typing import Any
 import psycopg
 from sqlalchemy.exc import SQLAlchemyError
 
-from evals import compile_eval, gates, report, retrieval
+from evals import compile_eval, gates, heldout_eval, report, retrieval, tune
 from evals.golden import freeze as freeze_module
+from evals.golden.heldout import HeldoutFile, load_heldout_questions
 from evals.golden.reference import EXPECTED_DIR, QUESTIONS_FILE, SEARCH_QUESTIONS_FILE
 from evals.golden.schema import Question, SearchQuestion, load_questions, load_search_questions
 from evals.runtime import (
@@ -48,12 +50,15 @@ EXIT_PASS, EXIT_GATE, EXIT_SETUP = 0, 1, 2
 def run_retrieval_eval(
     runtime: Runtime,
     questions: Sequence[Question],
-    search_questions: Sequence[SearchQuestion] = (),
+    search_questions: Sequence[SearchQuestion],
+    heldout: HeldoutFile,
 ) -> dict[str, Any]:
     searchers = retrieval.make_searchers(runtime.engine, runtime.provider, runtime.search)
-    return retrieval.run_retrieval(
+    section = retrieval.run_retrieval(
         runtime.engine, searchers, questions, search_questions=search_questions
     )
+    section["heldout"] = heldout_eval.run_heldout(runtime.engine, searchers, heldout)
+    return section
 
 
 def log_for(verbose: bool) -> Callable[[str], None]:
@@ -120,6 +125,7 @@ def evaluate_command(args: argparse.Namespace) -> int:
         thresholds = gates.load_gates(Path(args.gates) if args.gates else gates.GATES_FILE)
         questions = load_questions(QUESTIONS_FILE)
         search_questions = load_search_questions(SEARCH_QUESTIONS_FILE)
+        heldout = load_heldout_questions()
     except (gates.GateError, ValueError) as error:
         print(f"makna-eval: {error}", file=sys.stderr)
         return EXIT_SETUP
@@ -129,7 +135,7 @@ def evaluate_command(args: argparse.Namespace) -> int:
         retrieval_section = compile_section = None
         if args.command in ("all", "retrieval"):
             print("makna-eval: retrieval ...", flush=True)
-            retrieval_section = run_retrieval_eval(runtime, questions, search_questions)
+            retrieval_section = run_retrieval_eval(runtime, questions, search_questions, heldout)
         if args.command in ("all", "compile"):
             print("makna-eval: compile ...", flush=True)
             compile_section = run_compile_eval(runtime, questions, verbose=args.verbose)
@@ -178,6 +184,51 @@ def print_summary(results: Sequence[gates.GateResult]) -> None:
             print(f"          {entry}")
 
 
+def tune_command(args: argparse.Namespace) -> int:
+    """`tune`: the weight, glossary term weight, and `low` grids over the tuned split only; prints
+    the setting the rule of `evals/tune.py` chooses and writes `tuning.md` and `tuning.json`."""
+    try:
+        thresholds = gates.load_gates()["retrieval"]
+        questions, search_questions = tune.load_tuned_questions()
+    except (gates.GateError, ValueError) as error:
+        print(f"makna-eval: {error}", file=sys.stderr)
+        return EXIT_SETUP
+    runtime: Runtime | None = None
+    try:
+        runtime = open_runtime()
+        tuner = tune.Tuner(
+            runtime.engine,
+            tune.QueryCache(runtime.provider),
+            runtime.search,
+            questions,
+            search_questions,
+            thresholds,
+        )
+        result = tune.tune(tuner, log=lambda message: print(f"makna-eval: {message}", flush=True))
+    except (EvalSetupError, SearchError, EmbeddingError, ServiceError, RuntimeError) as error:
+        print(f"makna-eval: cannot run: {error}", file=sys.stderr)
+        return EXIT_SETUP
+    except (SQLAlchemyError, psycopg.Error) as error:
+        print(
+            f"makna-eval: cannot run: the database failed ({type(error).__name__}); "
+            "check MAKNA_DATABASE_URL and that the database is up",
+            file=sys.stderr,
+        )
+        return EXIT_SETUP
+    finally:
+        if runtime is not None:
+            runtime.dispose()
+    out_dir = Path(args.out) if args.out else report.default_out_dir()
+    _, md_path = tune.write_result(result, out_dir)
+    chosen = result["chosen"]
+    print(
+        f"chosen: w_keyword {chosen['w_keyword']}, w_vector {chosen['w_vector']:g}, "
+        f"glossary_term weight {chosen['glossary_term_weight']}, low {chosen['low']}"
+    )
+    print(f"makna-eval: wrote {md_path}")
+    return EXIT_PASS
+
+
 def freeze_command(args: argparse.Namespace) -> int:
     del args
     return freeze_module.main([])
@@ -187,6 +238,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "all": evaluate_command,
     "retrieval": evaluate_command,
     "compile": evaluate_command,
+    "tune": tune_command,
     "freeze": freeze_command,
 }
 
@@ -208,6 +260,13 @@ def build_parser() -> argparse.ArgumentParser:
             help="print engine error text and differing values to standard error "
             "(they can hold personal data: never in a shared log)",
         )
+    tuning = commands.add_parser(
+        "tune",
+        help="grid over the search weights on the tuned split only (never the held-out one)",
+        description="Choose the search weights by the rule of evals/tune.py, reading only the "
+        "golden and search questions. Prints the setting; changes no file but the report.",
+    )
+    tuning.add_argument("--out", help="report directory (default: evals/reports/<date>)")
     commands.add_parser(
         "freeze",
         help="rewrite evals/golden/expected/ from the reference SQL",

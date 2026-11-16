@@ -1,0 +1,197 @@
+# The held-out retrieval questions (EVL-1, EVL-2, SRC-2; WP-14C, decision D-32 (5) and D-34).
+# Shape: evals/golden/heldout.py (`HeldoutQuestion`); rules: docs/EVALS.md section 3.2.
+#
+# NEVER TUNE ON THESE. They exist to measure how search does on questions that nobody tuned the
+# weights, the synonyms, or the confidence thresholds against. The tuning code (`evals/tune.py`)
+# cannot read this file, and a unit test keeps it so. If you read the numbers of this split and
+# then change a weight to make them better, the split is spent: say so in the pull request and
+# ask for new questions.
+#
+# They expect a metric only and have no reference SQL: the compile eval never reads them.
+# The text below the header is the file as the author delivered it; the questions are not edited.
+provenance: Written 2026-11-16 by a fresh agent that never read the repository, from the business meanings of the 23 approved metrics with names, labels and synonyms removed and the metrics behind shuffled codes (D-32 (5) fallback, D-34). Weaker than questions written by a person. Never tune on these.
+questions:
+- id: H01
+  language: en
+  question: In October 2026, how many collector calls and visits resulted in the debtor agreeing to pay? Split it per branch.
+  expected_metric: promise_to_pay_count
+- id: H02
+  language: id
+  question: Ada berapa kali debitur janji bayar dari hasil telepon dan kunjungan collector selama Q3 2026?
+  expected_metric: promise_to_pay_count
+- id: H03
+  language: en
+  question: How many loan requests did customers put in during September 2026, counting rejected and cancelled ones too?
+  expected_metric: application_count
+- id: H04
+  language: id
+  question: Jumlah pengajuan kredit yang masuk per cabang tiap bulan di 2025, semua status ikut dihitung.
+  expected_metric: application_count
+- id: H05
+  language: en
+  question: How many new loans actually got funded last month?
+  expected_metric: disbursed_contract_count
+- id: H06
+  language: id
+  question: Berapa jumlah kontrak yang sudah cair per bulan sepanjang 2025? Tolong dipisah per produk.
+  expected_metric: disbursed_contract_count
+- id: H07
+  language: en
+  question: Of the applications credit actually ruled on in Q3 2026, what percentage did we accept, by region?
+  expected_metric: approval_rate
+- id: H08
+  language: id
+  question: Dari semua aplikasi yang sudah ada keputusan kreditnya di bulan Oktober, berapa persen yang disetujui? Per cabang ya.
+  expected_metric: approval_rate
+- id: H09
+  language: en
+  question: What share of the installment amounts billed for October 2026 did we actually bring in, per branch?
+  expected_metric: collection_rate
+- id: H10
+  language: id
+  question: Berapa persen tagihan jatuh tempo yang berhasil tertagih, untuk tiap bulan di 2025?
+  expected_metric: collection_rate
+- id: H11
+  language: en
+  question: How much principal is outstanding on rescheduled loans as of the end of last month?
+  expected_metric: restructured_outstanding_principal
+- id: H12
+  language: id
+  question: Total OS pokok kontrak restrukturisasi posisi akhir September 2026, dipecah per cabang.
+  expected_metric: restructured_outstanding_principal
+- id: H13
+  language: en
+  question: What's the average loan amount per newly funded contract this year so far, split by product?
+  expected_metric: average_ticket_size
+- id: H14
+  language: id
+  question: Rata-rata plafon per kontrak yang cair bulan lalu berapa? Kalau bisa per segmen nasabah.
+  expected_metric: average_ticket_size
+- id: H15
+  language: en
+  question: What's the rupiah amount of loans over 90 days late at the end of last month?
+  expected_metric: npf_outstanding_principal
+- id: H16
+  language: id
+  question: Nominal outstanding pokok yang DPD-nya di atas 90 hari per akhir September 2026, per cabang, berapa?
+  expected_metric: npf_outstanding_principal
+- id: H17
+  language: en
+  question: How much did customers pay us in installments last month, leaving out late fees?
+  expected_metric: collected_amount
+- id: H18
+  language: id
+  question: Total uang angsuran yang masuk di Q3 2026 per cabang, tanpa denda.
+  expected_metric: collected_amount
+- id: H19
+  language: en
+  question: What % of the loan balance was 30+ days overdue at the end of last month, by product?
+  expected_metric: par30_ratio
+- id: H20
+  language: id
+  question: Persentase OS dengan DPD di atas 30 hari dibanding total OS, per cabang, posisi akhir Q3 2026.
+  expected_metric: par30_ratio
+- id: H21
+  language: en
+  question: What percentage of our loan book was more than three months overdue at the end of Q3 2026, by branch?
+  expected_metric: npf_ratio
+- id: H22
+  language: id
+  question: Rasio outstanding DPD 90+ terhadap total OS akhir bulan lalu berapa persen?
+  expected_metric: npf_ratio
+- id: H23
+  language: en
+  question: How much principal do borrowers still owe us as of the end of October 2026, broken down by region?
+  expected_metric: outstanding_principal
+- id: H24
+  language: id
+  question: Posisi OS pokok akhir Q3 2026 per segmen nasabah berapa?
+  expected_metric: outstanding_principal
+- id: H25
+  language: en
+  question: How much in installments were customers scheduled to pay in each month of 2025 under their current schedules?
+  expected_metric: due_amount
+- id: H26
+  language: id
+  question: Total tagihan angsuran yang jatuh tempo bulan ini berapa, per produk?
+  expected_metric: due_amount
+- id: H27
+  language: en
+  question: How many applications got a yes from credit in Q3 2026, by product?
+  expected_metric: approved_application_count
+- id: H28
+  language: id
+  question: Ada berapa aplikasi yang di-approve bulan lalu per region?
+  expected_metric: approved_application_count
+- id: H29
+  language: en
+  question: How many applications did the credit team make a final call on last month, approvals and rejections combined?
+  expected_metric: decided_application_count
+- id: H30
+  language: id
+  question: Berapa total aplikasi yang sudah diputus, baik disetujui maupun ditolak, per cabang tahun ini?
+  expected_metric: decided_application_count
+- id: H31
+  language: en
+  question: How many live loan accounts did we have on the books at the end of October 2026?
+  expected_metric: active_contract_count
+- id: H32
+  language: id
+  question: Jumlah kontrak yang masih punya sisa pokok di akhir tiap bulan sepanjang 2025, per cabang.
+  expected_metric: active_contract_count
+- id: H33
+  language: en
+  question: How much have we taken in from late fees this year so far?
+  expected_metric: penalty_income
+- id: H34
+  language: id
+  question: Pendapatan denda keterlambatan bulan lalu per cabang berapa?
+  expected_metric: penalty_income
+- id: H35
+  language: en
+  question: What was the outstanding principal on accounts over 30 days late at the end of each month in 2025?
+  expected_metric: par30_outstanding_principal
+- id: H36
+  language: id
+  question: Nominal OS yang telat bayar lebih dari 30 hari, posisi akhir Oktober 2026, per region berapa rupiah?
+  expected_metric: par30_outstanding_principal
+- id: H37
+  language: en
+  question: How much money in total did we pay out to borrowers on new loans in Q3 2026, by branch?
+  expected_metric: disbursement_amount
+- id: H38
+  language: id
+  question: Nominal dana yang dikucurkan ke nasabah tahun ini sampai sekarang berapa? Total rupiahnya saja.
+  expected_metric: disbursement_amount
+- id: H39
+  language: en
+  question: How many new customers did we sign up in Q3 2026, by home branch?
+  expected_metric: new_customer_count
+- id: H40
+  language: id
+  question: Jumlah nasabah baru yang terdaftar per bulan tahun ini, tidak peduli mereka jadi ambil kredit atau tidak.
+  expected_metric: new_customer_count
+- id: H41
+  language: en
+  question: What percentage of our collection calls and visits so far this year got the customer to commit to paying?
+  expected_metric: promise_to_pay_rate
+- id: H42
+  language: id
+  question: Berapa persen dari seluruh desk call dan field visit penagihan di bulan Oktober yang hasilnya debitur sanggup bayar? Per cabang.
+  expected_metric: promise_to_pay_rate
+- id: H43
+  language: en
+  question: What portion of the total loan book is made up of restructured contracts, month by month in 2025?
+  expected_metric: restructured_ratio
+- id: H44
+  language: id
+  question: Berapa persen dari total outstanding yang berasal dari kontrak hasil restruk, posisi akhir bulan lalu?
+  expected_metric: restructured_ratio
+- id: H45
+  language: en
+  question: How many times did our collectors reach out to overdue borrowers in Q3 2026, with calls, SMS reminders, home visits and SP letters all counted regardless of outcome?
+  expected_metric: collection_action_count
+- id: H46
+  language: id
+  question: Total tindakan tagih yang dilakukan tim collector tahun ini berapa, dipecah per cabang? Termasuk telepon, kunjungan, dan SP.
+  expected_metric: collection_action_count
