@@ -80,8 +80,7 @@ def test_search_options_reach_the_search(
     )
     assert code == 0 and "customers.national_id" in out
     # The flag must reach the search: a deprecated object is listed at all. Its rank is not this
-    # test's subject. The status weight (0.5) puts a deprecated hit below the approved hits that
-    # match, and with the tuned weights (WP-15) more than 10 approved hits match here.
+    # test's subject (the rank of a deprecated hit is tested in test_search.py).
     code, out, _ = run(
         capsys, "search", "NPL ratio retired", "--include-deprecated", "--limit", "20"
     )
@@ -95,7 +94,7 @@ def test_a_low_confidence_search_prints_the_guidance(
     code, out, _ = run(capsys, "search", "website conversion funnel")
     assert code == 0
     assert out.startswith("confidence: low")
-    assert "do not approximate it with a different metric" in out
+    assert "read the descriptions of the hits before deciding" in out
 
 
 def test_search_before_any_build_says_what_to_do(

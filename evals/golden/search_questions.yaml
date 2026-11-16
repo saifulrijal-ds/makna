@@ -1,0 +1,131 @@
+# Search-only questions for dimensions, entities, and glossary terms (EVL-2, WP-15D). Shape:
+# evals/golden/schema.py (`SearchQuestion`); rules: docs/EVALS.md section 3.1.
+#
+# The questions in questions.yaml expect a metric. These expect another kind of object, which the
+# retrieval eval measures with the search an agent makes: every kind except raw columns, approved
+# objects only (a viewer or an agent token), limit 10. `expected` lists the object ids of
+# `kind` that count as right; any one of them in the first 3 hits is a find.
+#
+# Written from the business meaning in docs/SAMPLE_DOMAIN.md and not from the definition files:
+# no label, synonym, or name of the expected object is used as a phrase (docs/EVALS.md section
+# 2.3, the leak rule). The author had read the definitions, so these questions are of the tuned
+# kind; the held-out questions of WP-14C are written by someone who has not. They carry no gate
+# until WP-14C has retuned the weights.
+
+# ---- dimensions ----
+
+- id: S01
+  question: "Show me the results for each of the five geographic groups the offices roll up into"
+  language: en
+  kind: dimension
+  expected: [dimension:branch.region_name]
+  notes: "Region is the level above area; one region spans several provinces."
+
+- id: S02
+  question: "Pembayaran angsuran paling banyak masuk melalui jalur apa?"
+  language: id
+  kind: dimension
+  expected: [dimension:payment.payment_channel]
+  notes: "How a payment came in; the question says 'jalur', the definition says other words."
+
+- id: S03
+  question: "What kind of collateral backs each financing we sell?"
+  language: en
+  kind: dimension
+  expected: [dimension:product.product_category]
+  notes: "Car-backed, motorcycle-backed, used-car purchase, or unsecured."
+
+- id: S04
+  question: "Berapa pengajuan yang datang lewat penjualan online dibanding datang langsung ke kantor?"
+  language: id
+  kind: dimension
+  expected: [dimension:application.channel]
+  notes: "How the application reached us: walk-in, agent, online, telesales."
+
+- id: S05
+  question: "Which wealth tier does each of our borrowers belong to?"
+  language: en
+  kind: dimension
+  expected: [dimension:customer.customer_segment]
+  notes: "Mass, emerging affluent, or affluent."
+
+- id: S06
+  question: "Bagaimana pembiayaan kita menurut besarnya pemasukan bulanan peminjam?"
+  language: id
+  kind: dimension
+  expected: [dimension:customer.income_band]
+  notes: "Monthly income in four bands."
+
+- id: S07
+  question: "Did the agreement end with full repayment, a write-off, or is it still running?"
+  language: en
+  kind: dimension
+  expected: [dimension:contract.contract_status]
+  notes: "Active, closed, written off, or cancelled."
+
+- id: S08
+  question: "Penagihan dilakukan lewat telepon, kunjungan lapangan, atau surat peringatan?"
+  language: id
+  kind: dimension
+  expected: [dimension:collection_action.action_type]
+  notes: "The kind of collection activity."
+
+# ---- entities ----
+
+- id: S09
+  question: "Where do I find the list of our places of business and how they are grouped geographically?"
+  language: en
+  kind: entity
+  expected: [entity:branch]
+  notes: "Offices roll up to areas and areas to regions."
+
+- id: S10
+  question: "Data tentang uang yang diterima dari peminjam untuk membayar cicilan"
+  language: id
+  kind: entity
+  expected: [entity:payment]
+  notes: "Money received against a contract, including reversed payments."
+
+- id: S11
+  question: "Which record describes a person asking us for financing, approved or not?"
+  language: en
+  kind: entity
+  expected: [entity:application]
+  notes: "One row per application, whatever its outcome."
+
+- id: S12
+  question: "Catatan setiap kali petugas menghubungi peminjam yang menunggak"
+  language: id
+  kind: entity
+  expected: [entity:collection_action]
+  notes: "Reminder, call, visit, or letter on a late contract."
+
+- id: S13
+  question: "What do we know about the individual people who take our financing?"
+  language: en
+  kind: entity
+  expected: [entity:customer]
+  notes: "Holds personal data; the search must still find the entity."
+
+# ---- glossary terms ----
+
+- id: S14
+  question: "How many days has a person gone without paying what was due?"
+  language: en
+  kind: glossary_term
+  expected: [glossary_term:days_past_due]
+  notes: "Days since the oldest unpaid installment fell due."
+
+- id: S15
+  question: "Apa artinya jadwal pembayaran yang dibuat lebih ringan karena peminjam kesulitan?"
+  language: id
+  kind: glossary_term
+  expected: [glossary_term:restructuring]
+  notes: "An easier replacement schedule for the unpaid part."
+
+- id: S16
+  question: "At what moment does a financing count as handed over to the customer?"
+  language: en
+  kind: glossary_term
+  expected: [glossary_term:disbursement]
+  notes: "Release of the money, a few days after signing."

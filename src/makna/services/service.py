@@ -81,9 +81,9 @@ SEARCH_UNAVAILABLE_MESSAGE = (
     "The search index is not ready. Ask an administrator to run `makna index build`."
 )
 KINDS_GUIDANCE = (
-    "No governed definition clearly matches among the kinds searched ({kinds}). Tell the user "
-    "that no approved definition was found for this; do not approximate it with a different "
-    "one."
+    "No definition clearly matches among the kinds searched ({kinds}); read the descriptions "
+    "of the hits before deciding. If none of them is what the user asked for, say so and do not "
+    "approximate it with a different one."
 )
 
 

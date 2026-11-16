@@ -27,8 +27,8 @@ from makna.search.terms import is_time_word
 Band = Literal["high", "medium", "low"]
 TOP_HITS = 3
 LOW_GUIDANCE = (
-    "No governed definition clearly matches. Tell the user that no approved metric exists for "
-    "this; do not approximate it with a different metric."
+    "No definition clearly matches; read the descriptions of the hits before deciding. If none "
+    "of them is what the user asked for, say so and do not approximate it with a different one."
 )
 
 

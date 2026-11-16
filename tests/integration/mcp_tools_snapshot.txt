@@ -1,11 +1,11 @@
 # MCP server snapshot (reviewed text). Changing a word here is a reviewed change (MCP-2).
 
 ## instructions
-Makna holds the approved business definitions for this organization's data. To answer a question about a business number: 1) call makna_search with the user's words; 2) call makna_get_definition for the best candidate and check that its description really matches what the user asked; 3) call makna_compile_query with a structured request (the definition's example requests show the format), then run the SQL it returns, unchanged, with your own database tool. Never write SQL yourself for a number that Makna defines. If search confidence is low or no description matches, tell the user that no approved definition exists; do not substitute a different metric. If search reports several candidates, ask the user which one they mean.
+Makna holds the approved business definitions for this organization's data. To answer a question about a business number: 1) call makna_search with the user's words; 2) call makna_get_definition for the best candidate and check that its description really matches what the user asked; 3) call makna_compile_query with a structured request (the definition's example requests show the format), then run the SQL it returns, unchanged, with your own database tool. Never write SQL yourself for a number that Makna defines. If search confidence is low, read the descriptions of the hits before deciding. If no description matches what the user asked, tell the user that no approved definition exists; do not substitute a different metric. If search reports several candidates, ask the user which one they mean.
 
 ## makna_search
 description:
-Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, or no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead. If `ambiguous_between` is present, ask the user to choose.
+Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, read the descriptions of the hits before deciding. If no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead. If `ambiguous_between` is present, ask the user to choose.
 annotations: {"destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "readOnlyHint": true}
 inputSchema:
 {

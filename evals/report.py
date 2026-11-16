@@ -111,6 +111,43 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _render_by_kind(by_kind: Mapping[str, Any] | None) -> list[str]:
+    """Recall at 3 per kind of object (WP-15D). Reported, not gated."""
+    if not by_kind:
+        return []
+    lines = [
+        "### Recall at 3 by kind of object",
+        "",
+        f"Searches with no `kinds` ({', '.join(by_kind['kinds'])}), limit {by_kind['limit']}, as "
+        "an agent makes them. No gate. The `metric` row repeats the golden questions over this "
+        "wider search (the gated figure above searches `metric` and `glossary_term` only); the "
+        "other rows come from `evals/golden/search_questions.yaml`.",
+        "",
+    ]
+    rows = [
+        [r["kind"], _num(r["recall_at_3"]), _num(r["n_questions"]), r["source"]]
+        for r in by_kind["rows"]
+    ]
+    lines += _table(["Kind", "Recall at 3", "Questions", "Source"], rows) + [""]
+    missed = [q for q in by_kind["questions"] if not q["found_at_3"]]
+    if missed:
+        lines += ["Not found in the first 3:", ""]
+        lines += _table(
+            ["Question", "Kind", "Expected", "Rank", "First hits"],
+            [
+                [
+                    q["id"],
+                    q["kind"],
+                    ", ".join(q["expected"]),
+                    "none in 10" if q["rank"] is None else str(q["rank"]),
+                    ", ".join(q["ranked_ids"][:3]),
+                ]
+                for q in missed
+            ],
+        ) + [""]
+    return lines
+
+
 def _render_retrieval(section: Mapping[str, Any]) -> list[str]:
     scores = section["scores"]
     lines = ["## Retrieval (EVL-2)", ""]
@@ -148,6 +185,7 @@ def _render_retrieval(section: Mapping[str, Any]) -> list[str]:
             ],
         ],
     ) + [""]
+    lines += _render_by_kind(section.get("by_kind"))
     lines += ["### By language", ""]
     language_rows: list[list[str]] = []
     for language in LANGUAGES:

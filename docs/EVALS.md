@@ -24,7 +24,8 @@ The evals answer the four success questions in `docs/PROJECT_BRIEF.md`:
 
 ```
 evals/golden/questions.yaml        all questions
-evals/golden/schema.py             the model of the questions file (validated by a unit test)
+evals/golden/schema.py             the model of the questions files (validated by a unit test)
+evals/golden/search_questions.yaml search-only questions whose answer is a dimension, entity, or glossary term (section 3.1)
 evals/golden/reference_sql/<id>.sql    hand-written PostgreSQL SQL, for questions with outcome "answer"
 evals/golden/reference_sql/<id>_<metric>.sql    the same for each candidate of a "clarify" question
 evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the seeded data
@@ -133,6 +134,12 @@ Questions to add early in the remaining set: "Berapa hapus buku tahun lalu?" (`n
 | By language | each score above, split by `language` | | Indonesian recall at 3 within 0.10 of English |
 
 The report also shows recall at 3 and mean reciprocal rank for keyword only, vector only, and fused, so a weak leg is visible (see `docs/notes/search-scores-cannot-say-no-match.md`).
+
+### 3.1 Recall at 3 by kind of object (WP-15D)
+
+The golden questions expect a metric, so the eval above cannot see whether search finds a dimension, an entity, or a glossary term (review finding C-3). `evals/golden/search_questions.yaml` holds 16 questions with no reference SQL: 8 for dimensions, 5 for entities, 3 for glossary terms, in English and Indonesian. Each names its `kind` and the `expected` object ids of that kind; any one of them in the first 3 hits is a find. They are written from the business meaning in `docs/SAMPLE_DOMAIN.md` and use no name, label, or synonym of the expected object (a unit test checks this, plural forms included), and no part of the file is read by the compile eval.
+
+These searches are the ones an agent makes with no `kinds` (every kind except raw columns, approved objects, limit 10). The report (`report.md` and the `by_kind` section of `report.json`) shows recall at 3 for four kinds: `metric` (the golden `answer` and `clarify` questions over this wider search, so a metric competes with the other kinds; the gated figure above searches `metric` and `glossary_term` only), `glossary_term`, `dimension`, and `entity`. **No gate**: the questions have so far been written by someone who had read the definitions, so they are of the tuned kind, and WP-14C builds the held-out split and the gates for these kinds on this file.
 
 **Latency** (NFR-2). The same run records the time of each search call. The 95th percentile must be under 500 ms on the dev stack with the default embedding model.
 
@@ -253,4 +260,4 @@ The grid: `w_vector` of 0, 0.1, 0.25, 0.5, 0.75, 1 with `w_keyword` 1 and `candi
 
 What this does not settle: the gate passes because the keyword list carries the ranking. The vector leg of this model adds nothing on the golden set that the keyword leg lacks, and it is weak in Indonesian; the owner's decision on the embedding model (DR-9) is still open and a stronger model would let the vector weight rise again. Re-run the grid after any change of the model, the definitions, or the questions.
 
-One existing test pinned a ranking that the tuned weights change. `tests/integration/test_index_cli.py::test_search_options_reach_the_search` checks that `makna search "NPL ratio retired" --include-deprecated` lists the deprecated `metric:npl_ratio`. That metric is first in both lists, but its score is multiplied by the deprecated status weight 0.5, and under a keyword-led fusion every approved metric that matches "ratio" outscores half of the best score: it lands 11th (9th with the starting weights). The test passes at a vector weight of at least half the keyword weight, and at that ratio the English-minus-Indonesian gate (0.143) and the false abstention gate (0.056) fail. The test's subject is that the flag reaches the search, not the rank, so its limit was widened from 10 to 20 (it was already on the edge in WP-04B). That a deprecated hit the caller asked for sorts below every matching approved hit is a design question for the first milestone review, together with the embedding model (DR-9).
+One existing test pinned a ranking that the tuned weights change. `tests/integration/test_index_cli.py::test_search_options_reach_the_search` checks that `makna search "NPL ratio retired" --include-deprecated` lists the deprecated `metric:npl_ratio`. That metric is first in both lists, but its score is multiplied by the deprecated status weight 0.5, and under a keyword-led fusion every approved metric that matches "ratio" outscores half of the best score: it lands 11th (9th with the starting weights). The test passes at a vector weight of at least half the keyword weight, and at that ratio the English-minus-Indonesian gate (0.143) and the false abstention gate (0.056) fail. The test's subject is that the flag reaches the search, not the rank, so its limit was widened from 10 to 20 (it was already on the edge in WP-04B). That a deprecated hit the caller asked for sorts below every matching approved hit was a design question for the first milestone review; WP-15D settled it (every status and kind weight between 0.9 and 1.0, a deprecated hit weighs what an approved one does), and the embedding model (DR-9) is WP-14C.
