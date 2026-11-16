@@ -5,16 +5,29 @@ Run from the repository root:
     uv run python -m tests.unit.golden.make_governance_golden
 
 The file `compiler_governance_golden.json` next to this script holds, for each request, the
-PostgreSQL text the compiler produced or the error code it raised. It was made with the compiler
-as it was before the governance modes (D-29, WP-10B) and pins that behaviour: compiling with no
-policy argument, and with the `strict` policy, must reproduce it exactly. Never regenerate it
-after a compiler change. Regenerate it only after a change to the sample definitions, by running
-this script with the compiler of `main`, so that the cases follow the new definitions.
+PostgreSQL text, result columns, warnings and explanation the compiler produced, or the error
+code it raised. `tests/unit/test_compiler_governance_golden.py` compiles every case again, with no
+policy argument and with the `strict` policy, and fails when one differs. The file is a change
+detector: it does not say that the output is right, it says that the output changed.
+
+The procedure (D-32 (1)). There is one, and it applies to every package:
+
+1. A package that changes compiler output (the planner, the SQL, the warnings, the explanation,
+   or a sample definition that a request reads) regenerates this file in the same pull request,
+   by running this script with that pull request's compiler. A package that does not change
+   compiler output leaves the file alone, and the test proves it by passing on the committed
+   file.
+2. The pull request lists the changed cases by category, with the reason for each category (for
+   example "every request with a dimension: the new limit sentence in the explanation"). A diff
+   that cannot be sorted into categories with a reason is not ready.
+3. The task reviewer checks every category against the reason: each changed case belongs to a
+   category, and no case outside the categories changed.
+4. The owner's merge approves the diff of the file.
 
 The script reads only the sample definitions under `semantic/definitions` and the product
-packages. It calls the compiler with default arguments only, so it runs unchanged before and
-after the policy argument exists. Requests come from a seeded `random.Random` and are drawn from
-the model (sorted names), so the same definitions give the same file.
+packages. It calls the compiler with default arguments only. Requests come from a seeded
+`random.Random` and are drawn from the model (sorted names), so the same definitions and the same
+compiler give the same file.
 """
 
 from __future__ import annotations

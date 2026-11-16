@@ -1,11 +1,15 @@
-"""WP-10B criterion 1: with no policy argument and with `strict`, every request compiles to what
-it compiled to before the governance modes.
+"""The governance golden file: a change detector for compiler output (WP-10B criterion 1, D-32 (1)).
 
-`golden/compiler_governance_golden.json` was made by `golden/make_governance_golden.py` with the
-compiler as it was at the base of WP-10B: 780 seeded requests over the sample model, plain and
-with some columns tagged personal by the catalog, and for each the PostgreSQL text, result
-columns, warnings, and explanation, or the error that was raised. The file is never regenerated
-after a compiler change.
+With no policy argument and with `strict`, every request compiles to what the committed file
+holds. `golden/compiler_governance_golden.json` is made by `golden/make_governance_golden.py`:
+780 seeded requests over the sample model, plain and with some columns tagged personal by the
+catalog, and for each the PostgreSQL text, result columns, warnings, and explanation, or the error
+that was raised. It was first made with the compiler as it was at the base of WP-10B, which is
+what proved that the governance modes changed nothing under `strict`.
+
+A package that changes compiler output regenerates the file in the same pull request, lists the
+changed cases by category with the reason, and the task reviewer and the owner's merge check and
+approve the diff. The procedure is written once, in the docstring of the script.
 """
 
 from __future__ import annotations
