@@ -175,7 +175,9 @@ class WebSettings(BaseModel):
 
 
 class Settings(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    # An error never shows the value it refused: a short secret key or a database URL with its
+    # password would otherwise appear in the traceback.
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     # From the environment (secrets and connection settings).
     database_url: SecretStr
@@ -294,7 +296,7 @@ def load_settings(
     try:
         return Settings.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
 
 
 class SearchRuntime(BaseModel):
@@ -304,7 +306,7 @@ class SearchRuntime(BaseModel):
     `MAKNA_SECRET_KEY`.
     """
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
     embedding_provider: EmbeddingProvider = "fastembed"
     embedding_api_key: SecretStr | None = None
@@ -323,7 +325,7 @@ def load_search_runtime(
     try:
         return SearchRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
 
 
 def load_tag_map(config_path: Path | str | None = None) -> dict[str, str]:
@@ -346,7 +348,7 @@ class EngineRuntime(BaseModel):
     `MAKNA_SECRET_KEY`. `engine_url` is None when `MAKNA_ENGINE_URL` is not set.
     """
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
     engine_url: SecretStr | None = None
     engine: EngineSettings = Field(default_factory=EngineSettings)
@@ -363,7 +365,7 @@ def load_engine_runtime(
     try:
         return EngineRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
 
 
 class GovernanceRuntime(BaseModel):
@@ -390,4 +392,4 @@ def load_governance_runtime(
     try:
         return GovernanceRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
