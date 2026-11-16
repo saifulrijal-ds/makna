@@ -305,8 +305,9 @@ def available_dimensions(
 
     Simple metric: the dimensions of the measure's entity and of every entity it reaches by the
     path rule. Ratio or derived metric: of an entity every simple input reaches, and only when
-    all inputs enter it through the same final relationship. Entities that need a join choice the
-    metric does not make are left out and reported in `excluded` (and `warnings`).
+    all inputs enter it through a final relationship with the same name and target (its role).
+    Entities that need a join choice the metric does not make are left out and reported in
+    `excluded` (and `warnings`).
 
     The result depends on `governance` (D-29): a personal dimension without a masking rule is
     listed as not available unless the policy allows unmasked personal data. Under
@@ -320,6 +321,7 @@ def available_dimensions(
     excluded: list[ExcludedEntity] = []
     for entity in model.entities.values():
         paths: list[InputPath] = []
+        roles: set[tuple[str, str] | None] = set()
         failures: list[tuple[Metric, QueryError]] = []
         for leaf, start in leaves:
             try:
@@ -328,14 +330,25 @@ def available_dimensions(
                 failures.append((leaf, error))
                 continue
             paths.append(InputPath(leaf.name, tuple(path_names(path))))
+            roles.add(_role(path))
         if failures:
             excluded.append(_exclusion(entity.name, failures))
             continue
-        if len({p.steps[-1] if p.steps else None for p in paths}) > 1:
+        if len(roles) > 1:
             excluded.append(_inconsistent(entity.name, paths))
             continue
         options.extend(_options(model, entity, tuple(paths), governance))
     return AvailableDimensions(tuple(options), tuple(excluded))
+
+
+def _role(path: JoinPath) -> tuple[str, str] | None:
+    """How a path enters its last entity: the name of the last relationship and the entity it
+    points to, or None when the input is measured on that entity itself. A relationship's name
+    is its role (D-32 ruling 3): `payment.contract` and `installment.contract` are both the
+    contract of the row and agree, `contract.booking_branch` and `contract.servicing_branch` are
+    two meanings of "branch" and do not. The entity in front of the name is not compared, because
+    it says which table the row comes from, not what the link means."""
+    return (path[-1].relationship, path[-1].to) if path else None
 
 
 def _show(paths: Sequence[Sequence[str]]) -> str:
@@ -373,14 +386,16 @@ def _inconsistent(entity: str, paths: list[InputPath]) -> ExcludedEntity:
         )
     else:
         advice = (
-            f"a pin helps only if each input can reach {entity} by a chain that ends in the "
-            "same relationship; pin such a chain in every input if such a chain exists"
+            f"a pin helps only if each input can reach {entity} by a chain that ends in a "
+            "relationship with the same name; pin such a chain in every input if such a chain "
+            "exists"
         )
     return ExcludedEntity(
         entity,
         "inconsistent",
         f"{entity} dimensions are left out because the inputs enter {entity} through different "
-        f"relationships ({entries}), so the result would divide unlike numbers; {advice}",
+        f"relationships ({entries}; a relationship's name is its role, and these roles differ), "
+        f"so the result would divide unlike numbers; {advice}",
         tuple(p.steps for p in paths),
     )
 
