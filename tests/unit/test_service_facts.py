@@ -19,9 +19,10 @@ from makna.config import ConfigError, load_governance_runtime, load_settings
 from makna.definitions.loader import definition_objects, load_definitions
 from makna.index import indexer
 from makna.model.definitions import Dimension, Entity
+from makna.model.expressions import dimension_columns
 from makna.model.governance import STRICT, GovernancePolicy
 from makna.model.request import QueryRequest
-from makna.model.sensitivity import columns_read, effective_level
+from makna.model.sensitivity import effective_level
 from makna.services import ServiceError, Services
 from tests.route_support import iter_routes
 
@@ -77,10 +78,10 @@ def test_the_model_and_the_function_agree_for_every_dimension() -> None:
             )
 
 
-def test_columns_read_reads_the_expression_or_the_name() -> None:
+def test_dimension_columns_reads_the_expression_or_the_name() -> None:
     customer = entity_named("customer")
-    assert columns_read(dimension_named(customer, "city")) == ("city",)
-    assert columns_read(dimension_named(customer, "registered_date")) == ("registered_at",)
+    assert dimension_columns(dimension_named(customer, "city")) == ("city",)
+    assert dimension_columns(dimension_named(customer, "registered_date")) == ("registered_at",)
 
 
 # --- value text ---

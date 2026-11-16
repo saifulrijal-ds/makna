@@ -34,6 +34,7 @@ from makna.compiler.plan import QueryPlan, plan_request
 from makna.compiler.snapshot import Model
 from makna.model.definitions import NAME_PATTERN, Entity, Metric
 from makna.model.governance import GovernancePolicy
+from makna.model.metrics import dependency_closure, metric_unit
 from makna.model.request import CompileResponse, ErrorCode, QueryError, QueryRequest
 from makna.model.search import EmbeddingProvider, SearchSettings
 from makna.search.confidence import LOW_GUIDANCE
@@ -507,9 +508,7 @@ def _search_hit(hit: Any, rows: Mapping[str, objects.ObjectRow]) -> SearchHit:
             served = row.definition
             if isinstance(served, Metric):
                 type_ = served.type
-                unit = served.format.unit or (
-                    "percent" if served.format.kind == "percent" else None
-                )
+                unit = metric_unit(served)
     else:
         label = _part_label(hit, row)
     return SearchHit(
@@ -569,18 +568,11 @@ def _plan_tables(model: Model, plan: QueryPlan) -> set[str]:
     return {model.entities[n].source.table.lower() for n in names if n in model.entities}
 
 
-def _metric_closure(model: Model, name: str) -> list[Metric]:
-    found: list[Metric] = []
-    stack = [name]
-    while stack:
-        current = model.metrics.get(stack.pop())
-        if current is None or any(m.name == current.name for m in found):
-            continue
-        found.append(current)
-        stack.extend(
-            n for n in (current.numerator, current.denominator, *(current.inputs or [])) if n
-        )
-    return found
+def _members(model: Model, name: str) -> list[Metric]:
+    """The metric of this name and what it depends on; broken inputs are left out, because the
+    planner reports them."""
+    root = model.metrics.get(name)
+    return [] if root is None else dependency_closure(model.metrics, root, strict=False)
 
 
 def _refuse_broken_metric(model: Model, snapshot: Snapshot, name: str) -> None:
@@ -588,7 +580,7 @@ def _refuse_broken_metric(model: Model, snapshot: Snapshot, name: str) -> None:
     planning (ARCHITECTURE 5.3)."""
     problems = [
         {"code": issue.code, "object": f"metric:{member.name}", "message": issue.message}
-        for member in _metric_closure(model, name)
+        for member in _members(model, name)
         for issue in snapshot.metric_issues.get(member.name, ())
     ]
     if problems:

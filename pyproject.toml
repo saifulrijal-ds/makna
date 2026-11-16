@@ -74,6 +74,9 @@ check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 plugins = ["pydantic.mypy"]
+# The LangChain client imports langchain-mcp-adapters, which is not in the project environment:
+# it runs only in its own isolated environment (WP-22C), so mypy skips that one file.
+exclude = ["^tests/integration/clients/langchain_client\\.py$"]
 
 [[tool.mypy.overrides]]
 module = ["makna.model", "makna.model.*", "makna.compiler", "makna.compiler.*"]
