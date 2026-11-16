@@ -71,6 +71,13 @@ async def exercise(url: str, token: str) -> dict[str, Any]:
     }
 
 
+def first_leaf(error: BaseException) -> str:
+    """The class name of the first exception that is not a group, recursing into nested groups."""
+    while isinstance(error, BaseExceptionGroup):
+        error = error.exceptions[0]
+    return type(error).__name__
+
+
 def main() -> int:
     url = os.environ.get("MAKNA_TEST_MCP_URL", "").strip()
     token = os.environ.get("MAKNA_TOKEN", "").strip()
@@ -79,6 +86,14 @@ def main() -> int:
         return 2
     try:
         result = asyncio.run(exercise(url, token))
+    except BaseExceptionGroup as group:
+        # A task group wraps the real failure. Name its first leaf by class only: the text can
+        # carry the URL or server output.
+        print(
+            f"langchain client failed: {type(group).__name__}, first leaf {first_leaf(group)}",
+            file=sys.stderr,
+        )
+        return 1
     except Exception as error:  # any failure, reported without the token or a header
         print(f"langchain client failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
