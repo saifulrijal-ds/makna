@@ -66,11 +66,14 @@ def test_excluded_entities_are_stored_with_the_reason(service_world: tuple[Engin
     engine, _ = service_world
     found = derived(engine, "metric:collection_rate")
     kinds = {e["entity"]: e["kind"] for e in found["excluded"]}
-    assert kinds["contract"] == "inconsistent" and kinds["payment"] == "no_path"
+    # payments and installments both reach `contract` by a relationship called `contract`
+    # (D-32 ruling 3), so its dimensions are offered; installment is read by one input itself
+    assert "contract" not in kinds
+    assert kinds["installment"] == "inconsistent" and kinds["payment"] == "no_path"
     assert all({"entity", "kind", "reason"} == set(e) for e in found["excluded"])
-    # the reason is what a curator reads: it names the relationships that differ
-    reason = next(e["reason"] for e in found["excluded"] if e["entity"] == "contract")
-    assert "payment.contract" in reason and "installment.contract" in reason
+    # the reason is what a curator reads
+    reason = next(e["reason"] for e in found["excluded"] if e["entity"] == "installment")
+    assert "reads installment itself" in reason
 
 
 def test_the_entity_stores_the_effective_level_of_each_dimension(
