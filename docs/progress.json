@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-15",
+  "updated": "2026-11-16",
   "statuses": [
     "not_started",
     "in_progress",
@@ -69,7 +69,30 @@
     {
       "id": "M1",
       "title": "Agent path end to end",
-      "review_after": "Fable review 1: core complete"
+      "review_after": "Fable review 1: core complete",
+      "review": {
+        "status": "done",
+        "file": "docs/reviews/core-complete.md",
+        "reviewed_commit": "a2608444644f087609265da76dcb54079b71bdfa",
+        "verdict": "ready after named fixes",
+        "fix_before_milestone_2": [
+          "C-1",
+          "C-2"
+        ],
+        "open": [
+          "C-3",
+          "C-4",
+          "C-5",
+          "C-6",
+          "C-7",
+          "C-8",
+          "C-9",
+          "C-10",
+          "C-11",
+          "C-12",
+          "C-13"
+        ]
+      }
     },
     {
       "id": "M2",
