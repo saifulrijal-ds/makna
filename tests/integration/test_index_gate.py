@@ -176,6 +176,11 @@ def test_the_init_step_runs_all_steps_through_run_steps_and_stops_at_the_failure
     out = io.StringIO()
     step = init.Step("build-index", init.build_index_step)
     later_ran: list[str] = []
-    after = init.Step("demo-users", lambda ctx: later_ran.append("ran") or "ok")
+
+    def later(context: Context) -> str:
+        later_ran.append("ran")
+        return "ok"
+
+    after = init.Step("demo-users", later)
     assert init.run_steps([step, after], context(root, migrated_url), out) == 1
     assert "build-index: FAILED" in out.getvalue() and not later_ran
