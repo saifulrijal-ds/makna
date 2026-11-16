@@ -568,6 +568,22 @@ def catalog_sensitivity(connection: Connection) -> dict[tuple[str, str], str]:
     return {(fqn.lower(), name.lower()): level for fqn, name, level in rows}
 
 
+def catalog_column_types(connection: Connection) -> dict[tuple[str, str], str]:
+    """`{(engine_fqn, column): data_type}` in lower case, for the columns of live datasets: the
+    type the catalog gives a column (`string`, `integer`, `decimal`, `float`, `boolean`, `date`,
+    `timestamp`, or `other`). The service checks filter values against it (C-9)."""
+    rows = connection.execute(
+        select(
+            catalog_dataset.c.engine_fqn,
+            catalog_column.c.name,
+            catalog_column.c.data_type,
+        )
+        .select_from(catalog_column.join(catalog_dataset))
+        .where(catalog_dataset.c.removed_at.is_(None))
+    )
+    return {(fqn.lower(), name.lower()): data_type for fqn, name, data_type in rows}
+
+
 def catalog_marker(connection: Connection) -> str:
     """The id of the latest successful catalog sync (`0` if there is none). It changes whenever
     a sync changed anything, so derived facts can tell that the catalog moved on."""

@@ -45,3 +45,44 @@ def value_fits_dimension(dimension_type: str, value: object) -> bool:
     if isinstance(value, str):
         return dimension_type != "numeric"
     return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+_INTEGER_TEXT = re.compile(r"[+-]?[0-9]+")
+_NUMBER_TEXT = re.compile(r"[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?")
+_BOOLEAN_TEXT = frozenset({"true", "false", "t", "f", "yes", "no", "y", "n", "on", "off", "1", "0"})
+_TEXT_TYPES = frozenset({"string"})
+_NUMBER_TYPES = frozenset({"integer", "decimal", "float"})
+_TIME_TYPES = frozenset({"date", "timestamp"})
+
+
+def value_fits_column(dimension_type: str, value: object, data_type: str) -> bool:
+    """True unless PostgreSQL would reject the comparison of the literal the compiler writes for
+    `value` with a column that the catalog types as `data_type` (C-9). The planner does not know
+    column types; the service does (D-30), and calls this for a dimension that reads one column.
+
+    The literal is a typed constant, except text: a time dimension writes `CAST(... AS DATE)` or
+    `AS TIMESTAMP`, a boolean value `TRUE`/`FALSE`, a number a numeric constant, and a string an
+    untyped text constant that PostgreSQL reads as the type of the column (so it must be written
+    the way that type is read). A column of type `other` is never refused.
+    """
+    if data_type == "other" or data_type not in (
+        _TEXT_TYPES | _NUMBER_TYPES | _TIME_TYPES | {"boolean"}
+    ):
+        return True
+    if dimension_type == "time":
+        return data_type in _TIME_TYPES
+    if isinstance(value, bool):
+        return data_type == "boolean"
+    if isinstance(value, (int, float)):
+        return data_type in _NUMBER_TYPES
+    if not isinstance(value, str):
+        return False
+    if data_type in _TEXT_TYPES:
+        return True
+    if data_type == "integer":
+        return bool(_INTEGER_TEXT.fullmatch(value))
+    if data_type in _NUMBER_TYPES:
+        return bool(_NUMBER_TEXT.fullmatch(value))
+    if data_type == "boolean":
+        return value.lower() in _BOOLEAN_TEXT
+    return is_time_value(value)

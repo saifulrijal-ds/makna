@@ -181,6 +181,17 @@ class PlannedRule:
 
 
 @dataclass(frozen=True)
+class DeprecatedEntity:
+    """A deprecated entity that a request reads, by a join or as the entity of a measure. It stays
+    usable (D-32 ruling 4); the response says so, with the reason and the replacement."""
+
+    entity: str
+    label: str
+    reason: str
+    replaced_by: str | None
+
+
+@dataclass(frozen=True)
 class EntityPath:
     entity: str
     steps: JoinPath
@@ -231,6 +242,8 @@ class QueryPlan:
     raw_columns: frozenset[tuple[str, str]] = frozenset()
     """The personal columns the policy lets the select list and GROUP BY return unmasked, for
     `governance.verify`. Empty under `strict`."""
+    deprecated_entities: tuple[DeprecatedEntity, ...] = ()
+    """The deprecated entities the request reads, by entity name. The compiler warns about them."""
 
     @property
     def min_group_size(self) -> int:
@@ -506,7 +519,28 @@ def plan_request(
         guard=guard,
         personal_columns=personal,
         raw_columns=raw,
+        deprecated_entities=_deprecated_entities(model, touched),
     )
+
+
+def _deprecated_entities(model: Model, names: set[str]) -> tuple[DeprecatedEntity, ...]:
+    """The deprecated entities among `names`, sorted by name. A deprecated entity stays usable
+    (D-32 ruling 4, ARCHITECTURE 5.2): its dimensions are offered and a request that joins it
+    compiles, and the response warns, so that nobody builds on it without knowing."""
+    found: list[DeprecatedEntity] = []
+    for name in sorted(names):
+        entity = model.entities.get(name)
+        if entity is not None and entity.status == "deprecated":
+            why = entity.deprecation
+            found.append(
+                DeprecatedEntity(
+                    name,
+                    entity.label,
+                    why.reason if why is not None else "no reason was recorded",
+                    why.replaced_by if why is not None else None,
+                )
+            )
+    return tuple(found)
 
 
 def _personal_and_raw_columns(
@@ -823,13 +857,21 @@ def _planned_filter(
 def _invalid_filter(
     flt: RequestFilter, dimension: Dimension, problem: str, personal: bool = False
 ) -> QueryError:
+    return filter_refusal(flt.dimension, dimension, problem, personal)
+
+
+def filter_refusal(
+    ref: str, dimension: Dimension, problem: str, personal: bool = False
+) -> QueryError:
+    """`INVALID_FILTER` for the filter on dimension `ref`. The planner raises it, and so does the
+    service when the catalog type of the column says a value cannot match (C-9)."""
     # The allowed values of a personal dimension are never listed, whatever made it personal.
     allowed = [] if personal else [v.value for v in dimension.values or []]
     return QueryError(
         ErrorCode.INVALID_FILTER,
-        f"Filter on {flt.dimension}: {problem}.",
+        f"Filter on {ref}: {problem}.",
         {
-            "dimension": flt.dimension,
+            "dimension": ref,
             "expected_type": dimension.type,
             "allowed_operators": list(FILTER_OPS),
             "allowed_values": allowed,

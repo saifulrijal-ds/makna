@@ -13,7 +13,8 @@ is fixed so that a reader (and a test) can rely on it:
 7. when the governance policy relaxes a rule (D-29), one sentence that names the mode and each
    relaxed rule.
 
-A balance metric adds a warning, and so does a personal dimension while the policy has a minimum
+A balance metric adds a warning, and so does each deprecated entity the plan reads (it stays
+usable, D-32 ruling 4), and so does a personal dimension while the policy has a minimum
 group size: groups built from fewer than the minimum number of records are left out, and the
 result column that says how many is named. A relaxed policy adds one more warning that says the
 same as sentence 7. Nothing here changes what the SQL does.
@@ -26,7 +27,14 @@ from dataclasses import dataclass
 
 from makna.compiler.governance import GROUPS_LEFT_OUT
 from makna.compiler.graph import JoinStep
-from makna.compiler.plan import InputPlan, PlannedDimension, PlannedFilter, PlannedRule, QueryPlan
+from makna.compiler.plan import (
+    DeprecatedEntity,
+    InputPlan,
+    PlannedDimension,
+    PlannedFilter,
+    PlannedRule,
+    QueryPlan,
+)
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Scalar
 from makna.model.governance import GovernancePolicy
@@ -63,6 +71,7 @@ def explain(model: Model, plan: QueryPlan) -> Explanation:
     if relaxed is not None:
         sentences.append(_relaxed_sentence(plan.governance, relaxed))
     warnings = [w for item in plan.inputs if (w := _balance_warning(model, plan, item))]
+    warnings.extend(_deprecated_warning(d) for d in plan.deprecated_entities)
     if plan.guard:
         warnings.append(_group_size_warning(plan))
     if relaxed is not None:
@@ -331,6 +340,19 @@ def _group_size_warning(plan: QueryPlan) -> str:
         "requests that differ by one person. The number of groups left out "
         f"is in the result column {GROUPS_LEFT_OUT}, the same on every row. A result with no rows "
         "can mean that every group was left out."
+    )
+
+
+def _deprecated_warning(deprecated: DeprecatedEntity) -> str:
+    use = (
+        f" Its replacement is {deprecated.replaced_by}."
+        if deprecated.replaced_by is not None
+        else " No replacement is named."
+    )
+    return _sentence(
+        f"The entity {deprecated.label} ({deprecated.entity}), which this result reads, is "
+        f"deprecated: {_sentence(deprecated.reason).rstrip('.')}.{use} It still works, and a "
+        "curator should move the definitions that use it to its replacement"
     )
 
 
