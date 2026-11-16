@@ -294,6 +294,28 @@ def test_r04_opens_exactly_r04(migrated_engine: Engine) -> None:
     assert issues(migrated_engine) == [("R04", "glossary_term:nothing", "catalog_term")]
 
 
+def test_r06_opens_exactly_r06_and_closes_when_the_key_is_declared_right(
+    migrated_engine: Engine,
+) -> None:
+    """The catalog marks `branch_id` as the key of branches, so a declared key of `province`
+    (which many branches share) is wrong, and a join to it would multiply rows."""
+    wrong = make_entity(
+        table="lending.core.branches",
+        primary_key=("province",),
+        dimensions=[dimension("city", "province")],
+    )
+    sync(migrated_engine, entities=[wrong], glossary_terms=[])
+    assert issues(migrated_engine) == [("R06", "entity:thing", "primary_key")]
+    right = make_entity(
+        table="lending.core.branches",
+        primary_key=("branch_id",),
+        dimensions=[dimension("city", "province")],
+    )
+    summary = sync(migrated_engine, entities=[right], glossary_terms=[])
+    assert issues(migrated_engine) == []
+    assert summary["reference_issues"] == {"opened": 0, "closed": 1, "reworded": 0}
+
+
 # --- Acceptance 6: sample definitions and sample export give zero open issues ---
 
 

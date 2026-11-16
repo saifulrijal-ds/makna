@@ -576,6 +576,26 @@ def v20_categorical_copy_inside_a_function(files: Files) -> None:
     dims.append(_dim("shouted_email", "categorical", expr="UPPER(email)", sensitivity="internal"))
 
 
+# --- V21 ---
+
+
+def v21_relationship_joins_a_column_that_is_not_the_key(files: Files) -> None:
+    # Many customers share a segment, so every order would be counted once per customer of it.
+    _entity(files, "order")["relationships"][0]["keys"] = [
+        {"from": "customer_segment", "to": "segment"}
+    ]
+
+
+def v21_relationship_joins_part_of_a_composite_key(files: Files) -> None:
+    _entity(files, "region")["primary_key"] = ["region_id", "country"]
+
+
+def v21_relationship_joins_more_than_the_key(files: Files) -> None:
+    _entity(files, "order")["relationships"][0]["keys"].append(
+        {"from": "customer_segment", "to": "segment"}
+    )
+
+
 # (rule, fixture name) -> mutation. Each must make the validator report exactly that code.
 FIXTURES: dict[str, list[Mutation]] = {
     "V01": [v01_metric_without_id_synonym, v01_unknown_key],
@@ -657,4 +677,9 @@ FIXTURES: dict[str, list[Mutation]] = {
         v18_rule_reads_personal_column,
     ],
     "V20": [v20_time_copy_of_a_masked_column, v20_categorical_copy_inside_a_function],
+    "V21": [
+        v21_relationship_joins_a_column_that_is_not_the_key,
+        v21_relationship_joins_part_of_a_composite_key,
+        v21_relationship_joins_more_than_the_key,
+    ],
 }

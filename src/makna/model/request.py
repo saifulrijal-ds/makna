@@ -11,7 +11,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from makna.model.definitions import Filter, RequestBody, Scalar
 
@@ -42,6 +42,14 @@ class QueryRequest(_Frozen):
     time_start: str | None = None
     time_end: str | None = None
     limit: int = DEFAULT_LIMIT
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def _limit_is_not_a_boolean(cls, value: object) -> object:
+        # Python reads `True` as 1, so `limit: true` would quietly ask for one row.
+        if isinstance(value, bool):
+            raise ValueError("limit must be a whole number, not a boolean")
+        return value
 
     @classmethod
     def from_example(cls, metric: str, body: RequestBody) -> QueryRequest:

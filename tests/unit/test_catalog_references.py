@@ -148,3 +148,44 @@ def test_each_rule_opens_exactly_its_own_issue() -> None:
     }
     for code, findings in cases.items():
         assert findings and {f.code for f in findings} == {code}, code
+
+
+# --- R06: the declared primary key against the catalog's -----------------------------------
+
+
+def keyed_view(*key: str, columns: dict[str, str | None] | None = None) -> CatalogView:
+    base = view(columns)
+    return CatalogView(base.tables, base.terms, {TABLE: frozenset(key)})
+
+
+def test_r06_a_declared_key_column_the_catalog_does_not_mark() -> None:
+    entity = make_entity(primary_key=("city",), dimensions=[dimension("city")])
+    found = find_issues([entity], [], keyed_view("thing_id"))
+    assert codes(found) == [("R06", "entity:thing", "primary_key")]
+    assert "does not mark city" in found[0].message
+    assert "also marks thing_id" in found[0].message
+
+
+def test_r06_a_declared_key_that_leaves_out_part_of_the_catalog_key() -> None:
+    entity = make_entity(primary_key=("thing_id",), dimensions=[dimension("city")])
+    found = find_issues([entity], [], keyed_view("thing_id", "city"))
+    assert codes(found) == [("R06", "entity:thing", "primary_key")]
+    assert "also marks city" in found[0].message
+
+
+def test_r06_a_declared_key_that_is_the_catalog_key_has_no_issue() -> None:
+    entity = make_entity(primary_key=("thing_id", "city"), dimensions=[dimension("city")])
+    assert find_issues([entity], [], keyed_view("city", "thing_id")) == []
+
+
+def test_r06_says_nothing_when_the_catalog_knows_no_key() -> None:
+    entity = make_entity(primary_key=("city",), dimensions=[dimension("city")])
+    assert find_issues([entity], [], view()) == []
+    assert find_issues([entity], [], keyed_view()) == []
+
+
+def test_r06_leaves_a_missing_column_to_r02() -> None:
+    entity = make_entity(primary_key=("nope",), dimensions=[dimension("city")])
+    assert codes(find_issues([entity], [], keyed_view("thing_id"))) == [
+        ("R02", "entity:thing", "primary_key")
+    ]

@@ -1,4 +1,4 @@
-"""Definition errors V01 to V18 and V20 (ARCHITECTURE section 5.3).
+"""Definition errors V01 to V18, V20, and V21 (ARCHITECTURE section 5.3).
 
 `validate` takes a `DefinitionSet` and returns every problem as an `Issue`. V01 problems are
 found while loading; a file that failed V01 is left out of the other checks, so one broken
@@ -24,7 +24,6 @@ Not here:
 
 from __future__ import annotations
 
-import datetime
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -32,7 +31,7 @@ from functools import lru_cache, partial
 from pathlib import PurePosixPath
 
 import sqlglot
-from sqlglot import exp
+from sqlglot import TokenType, exp
 from sqlglot.errors import ErrorLevel, SqlglotError
 
 from makna.definitions.issues import Issue
@@ -46,11 +45,13 @@ from makna.model.definitions import (
     GlossaryTerm,
     Measure,
     Metric,
+    Relationship,
     RuleRef,
 )
-from makna.model.expressions import ExpressionError, columns_read, dimension_columns
+from makna.model.expressions import ExpressionError, bare_column, columns_read, dimension_columns
 from makna.model.functions import first_disallowed_function
 from makna.model.metrics import direct_inputs
+from makna.model.values import value_fits_dimension
 
 ExtraCheck = Callable[[DefinitionSet], list[Issue]]
 
@@ -73,7 +74,12 @@ class _ExprError(Exception):
 
 @lru_cache(maxsize=4096)
 def _parse(sql: str) -> exp.Condition:
-    """Parse one SQL expression and print it for both dialects, or raise `_ExprError`."""
+    """Parse one SQL expression and print it for both dialects, or raise `_ExprError`.
+
+    Expressions are written in sqlglot's neutral SQL, not PostgreSQL (D-32 ruling 2, ARCHITECTURE
+    5.1), and the product reads them with the neutral parser. The check refuses what the neutral
+    and the PostgreSQL readings disagree on, so that a curator who writes PostgreSQL gets an error
+    instead of another meaning."""
     try:
         tree = sqlglot.parse_one(sql, into=exp.Condition)
     except SqlglotError as error:
@@ -88,7 +94,93 @@ def _parse(sql: str) -> exp.Condition:
             tree.sql(dialect=dialect, unsupported_level=ErrorLevel.RAISE)
         except SqlglotError as error:
             raise _ExprError(f"cannot be written for {dialect} ({error})") from None
+        except Exception as error:  # sqlglot's printers can fail on a node they do not support
+            raise _ExprError(f"cannot be written for {dialect} ({type(error).__name__})") from None
     return tree
+
+
+@lru_cache(maxsize=4096)
+def _dialect_problem(sql: str) -> str | None:
+    """Why an expression that parses and prints may not be used, because the neutral reading and
+    the PostgreSQL reading of it disagree (D-32 ruling 2), or None."""
+    try:
+        tree = _parse(sql)
+        _refuse_ambiguous_spellings(sql, tree)
+        _refuse_other_meaning_in_postgres(sql, tree)
+    except _ExprError as error:
+        return str(error)
+    return None
+
+
+AMBIGUOUS_TYPE_NAMES = frozenset({"int2", "int4", "int8"})
+
+
+def _refuse_ambiguous_spellings(sql: str, tree: exp.Condition) -> None:
+    """`^` is a power in PostgreSQL and an exclusive or in neutral SQL; `int2`, `int4`, and `int8`
+    are PostgreSQL's sizes of an integer, and neutral SQL reads `int8` as a one-byte integer."""
+    if tree.find(exp.BitwiseXor) is not None:
+        raise _ExprError(
+            "uses ^, which is a power in PostgreSQL and an exclusive or in neutral SQL; "
+            "write POWER(x, y)"
+        )
+    try:
+        tokens = sqlglot.tokenize(sql)
+    except SqlglotError:  # the parser read it, so this does not happen
+        return
+    for token in tokens:
+        if token.token_type != TokenType.STRING and token.text.lower() in AMBIGUOUS_TYPE_NAMES:
+            raise _ExprError(
+                f"uses the type name {token.text.lower()}, whose size differs between "
+                "PostgreSQL and neutral SQL; write SMALLINT, INTEGER, or BIGINT"
+            )
+
+
+def _same_meaning_form(tree: exp.Expr) -> exp.Expr:
+    """A copy in which two differences of spelling that mean the same are removed.
+
+    - A PostgreSQL parse marks `a / b` as an integer division and the neutral parse does not, so
+      the two print differently. That difference is known and deliberate (D-32 ruling 2;
+      docs/notes/integer-division-differs-between-postgres-and-duckdb.md).
+    - A PostgreSQL parse reads `x IS NOT NULL` as one `IS` node marked negated, the neutral parse
+      as `NOT (x IS NULL)`. They are the same condition (`IS` binds tighter than `NOT`), and the
+      sample definitions write `IS NOT NULL`.
+    """
+
+    def simplify(node: exp.Expr) -> exp.Expr:
+        if isinstance(node, exp.Div):
+            node.set("typed", None)
+            node.set("safe", None)
+        elif isinstance(node, exp.Is) and node.args.get("negate"):
+            node.set("negate", None)
+            return exp.Not(this=node)
+        return node
+
+    return tree.transform(simplify)
+
+
+def _refuse_other_meaning_in_postgres(sql: str, tree: exp.Condition) -> None:
+    """Refuse an expression whose PostgreSQL text differs between the neutral parse and a
+    PostgreSQL parse (division excepted): it would mean one thing here and another on the engine."""
+    try:
+        read = sqlglot.parse_one(sql, into=exp.Condition, read="postgres")
+        neutral = _same_meaning_form(tree).sql(
+            dialect="postgres", unsupported_level=ErrorLevel.RAISE
+        )
+        postgres = _same_meaning_form(read).sql(
+            dialect="postgres", unsupported_level=ErrorLevel.RAISE
+        )
+    except SqlglotError as error:
+        first = str(error).splitlines()[0]
+        raise _ExprError(f"is not read the same way by PostgreSQL ({first})") from None
+    except Exception as error:
+        raise _ExprError(
+            f"cannot be compared with its PostgreSQL reading ({type(error).__name__})"
+        ) from None
+    if neutral != postgres:
+        raise _ExprError(
+            f"means something different in PostgreSQL than in neutral SQL: neutral SQL reads it "
+            f"as {neutral}, PostgreSQL as {postgres}. Write it in neutral SQL"
+        )
 
 
 def _forbidden(tree: exp.Condition) -> str | None:
@@ -104,12 +196,7 @@ def _forbidden(tree: exp.Condition) -> str | None:
 
 
 def _is_bare_column(sql: str | None) -> bool:
-    if sql is None:
-        return False
-    try:
-        return isinstance(_parse(sql), exp.Column)
-    except _ExprError:
-        return False
+    return bare_column(sql) is not None
 
 
 @dataclass
@@ -373,7 +460,8 @@ class _Checker:
                     "expr",
                 )
         for i, rel in enumerate(e.relationships or []):
-            if self.view.entity(rel.to) is None:
+            target = self.view.entity(rel.to)
+            if target is None:
                 self.add(
                     "V07",
                     f"relationship {rel.name} points to entity {rel.to}, which does not exist",
@@ -381,8 +469,27 @@ class _Checker:
                     i,
                     "to",
                 )
+            else:
+                self.v21_keys_are_the_primary_key(rel, target, i)
         for i, measure in enumerate(e.measures or []):
             self.measure_checks(e, measure, i, personal, rules)
+
+    def v21_keys_are_the_primary_key(self, rel: Relationship, target: Entity, index: int) -> None:
+        """The `to` columns of a relationship are exactly the primary key of the target entity,
+        so that a join finds one row, never several (ARCHITECTURE 7.3)."""
+        joined = sorted(k.to.lower() for k in rel.keys)
+        key = sorted(c.lower() for c in target.primary_key)
+        if joined != key:
+            self.add(
+                "V21",
+                f"relationship {rel.name} joins {', '.join(k.to for k in rel.keys)} of "
+                f"{target.name}, but the primary key of {target.name} is "
+                f"{', '.join(target.primary_key)}; a join must find exactly one row of its "
+                "target, or it multiplies the rows of the measure",
+                "relationships",
+                index,
+                "keys",
+            )
 
     def check_expression(self, sql: str, what: str, *where: str | int) -> None:
         try:
@@ -404,6 +511,10 @@ class _Checker:
                 "print a value",
                 *where,
             )
+            return
+        disagreement = _dialect_problem(sql)
+        if disagreement is not None:
+            self.add("V05", f"{what}: expression {disagreement}", *where)
 
     def v11_masking_fits(self, dim: Dimension, index: int) -> None:
         if dim.masking is None:
@@ -725,31 +836,13 @@ def _value_problem(dimension: Dimension, flt: Filter) -> str | None:
     values = flt.value if isinstance(flt.value, list) else [flt.value]
     allowed = [v.value for v in dimension.values or []]
     for value in values:
-        if not _type_fits(dimension.type, value):
+        if not value_fits_dimension(dimension.type, value):
             return f"value {value!r} does not fit a {dimension.type} dimension"
         if allowed and not any(
             isinstance(value, bool) == isinstance(a, bool) and value == a for a in allowed
         ):
             return f"value {value!r} is not one of the dimension's values"
     return None
-
-
-def _type_fits(dimension_type: str, value: object) -> bool:
-    if dimension_type == "boolean":
-        return isinstance(value, bool)
-    if isinstance(value, bool):
-        return False
-    if dimension_type == "numeric":
-        return isinstance(value, (int, float))
-    if dimension_type == "time":
-        if not isinstance(value, str):
-            return False
-        try:
-            datetime.datetime.fromisoformat(value)
-        except ValueError:
-            return False
-        return True
-    return isinstance(value, (str, int, float))  # categorical
 
 
 # --------------------------------------------------------------------------------------

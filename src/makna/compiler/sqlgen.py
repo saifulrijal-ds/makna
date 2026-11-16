@@ -39,6 +39,7 @@ from makna.compiler.plan import (
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Dimension, Entity, Scalar
 from makna.model.request import ErrorCode, QueryError
+from makna.model.values import is_date_only
 
 Dialect = Literal["postgres", "duckdb"]
 
@@ -164,17 +165,9 @@ def _literal(value: Scalar, dimension: Dimension) -> exp.Expr:
             raise _refused(ErrorCode.INVALID_FILTER, value, "is not a usable number.")
         return exp.Literal.number(value)
     if dimension.type == "time":
-        kind = "date" if _is_date(value) else "timestamp"
+        kind = "date" if is_date_only(value) else "timestamp"
         return exp.Cast(this=exp.Literal.string(value), to=exp.DataType.build(kind))
     return exp.Literal.string(value)
-
-
-def _is_date(text: str) -> bool:
-    try:
-        datetime.date.fromisoformat(text)
-    except ValueError:
-        return False
-    return len(text) == 10
 
 
 def _date(value: datetime.date) -> exp.Expr:

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import datetime
 import difflib
-import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -47,9 +46,10 @@ from makna.model.request import (
     RequestFilter,
     ResultColumn,
 )
+from makna.model.values import value_fits_dimension
 
 GRAINS: tuple[str, ...] = get_args(Grain)
-_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
 
 
@@ -849,7 +849,7 @@ def _checked_value(
         )
     allowed = [v.value for v in dimension.values or []]
     for item in values:
-        if not _type_fits(dimension.type, item):
+        if not value_fits_dimension(dimension.type, item):
             shown = "the value" if personal else f"value {item!r}"
             raise _invalid_filter(
                 flt, dimension, f"{shown} does not fit a {dimension.type} dimension", personal
@@ -862,24 +862,6 @@ def _checked_value(
                 flt, dimension, f"{shown} is not one of the dimension's values", personal
             )
     return values if isinstance(value, tuple) else value
-
-
-def _type_fits(dimension_type: str, value: object) -> bool:
-    if dimension_type == "boolean":
-        return isinstance(value, bool)
-    if isinstance(value, bool):
-        return False
-    if dimension_type == "numeric":
-        return isinstance(value, (int, float)) and math.isfinite(value)
-    if dimension_type == "time":
-        if not isinstance(value, str):
-            return False
-        try:
-            datetime.datetime.fromisoformat(value)
-        except ValueError:
-            return False
-        return True
-    return isinstance(value, (str, int, float))
 
 
 def _personal_date_entities(

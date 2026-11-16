@@ -6,6 +6,11 @@ Codes:
 - R02  A column read by a primary key, relationship key, `expr`, or `filter` is not in the table.
 - R03  A dimension reads a column whose catalog tags map to a stricter sensitivity than the
        dimension declares.
+- R06  The `primary_key` of an entity is not the primary key the catalog reports for its table
+       (a declared column the catalog does not mark as a key, or a key column the entity leaves
+       out). A relationship joins a target on its declared key (V21), so a wrong declared key
+       lets a join multiply rows (ARCHITECTURE 7.3). Raised only when the catalog marks a key
+       for the table at all.
 
 An expression that does not parse reads columns nobody can list, so its part gets an R02 finding
 (and, for a dimension, an R03 finding): the check fails closed (docs/notes/an-expression-that-
@@ -37,7 +42,7 @@ from makna.model.definitions import Dimension, Entity, GlossaryTerm
 from makna.model.expressions import ExpressionError, columns_read, dimension_columns
 from makna.model.sensitivity import rank
 
-CHECK_CODES = ("R01", "R02", "R03", "R04")
+CHECK_CODES = ("R01", "R02", "R03", "R04", "R06")
 """The codes this check finds and therefore may close."""
 
 
@@ -61,6 +66,9 @@ class CatalogView:
     """engine_fqn -> {lower-case column name -> derived sensitivity or None}, active tables only."""
     terms: frozenset[str] = frozenset()
     """Catalog ids and names of the catalog glossary terms."""
+    primary_keys: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    """engine_fqn -> lower-case names of the columns the catalog marks as primary key. A table
+    with no entry, or an empty one, has no key in the catalog, and R06 says nothing about it."""
 
 
 @dataclass(frozen=True)
@@ -105,6 +113,35 @@ def _missing_columns(
     return Finding(object_id, part, "R02", f"column {', '.join(absent)} is not in table {fqn}")
 
 
+def _key_findings(
+    entity: Entity, view: CatalogView, columns: Mapping[str, str | None]
+) -> list[Finding]:
+    """R06: the declared primary key against the one the catalog reports for the table."""
+    table = entity.source.table
+    catalog_key = view.primary_keys.get(table)
+    declared = {name.lower() for name in entity.primary_key}
+    if not catalog_key or not declared <= set(columns):
+        return []  # the catalog knows no key, or a declared column is missing (R02 says so)
+    if declared == catalog_key:
+        return []
+    not_keys = sorted(declared - catalog_key)
+    left_out = sorted(catalog_key - declared)
+    reasons = []
+    if not_keys:
+        reasons.append(f"the catalog does not mark {', '.join(not_keys)} as a primary key column")
+    if left_out:
+        reasons.append(f"the catalog also marks {', '.join(left_out)} as a primary key column")
+    return [
+        Finding(
+            f"entity:{entity.name}",
+            "primary_key",
+            "R06",
+            f"the declared primary key ({', '.join(entity.primary_key)}) is not the primary key of "
+            f"table {table}: " + "; ".join(reasons),
+        )
+    ]
+
+
 def _entity_findings(
     entity: Entity, by_name: Mapping[str, Entity], view: CatalogView
 ) -> list[Finding]:
@@ -125,6 +162,7 @@ def _entity_findings(
             findings.append(finding)
 
     report_missing("primary_key", entity.primary_key)
+    findings.extend(_key_findings(entity, view, columns))
     for dimension in entity.dimensions:
         part = f"dimension:{dimension.name}"
         try:
@@ -221,11 +259,13 @@ def _merge(findings: list[Finding]) -> list[Finding]:
 def load_view(connection: Connection) -> CatalogView:
     """The catalog view from the catalog tables (datasets not marked removed)."""
     tables: dict[str, dict[str, str | None]] = {}
+    keys: dict[str, set[str]] = {}
     rows = connection.execute(
         select(
             catalog_dataset.c.engine_fqn,
             catalog_column.c.name,
             catalog_column.c.derived_sensitivity,
+            catalog_column.c.is_primary_key,
         )
         .select_from(
             catalog_dataset.outerjoin(
@@ -234,16 +274,18 @@ def load_view(connection: Connection) -> CatalogView:
         )
         .where(catalog_dataset.c.removed_at.is_(None))
     )
-    for fqn, name, derived in rows:
+    for fqn, name, derived, is_key in rows:
         columns = tables.setdefault(fqn, {})
         if name is not None:
             columns[name.lower()] = derived
+            if is_key:
+                keys.setdefault(fqn, set()).add(name.lower())
     terms: set[str] = set()
     for catalog_id, name in connection.execute(
         select(catalog_glossary_term.c.catalog_id, catalog_glossary_term.c.name)
     ):
         terms.update(value for value in (catalog_id, name) if value)
-    return CatalogView(tables, frozenset(terms))
+    return CatalogView(tables, frozenset(terms), {k: frozenset(v) for k, v in keys.items()})
 
 
 def open_issues(connection: Connection) -> list[Finding]:
