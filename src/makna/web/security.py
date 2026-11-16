@@ -18,18 +18,36 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from itsdangerous import BadData, URLSafeSerializer
 
-SESSION_COOKIE = "makna_session"
-LOGIN_COOKIE = "makna_login"
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CookieNames:
+    """The names of the two cookies. Outside development mode they carry the `__Host-` prefix, so
+    a browser accepts them only with `Secure`, `Path=/`, and no `Domain`, and refuses one that a
+    sibling subdomain tries to plant. Development mode is served over plain http, where a
+    `Secure` cookie is not sent back, so there the names are plain."""
+
+    session: str
+    login: str
+
+    @classmethod
+    def for_mode(cls, development: bool) -> CookieNames:
+        prefix = "" if development else "__Host-"
+        return cls(prefix + "makna_session", prefix + "makna_login")
+
+
 SESSION_MAX_AGE = 8 * 60 * 60
 """Seconds a session lives, from the time it was issued. It is never extended."""
 LOGIN_MAX_AGE = 15 * 60
@@ -41,6 +59,7 @@ MAX_NEXT_LENGTH = 512
 _SESSION_SALT = "makna.web.session.v1"
 _LOGIN_SALT = "makna.web.login.v1"
 _KEY_CONTEXT = b"makna.web.cookies.v1"
+_SIGNER = {"digest_method": hashlib.sha256}  # HMAC-SHA256, not itsdangerous's default SHA-1
 
 
 def new_csrf_secret() -> str:
@@ -60,7 +79,7 @@ class Session:
 
     user_id: int
     issued_at: int
-    csrf: str
+    csrf: str = field(repr=False)
 
 
 def _valid_secret(value: object) -> bool:
@@ -82,8 +101,8 @@ class CookieCodec:
 
     def __init__(self, secret_key: str, clock: Callable[[], float] = time.time) -> None:
         key = hmac.new(secret_key.encode("utf-8"), _KEY_CONTEXT, hashlib.sha256).digest()
-        self._session = URLSafeSerializer(key, salt=_SESSION_SALT)
-        self._login = URLSafeSerializer(key, salt=_LOGIN_SALT)
+        self._session = URLSafeSerializer(key, salt=_SESSION_SALT, signer_kwargs=_SIGNER)
+        self._login = URLSafeSerializer(key, salt=_LOGIN_SALT, signer_kwargs=_SIGNER)
         self._clock = clock
 
     # --- session ---
@@ -166,15 +185,20 @@ def safe_next(value: object) -> str:
 
 
 class LoginThrottle:
-    """Refuses a sign-in attempt after five failures in one minute for one email.
+    """Refuses a sign-in attempt after five attempts in one minute for one email.
 
+    - `reserve` checks and counts in one step under a lock, **before** the password is checked, so
+      parallel attempts cannot all pass the check: the sixth within the minute is refused before
+      any hash is made. A reservation lasts one minute.
+    - A failed attempt keeps its reservation. A successful one gives its own back (`release`), so
+      signing in costs the user nothing, but it never removes the reservation of another attempt:
+      a success does not hand an attacker fresh guesses.
     - The key is the normalised email, whether or not a user has it, so the refusal says nothing
       about which emails exist. It is stored as a SHA-256 digest, not as the typed text.
-    - A refused attempt is not counted, so the refusal ends one minute after the fifth failure
-      and a flood of attempts cannot keep it going.
-    - A success does not reset the counter (see ARCHITECTURE section 13).
     - The counters live in this process's memory: each worker process has its own, and a restart
-      clears them. At most `max_keys` emails are kept; the least recently used is dropped.
+      clears them. A key is dropped only when its minute is over. At most `max_keys` emails are
+      kept; when all of them are still inside their minute, a new email is refused (fail closed)
+      and one warning is logged (it names no email).
     """
 
     def __init__(
@@ -182,14 +206,16 @@ class LoginThrottle:
         *,
         limit: int = 5,
         window: float = 60.0,
-        max_keys: int = 10_000,
+        max_keys: int = 100_000,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._limit = limit
         self._window = window
         self._max_keys = max_keys
         self._clock = clock
-        self._failures: OrderedDict[str, deque[float]] = OrderedDict()
+        self._attempts: OrderedDict[str, deque[tuple[float, int]]] = OrderedDict()
+        self._next_ticket = 0
+        self._full_warned = False
         self._lock = threading.Lock()
 
     @staticmethod
@@ -197,33 +223,63 @@ class LoginThrottle:
         text = email.strip().lower()[:1000]
         return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
-    def _recent(self, key: str, now: float) -> deque[float] | None:
-        failures = self._failures.get(key)
-        if failures is None:
+    def _live(self, key: str, now: float) -> deque[tuple[float, int]] | None:
+        attempts = self._attempts.get(key)
+        if attempts is None:
             return None
-        while failures and now - failures[0] >= self._window:
-            failures.popleft()
-        if not failures:
-            del self._failures[key]
+        while attempts and now - attempts[0][0] >= self._window:
+            attempts.popleft()
+        if not attempts:
+            del self._attempts[key]
             return None
-        return failures
+        return attempts
 
-    def refused(self, email: str) -> bool:
-        """True when this email has reached the limit and the minute has not passed."""
-        key = self.key(email)
-        with self._lock:
-            failures = self._recent(key, self._clock())
-            return failures is not None and len(failures) >= self._limit
+    def _drop_expired(self, now: float) -> None:
+        """Keys are in order of their last activity, so the expired ones are at the front."""
+        while self._attempts:
+            key, attempts = next(iter(self._attempts.items()))
+            if now - attempts[-1][0] < self._window:
+                return
+            del self._attempts[key]
 
-    def record_failure(self, email: str) -> None:
+    def reserve(self, email: str) -> int | None:
+        """Count an attempt for this email: a ticket, or None when it is refused."""
         key = self.key(email)
         with self._lock:
             now = self._clock()
-            failures = self._recent(key, now)
-            if failures is None:
-                failures = deque()
-                self._failures[key] = failures
-            failures.append(now)
-            self._failures.move_to_end(key)
-            while len(self._failures) > self._max_keys:
-                self._failures.popitem(last=False)
+            attempts = self._live(key, now)
+            if attempts is None:
+                if len(self._attempts) >= self._max_keys:
+                    self._drop_expired(now)
+                if len(self._attempts) >= self._max_keys:
+                    if not self._full_warned:
+                        self._full_warned = True
+                        logger.warning(
+                            "sign-in throttle: all %d slots are inside their minute; new "
+                            "emails are refused until some run out",
+                            self._max_keys,
+                        )
+                    return None
+                self._full_warned = False
+                attempts = deque()
+                self._attempts[key] = attempts
+            elif len(attempts) >= self._limit:
+                return None
+            self._next_ticket += 1
+            attempts.append((now, self._next_ticket))
+            self._attempts.move_to_end(key)
+            return self._next_ticket
+
+    def release(self, email: str, ticket: int) -> None:
+        """Give back the reservation of an attempt that was not a failure (a success, or an
+        outage of the user store)."""
+        key = self.key(email)
+        with self._lock:
+            attempts = self._attempts.get(key)
+            if attempts is None:
+                return
+            remaining = deque(item for item in attempts if item[1] != ticket)
+            if remaining:
+                self._attempts[key] = remaining
+            else:
+                del self._attempts[key]

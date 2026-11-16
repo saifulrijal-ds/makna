@@ -18,7 +18,6 @@ from sqlalchemy import Engine
 from makna.app import create_app
 from makna.services import accounts
 from makna.web.routes import BAD_LOGIN, THROTTLED
-from makna.web.security import SESSION_COOKIE
 
 from . import web_support as w
 
@@ -66,7 +65,7 @@ def test_a_wrong_password_an_unknown_email_and_an_inactive_user_get_the_same_ans
         response = w.sign_in(client, email, password)
         assert response.status_code == 401
         assert error_text(response.text) == BAD_LOGIN == "Email or password is incorrect."
-        assert SESSION_COOKIE not in client.cookies
+        assert w.PROD.session not in client.cookies
         seen.add((response.status_code, without_email(response.text)))
     # Not only the message: the whole page is the same, apart from the email the user typed.
     assert len(seen) == 1
@@ -96,7 +95,7 @@ def test_five_failures_in_a_minute_for_one_email_are_followed_by_a_refusal(
     assert refused.status_code == 429
     assert error_text(refused.text) == THROTTLED == "Too many attempts. Try again in a minute."
     assert len(calls) == 5
-    assert SESSION_COOKIE not in client.cookies
+    assert w.PROD.session not in client.cookies
     # The same email in other letters is the same key.
     assert w.sign_in(client, user.email.upper(), w.PASSWORD).status_code == 429
     # Another email is not affected.
@@ -234,12 +233,12 @@ def test_signing_in_issues_a_new_session_whatever_cookie_came_with_it(
     client = w.make_client(app)
     # A session the attacker prepared (valid for another user, or forged) is not reused.
     planted, session = state.codec.issue_session(user.id)
-    w.plant(client, SESSION_COOKIE, planted)
+    w.plant(client, w.PROD.session, planted)
     assert w.sign_in(client, user.email).status_code == 303
-    first = client.cookies[SESSION_COOKIE]
+    first = client.cookies[w.PROD.session]
     assert first != planted
     assert w.sign_in(client, user.email).status_code == 303
-    second = client.cookies[SESSION_COOKIE]
+    second = client.cookies[w.PROD.session]
     assert second != first
     csrf_first = state.codec.load_session(first).csrf
     csrf_second = state.codec.load_session(second).csrf
@@ -251,7 +250,7 @@ def test_the_session_cookie_holds_the_user_id_the_time_and_the_csrf_secret_only(
 ) -> None:
     user = w.make_user(web_engine, "admin", teams=("credit-risk",), name="Rina Wijaya")
     client = w.signed_in(app, user)
-    value = client.cookies[SESSION_COOKIE]
+    value = client.cookies[w.PROD.session]
     payload = app.state.web.codec._session.loads(value)
     assert set(payload) == {"u", "iat", "csrf"}
     assert payload["u"] == user.id
@@ -275,7 +274,7 @@ def test_a_page_never_renews_the_cookie(web_engine: Engine, app: Any) -> None:
 def test_a_forged_or_foreign_cookie_is_signed_out(web_engine: Engine, app: Any) -> None:
     user = w.make_user(web_engine)
     client = w.signed_in(app, user)
-    good = client.cookies[SESSION_COOKIE]
+    good = client.cookies[w.PROD.session]
     other_app = create_app(w.make_settings(web_engine.url, secret_key=secrets.token_hex(32)))
     foreign, _ = other_app.state.web.codec.issue_session(user.id)
     other_app.state.services.dispose()
@@ -285,7 +284,7 @@ def test_a_forged_or_foreign_cookie_is_signed_out(web_engine: Engine, app: Any) 
     altered = ("A" if payload[0] != "A" else "B") + payload[1:] + "." + signature
     for bad in (flipped, altered, foreign, "", "garbage", good.split(".")[0], "a" * 5000):
         probe = w.make_client(app)
-        w.plant(probe, SESSION_COOKIE, bad)
+        w.plant(probe, w.PROD.session, bad)
         response = probe.get("/account")
         assert response.status_code == 303 and response.headers["location"].startswith("/login")
 
@@ -297,7 +296,7 @@ def test_a_session_ends_eight_hours_after_it_was_issued(web_engine: Engine, app:
     state.codec._clock = lambda: now[0]
     value, _ = state.codec.issue_session(user.id)
     client = w.make_client(app)
-    w.plant(client, SESSION_COOKIE, value)
+    w.plant(client, w.PROD.session, value)
     now[0] += 8 * 3600 - 5
     assert client.get("/account").status_code == 200
     now[0] += 10
@@ -305,3 +304,81 @@ def test_a_session_ends_eight_hours_after_it_was_issued(web_engine: Engine, app:
     assert response.status_code == 303 and response.headers["location"].startswith("/login")
     # The refused cookie is cleared.
     assert "max-age=0" in response.headers["set-cookie"].lower()
+
+
+def test_parallel_attempts_for_one_email_get_at_most_five_password_checks(
+    web_engine: Engine, app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check and the count are one step: a burst cannot slip past the limit."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    user = w.make_user(web_engine)
+    checks: list[str] = []
+    real = accounts.verify_password
+
+    def counting(engine: Engine, email: str, password: str) -> accounts.User | None:
+        checks.append(email)
+        return real(engine, email, password)
+
+    monkeypatch.setattr(accounts, "verify_password", counting)
+    probe = w.make_client(app)
+    first = probe.get("/login")
+    token = w.csrf_in(first.text)
+    login_cookie = probe.cookies[w.PROD.login]
+    barrier = threading.Barrier(30)
+
+    def attempt(password: str) -> int:
+        client = w.make_client(app)
+        w.plant(client, w.PROD.login, login_cookie)
+        barrier.wait()
+        response = client.post(
+            "/login", data={"csrf_token": token, "email": user.email, "password": password}
+        )
+        return int(response.status_code)
+
+    wrong = [secrets.token_urlsafe(12) for _ in range(30)]
+    with ThreadPoolExecutor(30) as pool:
+        codes = list(pool.map(attempt, wrong))
+    assert sorted(set(codes)) == [401, 429]
+    assert codes.count(401) == 5 and codes.count(429) == 25
+    assert len(checks) == 5
+    # After the limit the right password does not sign in either.
+    late = w.make_client(app)
+    assert w.sign_in(late, user.email, w.PASSWORD).status_code == 429
+    assert w.PROD.session not in late.cookies
+
+
+def test_the_refusal_page_asks_the_client_to_wait_a_minute(web_engine: Engine, app: Any) -> None:
+    user = w.make_user(web_engine)
+    client = w.make_client(app)
+    for _ in range(5):
+        w.sign_in(client, user.email, "wrong password!")
+    refused = w.sign_in(client, user.email, "wrong password!")
+    assert refused.status_code == 429 and refused.headers["retry-after"] == "60"
+
+
+def test_an_outage_during_the_password_check_does_not_use_up_an_attempt(
+    web_engine: Engine, app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = w.make_user(web_engine)
+
+    def down(self: accounts.AccountStore, email: str, password: str) -> None:
+        raise accounts.AccountStoreError
+
+    client = w.make_client(app)
+    with monkeypatch.context() as patch:
+        patch.setattr(accounts.AccountStore, "verify_password", down)
+        for _ in range(8):
+            assert w.sign_in(client, user.email).status_code == 503
+    assert w.sign_in(client, user.email).status_code == 303
+
+
+def test_an_absurdly_long_password_is_counted_like_any_other_attempt(
+    web_engine: Engine, app: Any
+) -> None:
+    user = w.make_user(web_engine)
+    client = w.make_client(app)
+    for _ in range(5):
+        assert w.sign_in(client, user.email, "x" * 5000).status_code == 401
+    assert w.sign_in(client, user.email, "x" * 5000).status_code == 429

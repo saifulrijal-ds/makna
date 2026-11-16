@@ -24,11 +24,10 @@ from makna.services.accounts import MIN_PASSWORD_LENGTH, AccountError, AccountSt
 from makna.web.gate import session_cookie_options
 from makna.web.pages import Pages, WebContext, web_context
 from makna.web.security import (
-    LOGIN_COOKIE,
     LOGIN_MAX_AGE,
-    SESSION_COOKIE,
     SESSION_MAX_AGE,
     CookieCodec,
+    CookieNames,
     LoginThrottle,
     safe_next,
 )
@@ -57,6 +56,10 @@ class WebState:
     throttle: LoginThrottle
     pages: Pages
     development: bool
+
+    @property
+    def names(self) -> CookieNames:
+        return CookieNames.for_mode(self.development)
 
     @property
     def accounts(self) -> AccountStore:
@@ -114,17 +117,17 @@ def _login_page(
 @router.get("/login")
 async def login_form(request: Request, next: str = "") -> Response:
     state = _state(request)
-    secret = state.codec.load_login(request.cookies.get(LOGIN_COOKIE))
+    secret = state.codec.load_login(request.cookies.get(state.names.login))
     cookie: str | None = None
     if secret is None:
         cookie, secret = state.codec.issue_login()
     response = _login_page(request, secret, next_path=safe_next(next))
     if cookie is not None:
         response.set_cookie(
-            LOGIN_COOKIE,
+            state.names.login,
             cookie,
             max_age=LOGIN_MAX_AGE,
-            **{**session_cookie_options(state.development), "path": "/login"},
+            **session_cookie_options(state.development),
         )
     return response
 
@@ -138,28 +141,37 @@ async def login(
 ) -> Response:
     # The gate has checked the CSRF token against the login cookie, so the cookie is there.
     state = _state(request)
-    secret = state.codec.load_login(request.cookies.get(LOGIN_COOKIE)) or ""
+    secret = state.codec.load_login(request.cookies.get(state.names.login)) or ""
     target = safe_next(next)
-    if state.throttle.refused(email):
+    ticket = state.throttle.reserve(email)
+    if ticket is None:
         # No password check for a refused attempt. The refusal is the same for every email.
-        return _login_page(
+        response = _login_page(
             request, secret, next_path=target, email=email, error=THROTTLED, status=429
         )
+        response.headers["Retry-After"] = "60"
+        return response
     user: User | None = None
-    if len(email) <= MAX_LOGIN_FIELD and len(password) <= MAX_LOGIN_FIELD:
-        user = await _db(state.accounts.verify_password, email, password)
+    try:
+        # An email or password of an absurd length is a failed attempt without a hash.
+        if len(email) <= MAX_LOGIN_FIELD and len(password) <= MAX_LOGIN_FIELD:
+            user = await _db(state.accounts.verify_password, email, password)
+    except BaseException:
+        state.throttle.release(email, ticket)  # an outage of the user store is not a failure
+        raise
     if user is None:
-        state.throttle.record_failure(email)
         # One message and one status for an unknown email, a wrong password, and an inactive user.
+        # The reservation stays: it is the failure that counts.
         return _login_page(
             request, secret, next_path=target, email=email, error=BAD_LOGIN, status=401
         )
+    state.throttle.release(email, ticket)
     # A new session with a new CSRF secret, whatever cookie the browser sent.
     value, _ = state.codec.issue_session(user.id)
     response = RedirectResponse(target, status_code=303)
     options = session_cookie_options(state.development)
-    response.set_cookie(SESSION_COOKIE, value, max_age=SESSION_MAX_AGE, **options)
-    response.delete_cookie(LOGIN_COOKIE, **{**options, "path": "/login"})
+    response.set_cookie(state.names.session, value, max_age=SESSION_MAX_AGE, **options)
+    response.delete_cookie(state.names.login, **options)
     return response
 
 
@@ -167,7 +179,7 @@ async def login(
 async def logout(request: Request) -> Response:
     state = _state(request)
     response = RedirectResponse("/login", status_code=303)
-    response.delete_cookie(SESSION_COOKIE, **session_cookie_options(state.development))
+    response.delete_cookie(state.names.session, **session_cookie_options(state.development))
     return response
 
 

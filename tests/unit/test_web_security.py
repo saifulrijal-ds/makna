@@ -3,6 +3,7 @@ vendored files. No database and no HTTP."""
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import secrets
@@ -15,6 +16,7 @@ from makna.web.security import (
     LOGIN_MAX_AGE,
     SESSION_MAX_AGE,
     CookieCodec,
+    CookieNames,
     LoginThrottle,
     new_csrf_secret,
     safe_next,
@@ -169,47 +171,117 @@ def test_anything_else_becomes_the_start_page(value: object) -> None:
 # --- the throttle ---
 
 
-def test_five_failures_in_a_minute_refuse_until_the_minute_has_passed() -> None:
+def reserve_n(throttle: LoginThrottle, email: str, n: int) -> list[int | None]:
+    return [throttle.reserve(email) for _ in range(n)]
+
+
+def test_the_sixth_attempt_in_a_minute_is_refused_until_the_minute_has_passed() -> None:
     clock = Clock(0.0)
     throttle = LoginThrottle(clock=clock)
-    for _ in range(4):
-        throttle.record_failure("a@demo.example")
-        assert not throttle.refused("a@demo.example")
-    throttle.record_failure("a@demo.example")
-    assert throttle.refused("a@demo.example")
-    assert throttle.refused("  A@Demo.Example ")  # the same email in other letters
-    assert not throttle.refused("b@demo.example")
+    assert all(t is not None for t in reserve_n(throttle, "a@demo.example", 5))
+    assert throttle.reserve("a@demo.example") is None
+    assert throttle.reserve("  A@Demo.Example ") is None  # the same email in other letters
+    assert throttle.reserve("b@demo.example") is not None
     clock.now = 59.9
-    assert throttle.refused("a@demo.example")
+    assert throttle.reserve("a@demo.example") is None
     clock.now = 60.0
-    assert not throttle.refused("a@demo.example")
+    assert throttle.reserve("a@demo.example") is not None
 
 
-def test_failures_spread_over_more_than_a_minute_do_not_add_up() -> None:
+def test_checking_and_counting_are_one_step_so_parallel_attempts_cannot_all_pass() -> None:
+    import threading
+
+    throttle = LoginThrottle()
+    results: list[int | None] = []
+    barrier = threading.Barrier(50)
+
+    def attempt() -> None:
+        barrier.wait()
+        results.append(throttle.reserve("a@demo.example"))
+
+    threads = [threading.Thread(target=attempt) for _ in range(50)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(1 for r in results if r is not None) == 5
+
+
+def test_a_success_gives_back_its_own_reservation_and_nobody_else_s() -> None:
+    throttle = LoginThrottle()
+    tickets = reserve_n(throttle, "a@demo.example", 5)
+    assert throttle.reserve("a@demo.example") is None
+    # One of the five attempts succeeded: that slot is free again, one guess and no more.
+    throttle.release("a@demo.example", tickets[2] or 0)
+    assert throttle.reserve("a@demo.example") is not None
+    assert throttle.reserve("a@demo.example") is None
+    throttle.release("a@demo.example", 999_999)  # an unknown ticket changes nothing
+    assert throttle.reserve("a@demo.example") is None
+
+
+def test_attempts_spread_over_more_than_a_minute_do_not_add_up() -> None:
     clock = Clock(0.0)
     throttle = LoginThrottle(clock=clock)
     for _ in range(20):
-        throttle.record_failure("a@demo.example")
-        clock.now += 20  # three failures in a minute, never five
-        assert not throttle.refused("a@demo.example")
+        assert throttle.reserve("a@demo.example") is not None
+        clock.now += 20  # three in a minute, never six
 
 
-def test_the_throttle_keeps_a_bounded_number_of_emails_and_stores_no_text() -> None:
-    throttle = LoginThrottle(max_keys=100)
-    for index in range(1000):
-        throttle.record_failure(f"user{index}@demo.example")
-    assert len(throttle._failures) == 100
-    assert all(re.fullmatch(r"[0-9a-f]{64}", key) for key in throttle._failures)
-    assert not throttle.refused("user0@demo.example")  # the oldest were dropped
+def test_the_throttle_never_drops_a_key_that_is_inside_its_minute() -> None:
+    clock = Clock(0.0)
+    throttle = LoginThrottle(max_keys=100, clock=clock)
+    for index in range(100):
+        assert throttle.reserve(f"user{index}@demo.example") is not None
+    assert len(throttle._attempts) == 100
+    assert all(re.fullmatch(r"[0-9a-f]{64}", key) for key in throttle._attempts)
+    # Full of live keys: a new email is refused (fail closed), and the old ones keep their count.
+    assert throttle.reserve("new@demo.example") is None
+    assert len(throttle._attempts) == 100
+    for _ in range(4):
+        assert throttle.reserve("user0@demo.example") is not None
+    assert throttle.reserve("user0@demo.example") is None
+    # When the minute is over the expired keys make room.
+    clock.now = 61.0
+    assert throttle.reserve("new@demo.example") is not None
+
+
+def test_a_full_throttle_logs_one_warning_that_names_no_email(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    throttle = LoginThrottle(max_keys=2)
+    throttle.reserve("one@demo.example")
+    throttle.reserve("two@demo.example")
+    with caplog.at_level("WARNING"):
+        for index in range(10):
+            assert throttle.reserve(f"late{index}@demo.example") is None
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "demo.example" not in caplog.text
 
 
 def test_a_very_long_email_is_one_bounded_key() -> None:
     throttle = LoginThrottle()
     huge = "a" * 10_000_000 + "@x"
-    for _ in range(5):
-        throttle.record_failure(huge)
-    assert throttle.refused(huge)
+    assert all(t is not None for t in reserve_n(throttle, huge, 5))
+    assert throttle.reserve(huge) is None
     assert throttle.key(huge) == hashlib.sha256(("a" * 1000).encode()).hexdigest()
+
+
+def test_the_cookie_names_carry_the_host_prefix_outside_development_mode() -> None:
+    assert CookieNames.for_mode(False) == CookieNames("__Host-makna_session", "__Host-makna_login")
+    assert CookieNames.for_mode(True) == CookieNames("makna_session", "makna_login")
+
+
+def test_the_session_repr_does_not_show_the_csrf_secret() -> None:
+    _, session = CookieCodec("k" * 40).issue_session(7)
+    assert session.csrf not in repr(session) and "7" in repr(session)
+
+
+def test_the_cookies_are_signed_with_hmac_sha256() -> None:
+    codec = CookieCodec("k" * 40)
+    value, _ = codec.issue_session(7)
+    signature = value.rpartition(".")[2]
+    assert len(base64.urlsafe_b64decode(signature + "=")) == 32  # SHA-1 would give 20 bytes
 
 
 # --- the settings ---
