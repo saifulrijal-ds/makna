@@ -36,6 +36,28 @@ def retrieval_section(
         "limit": 10,
         "role": "viewer",
         "scores": score_all(records),
+        "by_kind": {
+            "kinds": ["metric", "entity", "dimension", "rule", "glossary_term", "domain"],
+            "limit": 10,
+            "rows": [
+                {"kind": "metric", "source": "golden", "n_questions": 10, "recall_at_3": 0.9},
+                {"kind": "glossary_term", "source": "s", "n_questions": 2, "recall_at_3": 1.0},
+                {"kind": "dimension", "source": "s", "n_questions": 4, "recall_at_3": 0.75},
+                {"kind": "entity", "source": "s", "n_questions": 0, "recall_at_3": None},
+            ],
+            "questions": [
+                {
+                    "id": "S01",
+                    "question": "q",
+                    "language": "en",
+                    "kind": "dimension",
+                    "expected": ["dimension:a.b"],
+                    "found_at_3": False,
+                    "rank": None,
+                    "ranked_ids": ["metric:x", "metric:y", "metric:z"],
+                }
+            ],
+        },
         "latency": {
             **latency_summary(latency or [10.0, 20.0, 30.0]),
             "rounds": 1,

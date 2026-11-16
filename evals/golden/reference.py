@@ -22,6 +22,7 @@ import psycopg
 
 GOLDEN_DIR = Path(__file__).resolve().parent
 QUESTIONS_FILE = GOLDEN_DIR / "questions.yaml"
+SEARCH_QUESTIONS_FILE = GOLDEN_DIR / "search_questions.yaml"
 SQL_DIR = GOLDEN_DIR / "reference_sql"
 EXPECTED_DIR = GOLDEN_DIR / "expected"
 

@@ -16,16 +16,24 @@ from evals.golden.reference import (
     MAX_ROWS,
     MIN_ROWS,
     QUESTIONS_FILE,
+    SEARCH_QUESTIONS_FILE,
     SQL_DIR,
     ReferenceResult,
     render_csv,
     row_count_problem,
 )
-from evals.golden.schema import ERROR_CODE_FOR_REASON, GROUPS, Question, load_questions
+from evals.golden.schema import (
+    ERROR_CODE_FOR_REASON,
+    GROUPS,
+    Question,
+    SearchQuestion,
+    load_questions,
+    load_search_questions,
+)
 from makna.compiler.plan import plan_request
 from makna.compiler.snapshot import Model
 from makna.definitions.loader import load_definitions
-from makna.model.definitions import Metric
+from makna.model.definitions import Entity, GlossaryTerm, Metric
 from makna.model.request import QueryError, QueryRequest, RequestFilter
 from makna.services.examples import model_from_definitions
 
@@ -426,3 +434,87 @@ def test_row_count_limits() -> None:
     assert (
         row_count_problem("x", ReferenceResult(("a",), tuple((i,) for i in range(201)))) is not None
     )
+
+
+# ---- search questions for the other kinds (WP-15D) -------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def search_questions() -> list[SearchQuestion]:
+    return load_search_questions(SEARCH_QUESTIONS_FILE)
+
+
+@pytest.fixture(scope="module")
+def other_objects() -> dict[str, tuple[str, set[str]]]:
+    """Object id -> (label, every phrase that names it) of the entities, dimensions, and
+    glossary terms of the definitions."""
+    found: dict[str, tuple[str, set[str]]] = {}
+
+    def phrases(name: str, label: str | None, synonyms: dict[str, list[str]] | None) -> set[str]:
+        words = {name.replace("_", " "), name, *(label and [label] or [])}
+        for values in (synonyms or {}).values():
+            words.update(values)
+        return {normal(w) for w in words}
+
+    for file in load_definitions(DEFINITIONS).valid_files():
+        definition = file.definition
+        if isinstance(definition, GlossaryTerm):
+            found[f"glossary_term:{definition.name}"] = (
+                definition.label,
+                phrases(definition.name, definition.label, definition.synonyms),
+            )
+        elif isinstance(definition, Entity):
+            found[f"entity:{definition.name}"] = (
+                definition.label,
+                phrases(definition.name, definition.label, definition.synonyms),
+            )
+            for dimension in definition.dimensions:
+                found[f"dimension:{definition.name}.{dimension.name}"] = (
+                    dimension.label or dimension.name,
+                    phrases(dimension.name, dimension.label, dimension.synonyms),
+                )
+    return found
+
+
+def test_the_search_questions_validate_and_cover_the_kinds(
+    search_questions: list[SearchQuestion],
+) -> None:
+    kinds = Counter(q.kind for q in search_questions)
+    assert kinds["dimension"] >= 6 and kinds["entity"] >= 4 and kinds["glossary_term"] >= 2
+    assert {q.language for q in search_questions} == {"en", "id"}
+
+
+def test_the_search_questions_expect_objects_that_exist(
+    search_questions: list[SearchQuestion], other_objects: dict[str, tuple[str, set[str]]]
+) -> None:
+    for q in search_questions:
+        assert set(q.expected) <= set(other_objects), q.id
+
+
+def singular(text: str) -> str:
+    """Words of a text, lower case, without a plural s (so "offices" is "office")."""
+    words = re.sub(r"[^\w]+", " ", normal(text)).split()
+    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words)
+
+
+def test_no_search_question_uses_a_name_label_or_synonym_of_its_object(
+    search_questions: list[SearchQuestion], other_objects: dict[str, tuple[str, set[str]]]
+) -> None:
+    """The leak rule of docs/EVALS.md section 2.3: the question says the business meaning in
+    other words. A phrase counts as used when it appears as whole words in the question."""
+    for q in search_questions:
+        text = f" {singular(q.question)} "
+        for object_id in q.expected:
+            for phrase in other_objects[object_id][1]:
+                assert f" {singular(phrase)} " not in text, (q.id, object_id, phrase)
+
+
+def test_a_search_question_of_the_wrong_kind_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "search.yaml"
+    path.write_text(
+        "- id: S01\n  question: Which wealth tier is each borrower in?\n  language: en\n"
+        "  kind: dimension\n  expected: [entity:customer]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="not of kind dimension"):
+        load_search_questions(path)

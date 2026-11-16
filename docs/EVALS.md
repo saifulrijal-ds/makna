@@ -24,7 +24,8 @@ The evals answer the four success questions in `docs/PROJECT_BRIEF.md`:
 
 ```
 evals/golden/questions.yaml        all questions
-evals/golden/schema.py             the model of the questions file (validated by a unit test)
+evals/golden/schema.py             the model of the questions files (validated by a unit test)
+evals/golden/search_questions.yaml search-only questions whose answer is a dimension, entity, or glossary term (section 3.1)
 evals/golden/reference_sql/<id>.sql    hand-written PostgreSQL SQL, for questions with outcome "answer"
 evals/golden/reference_sql/<id>_<metric>.sql    the same for each candidate of a "clarify" question
 evals/golden/expected/<id>.csv     the frozen result of the reference SQL on the seeded data
@@ -133,6 +134,12 @@ Questions to add early in the remaining set: "Berapa hapus buku tahun lalu?" (`n
 | By language | each score above, split by `language` | | Indonesian recall at 3 within 0.10 of English |
 
 The report also shows recall at 3 and mean reciprocal rank for keyword only, vector only, and fused, so a weak leg is visible (see `docs/notes/search-scores-cannot-say-no-match.md`).
+
+### 3.1 Recall at 3 by kind of object (WP-15D)
+
+The golden questions expect a metric, so the eval above cannot see whether search finds a dimension, an entity, or a glossary term (review finding C-3). `evals/golden/search_questions.yaml` holds 16 questions with no reference SQL: 8 for dimensions, 5 for entities, 3 for glossary terms, in English and Indonesian. Each names its `kind` and the `expected` object ids of that kind; any one of them in the first 3 hits is a find. They are written from the business meaning in `docs/SAMPLE_DOMAIN.md` and use no name, label, or synonym of the expected object (a unit test checks this, plural forms included), and no part of the file is read by the compile eval.
+
+These searches are the ones an agent makes with no `kinds` (every kind except raw columns, approved objects, limit 10). The report (`report.md` and the `by_kind` section of `report.json`) shows recall at 3 for four kinds: `metric` (the golden `answer` and `clarify` questions over this wider search, so a metric competes with the other kinds; the gated figure above searches `metric` and `glossary_term` only), `glossary_term`, `dimension`, and `entity`. **No gate**: the questions have so far been written by someone who had read the definitions, so they are of the tuned kind, and WP-14C builds the held-out split and the gates for these kinds on this file.
 
 **Latency** (NFR-2). The same run records the time of each search call. The 95th percentile must be under 500 ms on the dev stack with the default embedding model.
 
