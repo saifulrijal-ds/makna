@@ -23,7 +23,7 @@ from sqlglot import exp
 
 _NODE_NAMES = (
     # conditionals, casts, and the boolean connectors sqlglot models as functions
-    "Cast", "Case", "If", "Coalesce", "Nullif", "Greatest", "Least", "And", "Or", "Xor", "Not",
+    "Cast", "Case", "If", "Coalesce", "Nullif", "And", "Or", "Xor", "Not",
     # arithmetic and rounding
     "Abs", "Round", "Floor", "Ceil", "Sign", "Sqrt", "Pow", "Mod",
     # text
@@ -100,6 +100,8 @@ def node_problem(node: exp.Expr) -> str | None:
       `TS_OR_DS_ADD` with no unit (PostgreSQL adds a second, DuckDB a day), and `DATEDIFF`
       (PostgreSQL divides a number of seconds, DuckDB counts day boundaries). Write
       `d + INTERVAL '1 day'` and `d1 - d2`;
+    - `GREATEST` and `LEAST`: PostgreSQL skips NULL arguments and DuckDB returns NULL, so they
+      give different numbers (write a `CASE` expression);
     - subscripting a value (`segment['email']`, `x[1]`): on a JSON or hstore column it takes a key,
       as `->` does, which is refused too;
     - field selection on a value (`(segment).email`): the name after the dot is not a column of
@@ -109,6 +111,11 @@ def node_problem(node: exp.Expr) -> str | None:
     """
     if isinstance(node, exp.Command):
         return "raw text that is not an expression"
+    if isinstance(node, (exp.Greatest, exp.Least)):
+        return (
+            f"the function {function_name(node)}, which PostgreSQL ignores NULL in and DuckDB "
+            "does not (write a CASE expression)"
+        )
     if isinstance(node, exp.Bracket):
         return "subscripting a value"
     if isinstance(node, (exp.DateDiff, exp.TsOrDsDiff)):

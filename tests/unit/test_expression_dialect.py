@@ -196,6 +196,8 @@ DATE_REFUSED = [
     "DAYOFYEAR(order_date)",
     "QUARTER(order_date)",
     "WEEK(order_date)",
+    "GREATEST(total_amount, 0)",
+    "LEAST(total_amount, 0)",
 ]
 DATE_ACCEPTED = [
     "DATE_ADD(order_date, 1, 'day')",

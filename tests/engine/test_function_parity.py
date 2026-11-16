@@ -44,9 +44,6 @@ CASES: dict[str, str | None] = {
     "IF(1 > 2, 'a', 'b')": None,
     "COALESCE(NULL, 3)": None,
     "NULLIF(3, 3)": None,
-    "GREATEST(1, 5, 3)": None,
-    "LEAST(4, 2, 3)": None,
-    "GREATEST(1, NULL)": "PostgreSQL ignores NULL, DuckDB returns NULL",
     "TRUE AND FALSE": None,
     "TRUE OR FALSE": None,
     "NOT TRUE": None,
@@ -114,6 +111,10 @@ REFUSED = [
     f"DAYOFWEEK({D})",
     f"DAYOFMONTH({D})",
     f"DAYOFYEAR({D})",
+    "GREATEST(1, NULL)",  # PostgreSQL ignores NULL, DuckDB returns NULL
+    "GREATEST(1, 5, 3)",
+    "LEAST(4, NULL)",
+    "LEAST(4, 2, 3)",
     f"DATE_PART('year', {D})",  # the two parses print it differently
     f"QUARTER({D})",  # PostgreSQL has no quarter(date)
     f"WEEK({D})",  # PostgreSQL has no week(date)
@@ -190,3 +191,12 @@ def test_every_function_on_the_allow_list_has_a_case() -> None:
 def test_what_the_engines_read_differently_is_refused(sql: str) -> None:
     tree = sqlglot.parse_one(sql, into=exp.Condition)
     assert first_disallowed_function(tree) is not None or _dialect_problem(sql) is not None, sql
+
+
+@pytest.mark.parametrize("sql", ["GREATEST(1, NULL)", "LEAST(4, NULL)"])
+def test_greatest_and_least_are_refused_with_a_case_expression_as_the_alternative(
+    sql: str,
+) -> None:
+    tree = sqlglot.parse_one(sql, into=exp.Condition)
+    problem = first_disallowed_function(tree)
+    assert problem is not None and "CASE" in problem, problem
