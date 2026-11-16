@@ -74,7 +74,7 @@ For the development stack only. When `MAKNA_DEMO_PASSWORD` is set (at least 12 c
 | `approver@demo.example` | approver | `data-governance` |
 | `admin@demo.example` | admin | none |
 
-There is no default password in any committed file: choose one when you start the stack, for example `export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)`. Without it, `init` still succeeds and creates no demo user. A later run with another password does not change existing users; to change one, use `docker compose down -v` or the `makna user` commands. Create real users and API tokens with `makna user create` and `makna token create` (they need `MAKNA_DATABASE_URL`).
+There is no default password in any committed file: choose one when you start the stack, for example `export MAKNA_DEMO_PASSWORD=$(openssl rand -hex 16)`. Without it, `init` still succeeds and creates no demo user. A later run with another password does not change existing users; to change one, use `docker compose down -v` or the `makna user` commands. Sign in at `http://localhost:8000/login` with one of them (the stack sets `MAKNA_WEB_DEVELOPMENT=true`, because the session cookie is `Secure` otherwise and a browser does not send it back over plain http). Create real users and API tokens with `makna user create` and `makna token create` (they need `MAKNA_DATABASE_URL`).
 
 ## The embedding model and the offline check
 
