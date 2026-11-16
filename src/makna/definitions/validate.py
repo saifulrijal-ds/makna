@@ -46,6 +46,7 @@ from makna.model.definitions import (
 )
 from makna.model.expressions import ExpressionError, columns_read, dimension_columns
 from makna.model.functions import first_disallowed_function
+from makna.model.metrics import direct_inputs
 
 ExtraCheck = Callable[[DefinitionSet], list[Issue]]
 
@@ -209,14 +210,6 @@ def _is_personal(entity: Entity, dimension: Dimension) -> bool:
 
 def _dimension(entity: Entity, name: str) -> Dimension | None:
     return next((d for d in entity.dimensions if d.name == name), None)
-
-
-def _metric_inputs(metric: Metric) -> list[str]:
-    if metric.type == "ratio":
-        return [n for n in (metric.numerator, metric.denominator) if n is not None]
-    if metric.type == "derived":
-        return list(metric.inputs or [])
-    return []
 
 
 # --------------------------------------------------------------------------------------
@@ -520,7 +513,7 @@ class _Checker:
 
     def on_cycle(self, m: Metric) -> bool:
         seen: set[str] = set()
-        todo = _metric_inputs(m)
+        todo = list(direct_inputs(m))
         while todo:
             name = todo.pop()
             if name == m.name:
@@ -530,7 +523,7 @@ class _Checker:
             seen.add(name)
             other = self.view.metric(name)
             if other is not None:
-                todo.extend(_metric_inputs(other))
+                todo.extend(direct_inputs(other))
         return False
 
     def derived_expression(self, m: Metric) -> None:
@@ -656,7 +649,7 @@ class _Checker:
                 entities[target] = None
                 for step in chain:
                     entities[step.partition(".")[0]] = None
-        for name in _metric_inputs(m):
+        for name in direct_inputs(m):
             metrics[name] = None
         for kind, names in (("entity", entities), ("metric", metrics)):
             for name in names:
@@ -691,7 +684,7 @@ class _Checker:
             assert m.measure is not None
             resolved = self.view.resolve_measure(m.measure)
             return resolved is not None and resolved[1].semi_additive == "last"
-        for name in _metric_inputs(m):
+        for name in direct_inputs(m):
             other = self.view.metric(name)
             if other is not None and self.has_balance(other, seen):
                 return True
