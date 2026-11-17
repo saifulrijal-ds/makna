@@ -8,3 +8,6 @@ __pycache__/
 node_modules/
 data/generated/
 evals/reports/
+
+# Code graph built by graphify (D-36); rebuilt locally, never committed.
+graphify-out/

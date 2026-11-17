@@ -1,0 +1,11 @@
+# Files left out of the code graph (D-36; docs/notes/the-code-graph-misses-runtime-wiring.md).
+# The graph also skips everything in .gitignore.
+
+# Third-party scripts and styles, copied in as they are (VENDORED.md).
+src/makna/web/static/vendor/
+
+# Golden files: expected outputs, not code. Read them directly.
+evals/golden/reference_sql/
+evals/golden/expected/
+tests/unit/golden/*.json
+*.csv
