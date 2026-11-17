@@ -10,7 +10,7 @@ from evals.scores import RetrievalRecord, latency_summary, score_all
 
 
 def retrieval_section(
-    *, recall_ok: bool = True, latency: list[float] | None = None
+    *, recall_ok: bool = True, latency: list[float] | None = None, heldout_recall: float = 0.8
 ) -> dict[str, Any]:
     """A `retrieval` section with 10 `answer` questions: English and Indonesian, all found
     (or, with `recall_ok=False`, the Indonesian ones missed)."""
@@ -30,7 +30,43 @@ def retrieval_section(
                 confidence="high",
             )
         )
+    held = []
+    for i in range(10):
+        found = i < round(heldout_recall * 10)
+        ranked = ["m"] if found else ["x", "y", "z", "w", "m"]
+        held.append(
+            RetrievalRecord(
+                f"H{i + 1:02d}",
+                "en" if i % 2 else "id",
+                "answer",
+                None,
+                expected_metrics=("m",),
+                rankings={"fused": ranked, "keyword": ranked, "vector": ranked},
+                confidence="medium",
+            )
+        )
     return {
+        "heldout": {
+            "n_questions": 10,
+            "provenance": "Written by a fresh agent that never read the repository (D-34).",
+            "scores": score_all(held),
+            "confidence": {
+                "n": 10,
+                "bands": {"high": 0, "medium": 10, "low": 0},
+                "low_found_at_3": 0,
+                "found_at_3_by_band": {"high": 0, "medium": 8, "low": 0},
+                "by_language": {
+                    language: {
+                        "n": 5,
+                        "bands": {"high": 0, "medium": 5, "low": 0},
+                        "low_found_at_3": 0,
+                        "found_at_3_by_band": {"high": 0, "medium": 4, "low": 0},
+                    }
+                    for language in ("en", "id")
+                },
+            },
+            "questions": [],
+        },
         "n_questions": 10,
         "kinds": ["metric", "glossary_term"],
         "limit": 10,

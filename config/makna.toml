@@ -8,13 +8,15 @@ dialect = "postgres"
 embedding_provider = "fastembed"
 
 # Search fusion (ARCHITECTURE 8.2): score = (w_keyword / (60 + keyword rank) +
-# w_vector / (60 + vector rank)) * status weight * kind weight. Tuned on the golden set with the
-# default embedding model in WP-15 (see "Tuning (WP-15)" in docs/EVALS.md): the keyword list is
-# the stronger one, so the vector list weighs 1/16 of it. It still ranks what has no keyword hit
-# and breaks ties between close keyword ranks.
+# w_vector / (60 + vector rank)) * status weight * kind weight. Only the ratio of the two weights
+# matters. Chosen again in WP-14C by `python -m evals tune` on the tuned split only (the golden and
+# search questions; the held-out questions are never read by the tuning), with the default
+# embedding model, by the rule in evals/tune.py and docs/EVALS.md section 7: the keyword list is
+# still the stronger one, so the vector list weighs 1/8 of it (WP-15 had 1/16). It ranks what has
+# no keyword hit and breaks ties between close keyword ranks.
 [search]
-w_keyword = 4.0
-w_vector = 0.25
+w_keyword = 1.0
+w_vector = 0.125
 candidates = 30
 
 # Status and kind weights are tie-breakers, not tiers (review finding C-3, WP-15D). Fused scores
@@ -47,7 +49,7 @@ column = 0.92
 # "Tuning (WP-15)").
 [search.confidence]
 high = 0.6
-low = 0.3
+low = 0.2
 
 [embedding.fastembed]
 model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

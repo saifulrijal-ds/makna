@@ -145,8 +145,9 @@ def test_the_committed_config_names_the_defaults() -> None:
     assert runtime.embedding_provider == "fastembed"
     assert runtime.embedding.fastembed.model.endswith("paraphrase-multilingual-MiniLM-L12-v2")
     assert runtime.embedding.fastembed.allow_download is False
-    # The weights tuned in WP-15 (docs/EVALS.md, "Tuning (WP-15)").
-    assert (runtime.search.w_keyword, runtime.search.w_vector) == (4.0, 0.25)
+    # The weights tuned in WP-14C (docs/EVALS.md section 7).
+    assert (runtime.search.w_keyword, runtime.search.w_vector) == (1.0, 0.125)
+    assert runtime.search.confidence.low == 0.2  # chosen with the weights in WP-14C
     assert runtime.search.candidates == 30
     # Weights break ties, they do not decide (WP-15D, review finding C-3): all within 0.9 to 1.0,
     # and a deprecated hit weighs what an approved one does.

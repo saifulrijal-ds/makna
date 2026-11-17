@@ -11,7 +11,8 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine
 
-from evals import cli, gates, retrieval
+from evals import cli, gates, heldout_eval, retrieval, tune
+from evals.golden.heldout import load_heldout_questions
 from evals.golden.reference import QUESTIONS_FILE
 from evals.golden.schema import load_questions
 from evals.scores import LANGUAGES, SYSTEMS
@@ -205,6 +206,56 @@ def test_the_retrieval_eval_runs_and_reports_every_score(world: tuple[Engine, An
     )
 
 
+def test_the_held_out_split_is_scored_like_the_tuned_one(world: tuple[Engine, Any]) -> None:
+    engine, _ = world
+    searchers = retrieval.make_searchers(engine, HashProvider(), SearchSettings())
+    heldout = load_heldout_questions()
+    section = heldout_eval.run_heldout(engine, searchers, heldout)
+    assert section["n_questions"] == len(heldout.questions) == len(section["questions"])
+    for system in SYSTEMS:
+        for name in ("recall_at_3", "recall_at_1", "mrr"):
+            assert section["scores"][system][name] is not None
+            for language in ("en", "id"):
+                assert section["scores"][system]["by_language"][language][name] is not None
+    confidence = section["confidence"]
+    assert sum(confidence["bands"].values()) == confidence["n"] == section["n_questions"]
+    assert confidence["by_language"]["en"]["n"] == confidence["by_language"]["id"]["n"]
+    # The score of the fused search is the share of questions found in the first 3.
+    found = sum(1 for q in section["questions"] if q["found_at_3"]["fused"])
+    assert section["scores"]["fused"]["recall_at_3"] == found / section["n_questions"]
+
+
+def test_the_tuning_grid_runs_on_the_tuned_split_and_chooses_by_its_rule(
+    world: tuple[Engine, Any],
+) -> None:
+    engine, _ = world
+    questions, search_questions = tune.load_tuned_questions()
+    tuner = tune.Tuner(
+        engine,
+        tune.QueryCache(HashProvider()),
+        SearchSettings(),
+        questions[:20],
+        search_questions[:4],
+        # Thresholds that every setting meets, so that the rule's other steps are what is tested.
+        {
+            "recall_at_3_min": 0.0,
+            "mrr_min": 0.0,
+            "false_abstention_rate_max": 1.0,
+            "indonesian_recall_gap_max": 1.0,
+        },
+    )
+    result = tune.tune(tuner)
+    assert len(result["ratio_grid"]) == len(tune.RATIOS) + 2
+    chosen = result["chosen"]
+    assert chosen["w_keyword"] == 1.0 and chosen["w_vector"] in tune.RATIOS
+    assert chosen["glossary_term_weight"] in tune.GLOSSARY_WEIGHTS
+    assert chosen["low"] in tune.LOW_THRESHOLDS
+    # The best pooled score of the hybrid settings is within the tie margin of the chosen one.
+    hybrid = [e["pooled_mrr"] for e in result["ratio_grid"] if e["ratio"] not in (0.0, "inf")]
+    stage1 = next(e for e in result["ratio_grid"] if e["ratio"] == chosen["w_vector"])
+    assert stage1["pooled_mrr"] >= max(hybrid) - tune.TIE
+
+
 def database_url(engine: Engine) -> str:
     return engine.url.render_as_string(hide_password=False)
 
@@ -247,6 +298,7 @@ def test_the_retrieval_command_writes_both_reports_and_exits_by_the_gates(
         mrr_min=0.0,
         false_abstention_rate_max=1.0,
         indonesian_recall_gap_max=1.0,
+        heldout_recall_at_3_min=0.0,
         latency_p95_ms_below=100000,
     )
     out = tmp_path / "easy"
