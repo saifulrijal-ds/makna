@@ -29,6 +29,7 @@ Python is the primary language for everything, including the web app's server si
 - Write a general solution, not one that only passes the tests. If a test is wrong, say so instead of working around it. Do not delete or weaken tests to make them pass.
 - Reference requirement IDs (for example `SRC-1`) in commit messages and pull request descriptions.
 - Testing without Docker (decision D-15). Your session may have no Docker, so no dev stack. The target engine is PostgreSQL (decision D-22). Run the unit tier locally; compiler tests run the generated SQL on DuckDB. Run the integration and engine tiers only if a PostgreSQL (with pgvector for integration) is available. Treat PostgreSQL and dev-stack results as proven only when CI on GitHub Actions passes; a DuckDB pass is not proof that the SQL works on PostgreSQL. Details in `docs/PLAN.md` ("How to use this plan").
+- For structure questions (what calls what, what a change affects, where a name is defined) you may ask the code graph first, if `graphify-out/graph.json` exists (command under Commands). It is an aid, not a source of truth: it misses wiring made at run time, such as MCP tool tables and pytest fixtures (`docs/notes/the-code-graph-misses-runtime-wiring.md`), and it is stale after changes. Read the lines it points to, and confirm with search anything it says is missing.
 - After a meaningful step, update `docs/progress.json` and, if you learned something reusable, add or update a note in `docs/notes/`.
 
 ## Git
@@ -64,5 +65,7 @@ Setup and checks (uv, Python 3.12 or newer):
 - CLI: `uv run makna --help`
 - Sample data: `uv run python -m data.generator --out data/generated --seed 20261111 --scale 1.0` (git-ignored output; `--scale 0.05` for a quick set)
 - Settings: copy the names in `deploy/.env.example` into your environment; non-secret settings are in `config/makna.toml`.
+
+- Code graph (optional, D-36): `uv run --group graph graphify update .` builds a graph of the code in `graphify-out/` (git-ignored, about 12 seconds, local parsing only, no model calls). Then `uv run --group graph graphify query "<question>"`, `... path "<A>" "<B>"`, `... explain "<name>"` and `... affected "<name>"`. Rebuild it after a large change. Never run the passes that call a model (`label`, `extract`, `/graphify` on documents).
 
 `spikes/` and `docs/` are not linted or type-checked. To be added by later work packages: the agent eval, `python -m evals agent` (WP-22B).
