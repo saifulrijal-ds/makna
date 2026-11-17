@@ -65,7 +65,6 @@ Setup and checks (uv, Python 3.12 or newer):
 - CLI: `uv run makna --help`
 - Sample data: `uv run python -m data.generator --out data/generated --seed 20261111 --scale 1.0` (git-ignored output; `--scale 0.05` for a quick set)
 - Settings: copy the names in `deploy/.env.example` into your environment; non-secret settings are in `config/makna.toml`.
-
 - Code graph (optional, D-36): `uv run --group graph graphify update .` builds a graph of the code in `graphify-out/` (git-ignored, about 12 seconds, local parsing only, no model calls). Then `uv run --group graph graphify query "<question>"`, `... path "<A>" "<B>"`, `... explain "<name>"` and `... affected "<name>"`. Rebuild it after a large change. Never run the passes that call a model (`label`, `extract`, `/graphify` on documents).
 
 `spikes/` and `docs/` are not linted or type-checked. To be added by later work packages: the agent eval, `python -m evals agent` (WP-22B).
