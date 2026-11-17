@@ -7,6 +7,7 @@ Here it runs against a scratch index, so that a mistake in the script is found b
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from sqlalchemy.engine import URL
@@ -101,3 +102,22 @@ def test_the_index_check_keeps_the_available_dimensions_of_the_index(
             assert connection.execute(count).scalar_one() == before
     finally:
         engine.dispose()
+
+
+def test_the_index_check_refuses_definitions_that_fail_validation(
+    stand_in_index: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """M-3: `check_search` builds the index too, so it passes the gate of `index build`."""
+    import shutil
+
+    from tests.catalog_support import DEFINITIONS
+
+    broken = tmp_path / "definitions"
+    shutil.copytree(DEFINITIONS, broken)
+    path = broken / "lending" / "entities" / "contract.yaml"
+    path.write_text(
+        path.read_text().replace("disbursement_date IS NOT NULL", "disbursement_date ^ 2", 1)
+    )
+    monkeypatch.setattr(check_search, "DEFINITIONS", broken)
+    with pytest.raises(AssertionError, match="V05"):
+        check_search.check_index_builds_with_the_real_model()

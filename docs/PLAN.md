@@ -320,7 +320,7 @@ Source: `docs/reviews/core-complete.md`; findings C-1 to C-13 and open questions
   2. A definitions directory that fails `validate` makes `makna index build` and `init` exit non-zero and index nothing (integration tier).
   3. The sample definitions validate, the golden expected CSVs are unchanged, and the compile eval passes (the pull request states part B's new count).
   4. A metric whose measure has two rules compiles to SQL that applies both (unit tier on DuckDB; engine tier passes).
-  5. `collection_rate` accepts contract and installment dimensions; two relationships with different roles to one entity (for example booking and servicing branch) still refuse a ratio.
+  5. `collection_rate` accepts contract dimensions; installment dimensions stay refused, because the denominator is measured on `installment` itself and has no relationship to compare (a known limit, ARCHITECTURE 7.4); two relationships with different roles to one entity (for example booking and servicing branch) still refuse a ratio.
   6. A request that reaches a deprecated entity carries a warning with the reason and the replacement.
   7. The schema and `docs/ARCHITECTURE.md` sections 5.1, 5.2, 7.3, and 7.4 describe the new rules; the governance golden file is regenerated per D-32 (1) if compiler output changed.
 
@@ -385,7 +385,7 @@ Source: `docs/reviews/core-complete.md`; findings C-1 to C-13 and open questions
 ### WP-18 Definition store write path and lifecycle
 
 - **Read**: `docs/ARCHITECTURE.md` sections 5.2, 10, 11; DR-4, DR-6.
-- **Build**: `makna.definitions.repo.GitRepo`; the seven lifecycle actions as service functions; the advisory lock; `audit_event` intent rows and writes; external-change handling (`docs/ARCHITECTURE.md` section 10); `makna index sync`; seeding of the definitions repository in `init`.
+- **Build**: `makna.definitions.repo.GitRepo`; `index_object` runs only on a definition set that passed `validate_for_build`; the seven lifecycle actions as service functions; the advisory lock; `audit_event` intent rows and writes; external-change handling (`docs/ARCHITECTURE.md` section 10); `makna index sync`; seeding of the definitions repository in `init`.
 - **Acceptance** (integration tier, with a temporary git repository)
   1. Draft to approved: `create_proposal`, `submit`, `approve` (by a different user) for a new metric ends with `<name>.yaml` at status `approved` and version 1, no proposal file, three commits whose author is the acting user and whose message carries the reason and the four trailers, and three `audit_event` rows.
   2. **No redeploy**: in one running application, a `makna_search` call that did not find the new metric before approval finds it after, and `makna_compile_query` for it succeeds, with no restart between the calls.

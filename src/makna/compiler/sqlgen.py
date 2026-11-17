@@ -39,6 +39,7 @@ from makna.compiler.plan import (
 from makna.compiler.snapshot import Model
 from makna.model.definitions import Dimension, Entity, Scalar
 from makna.model.request import ErrorCode, QueryError
+from makna.model.values import is_date_only
 
 Dialect = Literal["postgres", "duckdb"]
 
@@ -164,17 +165,9 @@ def _literal(value: Scalar, dimension: Dimension) -> exp.Expr:
             raise _refused(ErrorCode.INVALID_FILTER, value, "is not a usable number.")
         return exp.Literal.number(value)
     if dimension.type == "time":
-        kind = "date" if _is_date(value) else "timestamp"
+        kind = "date" if is_date_only(value) else "timestamp"
         return exp.Cast(this=exp.Literal.string(value), to=exp.DataType.build(kind))
     return exp.Literal.string(value)
-
-
-def _is_date(text: str) -> bool:
-    try:
-        datetime.date.fromisoformat(text)
-    except ValueError:
-        return False
-    return len(text) == 10
 
 
 def _date(value: datetime.date) -> exp.Expr:
@@ -278,8 +271,8 @@ def _input_query(model: Model, plan: QueryPlan, item: InputPlan) -> exp.Select:
     where: list[exp.Expr] = []
     if item.measure.filter is not None:
         where.append(exp.paren(_bind(item.measure.filter, "t0")))
-    if item.measure_rule is not None:
-        where.append(exp.paren(_bind(item.measure_rule.expr, "t0")))
+    for measure_rule in item.measure_rules:
+        where.append(exp.paren(_bind(measure_rule.expr, "t0")))
     for definition_filter in item.definition_filters:
         where.append(_definition_condition(joins, definition_filter))
     for request_filter in plan.filters:

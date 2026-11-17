@@ -150,6 +150,36 @@ def test_a_ratio_metric_states_its_inputs_and_a_simple_one_its_entity_and_rules(
     ) in edges
 
 
+def test_a_measure_with_two_rules_states_one_uses_rule_edge_for_each() -> None:
+    edges = all_edges()
+    for rule in ("non_performing", "in_book"):
+        assert (
+            "metric:npf_outstanding_principal",
+            f"rule:contract_snapshot.{rule}",
+            "uses_rule",
+        ) in edges
+    # the metric no longer repeats in_book as a filter, and the edge is still there once
+    uses = [e for e in edges if e[0] == "metric:outstanding_principal" and e[2] == "uses_rule"]
+    assert uses == [("metric:outstanding_principal", "rule:contract_snapshot.in_book", "uses_rule")]
+
+
+def test_the_older_single_rule_key_states_its_uses_rule_edge_too() -> None:
+    objects = sample_objects()
+    lookup = indexer._Lookup(objects)
+    snapshot = lookup.entities["contract_snapshot"]
+    legacy = [
+        m.model_copy(update={"rules": None, "rule": "non_performing"})
+        if m.name == "npf_outstanding_principal"
+        else m
+        for m in snapshot.measures or []
+    ]
+    lookup.entities["contract_snapshot"] = snapshot.model_copy(update={"measures": legacy})
+    metric = next(o for o in objects if o.id == "metric:npf_outstanding_principal")
+    edges = indexer.object_edges(metric, lookup)
+    assert (metric.id, "rule:contract_snapshot.non_performing", "uses_rule") in edges
+    assert (metric.id, "rule:contract_snapshot.in_book", "uses_rule") not in edges
+
+
 def test_terms_explain_what_they_relate_to_and_a_deprecated_object_names_its_replacement() -> None:
     edges = all_edges()
     assert ("glossary_term:npf", "metric:npf_ratio", "explains") in edges

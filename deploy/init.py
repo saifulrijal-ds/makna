@@ -32,6 +32,7 @@ from makna.index.db import make_engine
 from makna.search.embedding import make_provider
 from makna.services import accounts
 from makna.services.derive import make_derive
+from makna.services.examples import validate_for_build
 
 
 class InitError(Exception):
@@ -131,9 +132,16 @@ def build_index_step(context: Context) -> str:
     nothing, so a second `init` prints `unchanged`.
     """
     loaded = load_definitions(context.definitions_dir)
-    if loaded.load_issues:
-        problems = "; ".join(i.format("") for i in loaded.load_issues[:3])
-        raise InitError(f"definition files cannot be read, so nothing was indexed: {problems}")
+    problems = validate_for_build(loaded)
+    if problems:
+        # The same check as `makna validate`, V19 included (C-1): nothing is indexed, and the
+        # stack's `init` fails, so a definition that validation rejects is never served.
+        shown = "; ".join(i.format("") for i in problems[:5])
+        more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
+        raise InitError(
+            f"the definitions have {len(problems)} problem(s) that `makna validate` reports, so "
+            f"nothing was indexed: {shown}{more}"
+        )
     objects = definition_objects(loaded)
     if not objects:
         raise InitError(

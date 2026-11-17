@@ -307,7 +307,7 @@ CATALOG_ONLY = {BIRTH: "personal"}
 
 
 def test_a_bucket_shaped_max_of_a_catalog_only_personal_column_fails_closed() -> None:
-    probe = measure("epoch_max", "max", BUCKET.format("EXTRACT(EPOCH FROM birth_date)"))
+    probe = measure("epoch_max", "max", BUCKET.format("EXTRACT(DOY FROM birth_date)"))
     model = edited(lending(), drop_dimensions=("birth_year",), measures=[probe],
                    metric="probe", measure="customer.epoch_max")  # fmt: skip
     assert "MAX" in compile_request(model, request("probe", **ASK)).sql  # untagged: allowed
@@ -328,7 +328,7 @@ def test_a_mask_shaped_dimension_on_a_catalog_only_personal_column_fails_closed(
     shaped = Dimension(
         name="epoch_band",
         type="numeric",
-        expr=BUCKET.format("EXTRACT(EPOCH FROM birth_date)"),
+        expr=BUCKET.format("EXTRACT(DOY FROM birth_date)"),
         sensitivity="internal",
         description="A bucket-shaped copy of the birth date.",
     )

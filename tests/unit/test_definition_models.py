@@ -93,6 +93,14 @@ def _set(path: list[str | int], value: Any) -> Mutation:
     return apply
 
 
+def _then(*steps: Mutation) -> Mutation:
+    def apply(doc: Doc) -> None:
+        for step in steps:
+            step(doc)
+
+    return apply
+
+
 def _drop(path: list[str | int]) -> Mutation:
     def apply(doc: Doc) -> None:
         target: Any = doc
@@ -158,7 +166,12 @@ REJECTED: list[tuple[str, str, Mutation]] = [
     ("measure-sum-without-expr", SNAPSHOT, _drop(["measures", 0, "expr"])),
     ("measure-without-time-dimension", SNAPSHOT, _drop(["measures", 0, "time_dimension"])),
     ("measure-bad-semi-additive", SNAPSHOT, _set(["measures", 0, "semi_additive"], "first")),
-    ("measure-rule-qualified", SNAPSHOT, _set(["measures", 1, "rule"], "contract_snapshot.non_performing")),
+    ("measure-rule-qualified", SNAPSHOT, _then(_drop(["measures", 1, "rules"]), _set(["measures", 1, "rule"], "contract_snapshot.non_performing"))),
+    ("measure-rule-and-rules", SNAPSHOT, _set(["measures", 1, "rule"], "non_performing")),
+    ("measure-rules-empty", SNAPSHOT, _set(["measures", 1, "rules"], [])),
+    ("measure-rules-repeat-a-rule", SNAPSHOT, _set(["measures", 1, "rules"], ["in_book", "in_book"])),
+    ("measure-rules-qualified", SNAPSHOT, _set(["measures", 1, "rules"], ["contract_snapshot.in_book"])),
+    ("measure-rules-not-a-list", SNAPSHOT, _set(["measures", 1, "rules"], "in_book")),
     ("measure-unknown-key", SNAPSHOT, _set(["measures", 0, "unit"], "IDR")),
     ("relationship-without-keys", ENTITY, _set(["relationships", 0, "keys"], [])),
     ("relationship-bad-type", ENTITY, _set(["relationships", 0, "type"], "many_to_many")),
@@ -237,6 +250,8 @@ ACCEPTED: list[tuple[str, str, Mutation]] = [
     ("bucket-masking-float-width", ENTITY, _set(["dimensions", 4, "masking"], {"method": "bucket", "width": 0.5})),
     ("redact-masking", ENTITY, _set(["dimensions", 4, "masking"], {"method": "redact"})),
     ("numeric-and-boolean-values", ENTITY, _set(["dimensions", 0, "values"], [{"value": 1}, {"value": False}, {"value": 2.5}])),
+    ("measure-with-two-rules", SNAPSHOT, _set(["measures", 0, "rules"], ["non_performing", "in_book"])),
+    ("measure-with-the-older-rule-key", SNAPSHOT, _then(_drop(["measures", 1, "rules"]), _set(["measures", 1, "rule"], "non_performing"))),
     ("one-to-one-relationship", ENTITY, _set(["relationships", 0, "type"], "one_to_one")),
 ]  # fmt: skip
 
@@ -273,3 +288,18 @@ def test_a_property_the_schema_allows_is_accepted_by_both(
         _fix_deprecated(doc)
     assert _schema_accepts(doc), "the schema rejected a document that should be accepted"
     assert _model_accepts(doc), "the models rejected a document the schema accepts"
+
+
+def test_a_measure_reads_the_older_rule_key_as_a_list_of_one() -> None:
+    from makna.model.definitions import Entity, parse_definition
+
+    snapshot = _example(SNAPSHOT)
+    npf = snapshot["measures"][1]
+    assert npf["rules"] == ["non_performing", "in_book"]
+    del npf["rules"]
+    npf["rule"] = "non_performing"
+    entity = parse_definition(snapshot)
+    assert isinstance(entity, Entity) and entity.measures is not None
+    assert entity.measures[1].rule_names == ("non_performing",)
+    assert entity.measures[0].rule_names == ("in_book",)
+    assert entity.measures[0].rules == ["in_book"]

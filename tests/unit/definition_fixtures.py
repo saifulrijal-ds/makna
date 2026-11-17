@@ -543,6 +543,10 @@ def v18_measure_rule_not_on_entity(files: Files) -> None:
     _named(_entity(files, "order")["measures"], "orders")["rule"] = "late_order"
 
 
+def v18_measure_rules_name_a_rule_not_on_entity(files: Files) -> None:
+    _named(_entity(files, "order")["measures"], "orders")["rules"] = ["big_order", "late_order"]
+
+
 def v18_metric_rule_entity_not_reachable(files: Files) -> None:
     # The measure is on customer, which reaches region but not order, where the rule lives.
     _metric_doc(files, "order_count")["measure"] = "customer.signups"
@@ -574,6 +578,102 @@ def v20_time_copy_of_a_masked_column(files: Files) -> None:
 def v20_categorical_copy_inside_a_function(files: Files) -> None:
     dims = _entity(files, "customer")["dimensions"]
     dims.append(_dim("shouted_email", "categorical", expr="UPPER(email)", sensitivity="internal"))
+
+
+# --- V21 ---
+
+
+def v21_relationship_joins_a_column_that_is_not_the_key(files: Files) -> None:
+    # Many customers share a segment, so every order would be counted once per customer of it.
+    _entity(files, "order")["relationships"][0]["keys"] = [
+        {"from": "customer_segment", "to": "segment"}
+    ]
+
+
+def v21_relationship_joins_part_of_a_composite_key(files: Files) -> None:
+    _entity(files, "region")["primary_key"] = ["region_id", "country"]
+
+
+def v21_relationship_joins_more_than_the_key(files: Files) -> None:
+    _entity(files, "order")["relationships"][0]["keys"].append(
+        {"from": "customer_segment", "to": "segment"}
+    )
+
+
+# --- V22 and V23 ---
+
+
+def _personal_text(files: Files, expr: str) -> None:
+    """A personal categorical dimension with a redact mask (no cast problem of its own, so only
+    its expression is judged)."""
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "probe", "categorical", expr=expr, sensitivity="personal", masking={"method": "redact"}
+        )
+    )
+
+
+def v22_personal_dimension_casts_to_a_number(files: Files) -> None:
+    # `CAST(x AS BIGINT)` of a text column fails on "NID-1", and PostgreSQL prints that value
+    _personal_text(files, "CAST(email AS TEXT) || CAST(CAST(email AS BIGINT) AS TEXT)")
+
+
+def v22_personal_dimension_casts_to_a_date(files: Files) -> None:
+    _personal_text(files, "CAST(CAST(birth_date AS DATE) AS TEXT)")
+
+
+def v22_personal_dimension_converts_to_a_date(files: Files) -> None:
+    _personal_text(files, "CAST(TS_OR_DS_TO_DATE(birth_date) AS TEXT)")
+
+
+def v22_personal_dimension_divides(files: Files) -> None:
+    # the PostgreSQL printer turns `/` into a cast to double precision
+    _personal_text(files, "CAST(email / 1 AS TEXT)")
+
+
+def v22_personal_dimension_adds_a_zero_interval(files: Files) -> None:
+    # the printer casts the argument to a timestamp
+    _personal_text(files, "CAST(TS_OR_DS_ADD(birth_date, 0, 'day') AS TEXT)")
+
+
+def v23_bucket_mask_over_trim(files: Files) -> None:
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "band",
+            "numeric",
+            expr="TRIM(email)",
+            sensitivity="personal",
+            masking={"method": "bucket", "width": 10},
+        )
+    )
+
+
+def v23_bucket_mask_over_coalesce(files: Files) -> None:
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "band",
+            "numeric",
+            expr="COALESCE(email, '0')",
+            sensitivity="personal",
+            masking={"method": "bucket", "width": 10},
+        )
+    )
+
+
+def v23_bucket_mask_over_a_text_cast(files: Files) -> None:
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "band",
+            "numeric",
+            expr="CAST(email AS TEXT)",
+            sensitivity="personal",
+            masking={"method": "bucket", "width": 10},
+        )
+    )
+
+
+def v23_truncate_date_mask_over_an_expression(files: Files) -> None:
+    _named(_entity(files, "customer")["dimensions"], "birth_year")["expr"] = "TRIM(birth_date)"
 
 
 # (rule, fixture name) -> mutation. Each must make the validator report exactly that code.
@@ -652,9 +752,28 @@ FIXTURES: dict[str, list[Mutation]] = {
     "V17": [v17_personal_dimension_lists_values],
     "V18": [
         v18_measure_rule_not_on_entity,
+        v18_measure_rules_name_a_rule_not_on_entity,
         v18_metric_rule_entity_not_reachable,
         v18_metric_rule_does_not_exist,
         v18_rule_reads_personal_column,
     ],
     "V20": [v20_time_copy_of_a_masked_column, v20_categorical_copy_inside_a_function],
+    "V21": [
+        v21_relationship_joins_a_column_that_is_not_the_key,
+        v21_relationship_joins_part_of_a_composite_key,
+        v21_relationship_joins_more_than_the_key,
+    ],
+    "V22": [
+        v22_personal_dimension_casts_to_a_number,
+        v22_personal_dimension_casts_to_a_date,
+        v22_personal_dimension_converts_to_a_date,
+        v22_personal_dimension_divides,
+        v22_personal_dimension_adds_a_zero_interval,
+    ],
+    "V23": [
+        v23_bucket_mask_over_trim,
+        v23_bucket_mask_over_coalesce,
+        v23_bucket_mask_over_a_text_cast,
+        v23_truncate_date_mask_over_an_expression,
+    ],
 }

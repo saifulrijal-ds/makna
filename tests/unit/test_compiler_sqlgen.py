@@ -415,8 +415,14 @@ def inline_rules(model: Model) -> Model:
     entities: list[Entity] = []
     for entity in model.entities.values():
         measures = [
-            m.model_copy(update={"rule": None, "filter": rule_expr(entity, m.rule, m.filter)})
-            if m.rule is not None
+            m.model_copy(
+                update={
+                    "rule": None,
+                    "rules": None,
+                    "filter": rule_expr(entity, m.rule_names, m.filter),
+                }
+            )
+            if m.rule_names
             else m
             for m in entity.measures or []
         ]
@@ -433,9 +439,11 @@ def inline_rules(model: Model) -> Model:
     return Model.build(entities, metrics)
 
 
-def rule_expr(entity: Entity, rule: str | None, existing: str | None) -> str:
-    found = next(r for r in entity.rules or [] if r.name == rule)
-    return found.expr if existing is None else f"({existing}) AND ({found.expr})"
+def rule_expr(entity: Entity, names: tuple[str, ...], existing: str | None) -> str:
+    """The measure filter that writes `existing` and every rule of `names` inline."""
+    parts = [] if existing is None else [existing]
+    parts.extend(next(r.expr for r in entity.rules or [] if r.name == name) for name in names)
+    return " AND ".join(f"({part})" for part in parts)
 
 
 RULE_REQUESTS: list[tuple[str, dict[str, Any]]] = [
@@ -454,11 +462,11 @@ def test_a_metric_using_a_rule_equals_a_copy_with_the_condition_written_inline(
     with_rules, inline = lending(), inline_rules(lending())
     original_plan = plan_request(with_rules, request(metric, **fields))
     inline_plan = plan_request(inline, request(metric, **fields))
-    uses_rule = [i.measure_rule for i in original_plan.inputs if i.measure_rule is not None] + [
+    uses_rule = [r for i in original_plan.inputs for r in i.measure_rules] + [
         f for i in original_plan.inputs for f in i.definition_filters if hasattr(f, "expr")
     ]
     assert uses_rule, "the metric under test no longer uses a rule"
-    assert not [i for i in inline_plan.inputs if i.measure_rule is not None]
+    assert not [i for i in inline_plan.inputs if i.measure_rules]
     got = run_tree(lending_db, build_tree(with_rules, original_plan))
     want = run_tree(lending_db, build_tree(inline, inline_plan))
     assert got and same_rows(got, want)
@@ -471,7 +479,7 @@ def test_the_sample_model_keeps_its_rules_after_the_inline_copy_is_made() -> Non
         m for m in lending().entities["contract_snapshot"].measures or []
         if m.name == "npf_outstanding_principal"
     )  # fmt: skip
-    assert measure.rule == "non_performing"
+    assert measure.rule_names == ("non_performing", "in_book")
 
 
 # --------------------------------------------------------------------------------------

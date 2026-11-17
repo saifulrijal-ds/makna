@@ -69,7 +69,7 @@ rules:
     description: >-
       A position that counts in the portfolio at its month end: every position except the write-off position
       (more than 210 days past due). A contract is written off at the month end of that position and has no later
-      position, but its write-off row is still a row of the table, so the portfolio metrics apply this rule and
+      position, but its write-off row is still a row of the table, so the portfolio measures apply this rule and
       leave it out. A missing days-past-due value counts as in the book.
     expr: COALESCE(days_past_due, 0) <= 210
     synonyms: {en: [in the portfolio, active book, not written off], id: [dalam portofolio, belum dihapus buku]}
@@ -77,35 +77,37 @@ measures:
   - name: outstanding_principal
     agg: sum
     expr: outstanding_principal
+    rules: [in_book]
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed at the snapshot date. Counts every row, including the write-off position; the portfolio metrics apply the rule in_book on top of it.
+    description: Principal still owed at the snapshot date, for the positions that count in the book. The rule in_book leaves out the write-off position.
   - name: npf_outstanding_principal
     agg: sum
     expr: outstanding_principal
-    rule: non_performing
+    rules: [non_performing, in_book]
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed on contracts more than 90 days past due at the snapshot date. Counts the write-off position too; the NPF metric applies the rule in_book on top of it.
+    description: Principal still owed on contracts more than 90 days past due at the snapshot date, for the positions that count in the book. The rule in_book leaves out the write-off position.
   - name: par30_outstanding_principal
     agg: sum
     expr: outstanding_principal
-    rule: past_due_30
+    rules: [past_due_30, in_book]
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed on contracts more than 30 days past due at the snapshot date. Counts the write-off position too; the PAR 30 metric applies the rule in_book on top of it.
+    description: Principal still owed on contracts more than 30 days past due at the snapshot date, for the positions that count in the book. The rule in_book leaves out the write-off position.
   - name: written_off_outstanding_principal
     agg: sum
     expr: outstanding_principal
-    rule: write_off_position
+    rules: [write_off_position]
     time_dimension: snapshot_date
     semi_additive: last
     description: Principal still owed at the month end when a contract is written off, because it is more than 210 days past due.
   - name: active_contracts
     agg: count
+    rules: [in_book]
     time_dimension: snapshot_date
     semi_additive: last
-    description: Number of position rows at the snapshot date, one per contract with principal still owed. Counts every row, including the write-off position; the portfolio metrics apply the rule in_book on top of it.
+    description: Number of position rows at the snapshot date that count in the book, one per contract with principal still owed. The rule in_book leaves out the write-off position.
 relationships:
   - name: contract
     to: contract

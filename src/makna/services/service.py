@@ -47,6 +47,7 @@ from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
 from makna.services.derive import personal_column_issue
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
+from makna.services.filter_types import check_filter_types
 from makna.services.redact import redact_value
 from makna.services.related import RELATIONS, list_related
 from makna.services.snapshot import Snapshot, SnapshotCache
@@ -483,6 +484,7 @@ def compile_on_snapshot(
                 "run `makna catalog sync` with an export that covers them.",
                 {"tables": missing},
             )
+        check_filter_types(model, plan, snapshot.column_types)
         return compile_plan(model, plan, dialect)
     except GovernanceError as error:
         raise _personal_column_error(error, model, request.metric) from None
@@ -558,8 +560,7 @@ def _plan_tables(model: Model, plan: QueryPlan) -> set[str]:
     names |= {g.entity for g in plan.guard}
     for item in plan.inputs:
         names.add(item.measure_entity)
-        if item.measure_rule is not None:
-            names.add(item.measure_rule.entity)
+        names |= {r.entity for r in item.measure_rules}
         names |= {f.entity for f in item.definition_filters}
         for entity_path in item.paths:
             names.add(entity_path.entity)

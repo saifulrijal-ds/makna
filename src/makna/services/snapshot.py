@@ -22,7 +22,7 @@ from types import MappingProxyType
 from sqlalchemy import Connection, Engine, func, select
 
 from makna.compiler.snapshot import Model, ReferenceIssue
-from makna.index.indexer import catalog_marker, catalog_sensitivity
+from makna.index.indexer import catalog_column_types, catalog_marker, catalog_sensitivity
 from makna.index.tables import (
     catalog_dataset,
     index_state,
@@ -60,6 +60,8 @@ class Snapshot:
     """D-30 as the snapshot's own moment saw it (a successful sync and a live dataset)."""
     tables: frozenset[str] = frozenset()
     """The live `engine_fqn` values, lower case: the tables the catalog covers."""
+    column_types: Mapping[tuple[str, str], str] = field(default_factory=dict)
+    """`(engine_fqn, column)` in lower case to the catalog's `data_type`, for the live tables."""
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,7 @@ def _build(connection: Connection, current: CurrentState) -> Snapshot:
         MappingProxyType({name: tuple(found) for name, found in by_metric.items()}),
         current.catalog_synced,
         current.tables,
+        MappingProxyType(catalog_column_types(connection)),
     )
 
 

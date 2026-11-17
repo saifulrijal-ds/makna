@@ -1,4 +1,4 @@
-"""WP-03 criterion 2: for each rule V01 to V18 and V20, a fixture that breaks only that rule."""
+"""WP-03 criterion 2: for each rule V01 to V18 and V20 to V23, a fixture that breaks only it."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ def test_the_base_repository_is_valid(tmp_path: Path) -> None:
     assert [i.format() for i in validate(load_definitions(root))] == []
 
 
-def test_every_rule_from_v01_to_v18_and_v20_has_a_fixture() -> None:
-    assert sorted(fx.FIXTURES) == [f"V{n:02d}" for n in (*range(1, 19), 20)]
+def test_every_rule_from_v01_to_v18_and_v20_to_v23_has_a_fixture() -> None:
+    assert sorted(fx.FIXTURES) == [f"V{n:02d}" for n in (*range(1, 19), 20, 21, 22, 23)]
 
 
 CASES = [
@@ -110,3 +110,11 @@ def test_v19_is_left_to_the_compiler_but_has_a_seam(tmp_path: Path) -> None:
 
     assert [i.code for i in validate(definitions)] == []
     assert [i.code for i in validate(definitions, extra_checks=[pretend_v19])] == ["V19"]
+
+
+def test_a_personal_dimension_may_cast_to_text(tmp_path: Path) -> None:
+    def mutate(files: Files) -> None:
+        dims = files["shop/entities/customer.yaml"]["dimensions"]
+        next(d for d in dims if d["name"] == "email")["expr"] = "CAST(email AS TEXT)"
+
+    assert _codes_of(mutate, tmp_path) == []

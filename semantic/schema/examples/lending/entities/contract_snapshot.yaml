@@ -63,16 +63,17 @@ measures:
   - name: outstanding_principal
     agg: sum
     expr: outstanding_principal
+    rules: [in_book]
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed at the snapshot date.
+    description: Principal still owed at the snapshot date, for the positions that count in the book.
   - name: npf_outstanding_principal
     agg: sum
     expr: outstanding_principal
-    rule: non_performing
+    rules: [non_performing, in_book]
     time_dimension: snapshot_date
     semi_additive: last
-    description: Principal still owed on contracts more than 90 days past due at the snapshot date.
+    description: Principal still owed on contracts more than 90 days past due at the snapshot date, for the positions that count in the book.
 relationships:
   - name: contract
     to: contract
