@@ -134,7 +134,7 @@ Questions to add early in the remaining set: "Berapa hapus buku tahun lalu?" (`n
 | Abstention recall | `no_metric` with reason `no_definition` | Share with confidence `low`. | reported; target 0.6 set after the first run |
 | False abstention rate | `answer` | Share with confidence `low`. | at most 0.05 |
 | By language | each score above, split by `language` | | Indonesian recall at 3 within 0.10 of English |
-| Held-out recall at 3 | the held-out `answer` questions (section 3.2) | Share of the 46 held-out questions with the right metric in the first 3. | at least 0.75 (proposed; the owner approves the threshold) |
+| Held-out recall at 3 | the held-out `answer` questions (section 3.2) | Share of the 46 held-out questions with the right metric in the first 3. | at least 0.75 (approved by the owner, D-35) |
 
 The report also shows recall at 3 and mean reciprocal rank for keyword only, vector only, and fused, so a weak leg is visible (see `docs/notes/search-scores-cannot-say-no-match.md`).
 
