@@ -140,7 +140,7 @@ def test_a_request_with_a_dimension_says_the_result_is_cut_at_the_limit_in_key_o
     response = compile_request(lending(), request("collection_rate", **COLLECTION_BY_REGION))
     [sentence] = limit_sentences(response.explanation)
     assert sentence == (
-        "The result is cut at 1000 rows: the rows are sorted in ascending order by region name, "
+        "The result is cut at 1000 rows: the rows are sorted ascending by region name, "
         "and "
         "only the first 1000 are returned, so a result of exactly 1000 rows may be incomplete."
     )
@@ -154,7 +154,7 @@ def test_a_grain_alone_gets_the_limit_sentence_naming_the_period() -> None:
         lending(), request("collection_rate", grain="month", **{"time_start": "2026-01-01"})
     )
     [sentence] = limit_sentences(response.explanation)
-    assert "sorted in ascending order by month, and only the first 1000" in sentence
+    assert "sorted ascending by month, and only the first 1000" in sentence
 
 
 def test_a_request_with_no_dimension_and_no_grain_gets_no_limit_sentence() -> None:
@@ -174,7 +174,7 @@ def test_the_limit_sentence_states_the_requested_limit_and_its_keys_in_request_o
     )
     [sentence] = limit_sentences(response.explanation)
     assert sentence.startswith("The result is cut at 50 rows")
-    assert "sorted in ascending order by month, region name and branch name" in sentence
+    assert "sorted ascending by month, region name and branch name" in sentence
     assert "exactly 50 rows may be incomplete" in sentence
     assert "LIMIT 50" in response.sql
 
