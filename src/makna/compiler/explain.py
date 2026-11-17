@@ -20,7 +20,7 @@ A balance metric adds a warning, and so does each deprecated entity the plan rea
 usable, D-32 ruling 4), and so does a personal dimension while the policy has a minimum
 group size: groups built from fewer than the minimum number of records are left out, and the
 result column that says how many is named. A relaxed policy adds one more warning that says the
-same as sentence 7. Nothing here changes what the SQL does.
+same as sentence 8. Nothing here changes what the SQL does.
 """
 
 from __future__ import annotations

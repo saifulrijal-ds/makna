@@ -2,7 +2,7 @@
 
 An open semantic layer platform: one governed place where people and AI agents find and use the meaning of data. Makna is Indonesian for "meaning".
 
-Status: design complete, build not started. Start with `docs/PROJECT_BRIEF.md`, then read `docs/ARCHITECTURE.md` (the design), `docs/DECISIONS.md` (why), and `docs/PLAN.md` (the work packages).
+Status: the core is built (definitions, catalog, hybrid search, compiler, MCP server, evals and the web shell); the definition write path and the rest of the web app are in progress. See `docs/PLAN.md` and `docs/progress.json`. Start with `docs/PROJECT_BRIEF.md`, then read `docs/ARCHITECTURE.md` (the design), `docs/DECISIONS.md` (why), and `docs/PLAN.md` (the work packages).
 
 ## Limits of the personal-data protection
 
