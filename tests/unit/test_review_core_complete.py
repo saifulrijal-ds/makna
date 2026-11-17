@@ -39,7 +39,6 @@ def _shop_with_revenue_expr(expr: str, tmp_path: Path) -> tuple[list[str], Model
     return codes, model
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 5: expressions are not read as PostgreSQL")
 def test_a_power_operator_is_refused_or_stays_a_power(tmp_path: Path) -> None:
     """In PostgreSQL `x ^ 2` is x squared. A definition that says so must either be refused by
     validation or compile to a power. Today it passes validation and compiles to `x # 2`, which
@@ -51,7 +50,6 @@ def test_a_power_operator_is_refused_or_stays_a_power(tmp_path: Path) -> None:
     assert "#" not in sql, sql
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 5: expressions are not read as PostgreSQL")
 def test_an_int8_cast_is_refused_or_stays_a_big_integer(tmp_path: Path) -> None:
     """`int8` is PostgreSQL's eight-byte integer. Today the cast is printed as `SMALLINT`, which
     overflows above 32,767 (and the engine's overflow error text quotes the value)."""
@@ -62,7 +60,6 @@ def test_an_int8_cast_is_refused_or_stays_a_big_integer(tmp_path: Path) -> None:
     assert "SMALLINT" not in sql, sql
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 6: a join to a non-key is not checked")
 def test_a_relationship_must_point_at_the_primary_key_of_its_target(tmp_path: Path) -> None:
     """ARCHITECTURE 7.3 says a join along a relationship can never multiply rows. That holds only
     if the target columns are the target's key. Here `order.customer` joins on `segment`, which
@@ -75,7 +72,6 @@ def test_a_relationship_must_point_at_the_primary_key_of_its_target(tmp_path: Pa
     assert issues, "a relationship whose target columns are not the target's primary key passed"
 
 
-@pytest.mark.xfail(strict=True, reason="review finding 9: Python's ISO parser accepts more")
 def test_a_time_filter_value_postgresql_cannot_read_is_an_invalid_filter() -> None:
     """A wrong request must fail with an actionable error, not produce SQL the engine rejects
     (ARCHITECTURE 8.4). `2026-W01-1` is an ISO week date: Python accepts it, PostgreSQL's

@@ -186,13 +186,25 @@ class Measure(_Model):
     time_dimension: Name
     semi_additive: Literal["last"] | None = None
     description: PartDescription
+    rules: Annotated[list[Name], Field(min_length=1), AfterValidator(_unique)] | None = None
     rule: Name | None = None
+    """The older spelling of a measure with one rule, read as `rules: [rule]`. Use `rules`."""
 
     @model_validator(mode="after")
     def _expr_unless_count(self) -> Self:
         if self.agg != "count" and self.expr is None:
             raise ValueError(f"expr is required unless agg is count (agg is {self.agg})")
+        if self.rule is not None and self.rules is not None:
+            raise ValueError("use rules, or the older rule with one name, not both")
         return self
+
+    @property
+    def rule_names(self) -> tuple[str, ...]:
+        """The rules of the entity that every row must satisfy, in the order written: `rules`, or
+        the one name of the older `rule`. Empty when the measure has none."""
+        if self.rules is not None:
+            return tuple(self.rules)
+        return (self.rule,) if self.rule is not None else ()
 
 
 class KeyPair(_Model):

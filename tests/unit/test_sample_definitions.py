@@ -535,7 +535,7 @@ def test_every_npf_and_par_measure_uses_a_rule() -> None:
     for entity in loaded().entities.values():
         for measure in entity.measures or []:
             if measure.name.startswith(("npf", "par")):
-                assert measure.rule == expected[measure.name], measure.name
+                assert measure.rule_names == (expected[measure.name], "in_book"), measure.name
                 seen.add(measure.name)
     assert seen == set(expected)
 
@@ -544,10 +544,14 @@ def test_the_restructured_metric_filters_on_the_contract_rule() -> None:
     metric = approved_metrics()["restructured_outstanding_principal"]
     assert metric.measure == "contract_snapshot.outstanding_principal"
     assert metric.filters is not None
-    assert [f for f in metric.filters] == [
-        RuleRef(rule="contract.restructured"),
-        RuleRef(rule="contract_snapshot.in_book"),
-    ]
+    assert [f for f in metric.filters] == [RuleRef(rule="contract.restructured")]
+    # the measure it is measured on applies in_book, so the metric does not repeat it
+    measure = next(
+        m
+        for m in loaded().entities["contract_snapshot"].measures or []
+        if m.name == "outstanding_principal"
+    )
+    assert measure.rule_names == ("in_book",)
     # the rule sits on contract, which the snapshot reaches through its one relationship
     snapshot = loaded().entities["contract_snapshot"]
     assert [(r.name, r.to) for r in snapshot.relationships or []] == [("contract", "contract")]
@@ -736,10 +740,10 @@ def test_the_documented_indonesian_synonyms_are_present() -> None:
 # --------------------------------------------------------------------------------------
 # What each simple metric's measure computes (SAMPLE_DOMAIN section 5, "Built from")
 
-# (metric, measure, agg, expr, row filter, rule). Each row restates the "Built from" cell of the
+# (metric, measure, agg, expr, row filter, rules). Each row restates the "Built from" cell of the
 # metric's row in SAMPLE_DOMAIN section 5. A filter on a legacy table uses its physical column
 # (for example `sts_putusan` is the dimension `decision_status`).
-MEASURE_TABLE: list[tuple[str, str, str, str | None, str | None, str | None]] = [
+MEASURE_TABLE: list[tuple[str, str, str, str | None, str | None, tuple[str, ...] | None]] = [
     # 1 count of `application` rows
     ("application_count", "application.submitted_applications", "count", None, None, None),
     # 2 count of `application` where `decision_status IN ('approved','rejected')`
@@ -780,36 +784,45 @@ MEASURE_TABLE: list[tuple[str, str, str, str | None, str | None, str | None]] = 
     ),
     # 8 count of `customer` rows
     ("new_customer_count", "customer.new_customers", "count", None, None, None),
-    # 9 sum of `outstanding_principal`
+    # 9 sum of `outstanding_principal` where the rule in_book holds (the measure applies it)
     (
         "outstanding_principal",
         "contract_snapshot.outstanding_principal",
         "sum",
         "outstanding_principal",
         None,
-        None,
+        ("in_book",),
     ),
-    # 10 count of `contract_snapshot` rows
-    ("active_contract_count", "contract_snapshot.active_contracts", "count", None, None, None),
+    # 10 count of `contract_snapshot` rows where the rule in_book holds
+    (
+        "active_contract_count",
+        "contract_snapshot.active_contracts",
+        "count",
+        None,
+        None,
+        ("in_book",),
+    ),
     # 11 sum of `outstanding_principal` where `days_past_due > 90` (rule non_performing, D-17)
+    #    and the rule in_book holds
     (
         "npf_outstanding_principal",
         "contract_snapshot.npf_outstanding_principal",
         "sum",
         "outstanding_principal",
         None,
-        "non_performing",
+        ("non_performing", "in_book"),
     ),
     # 13 sum of `outstanding_principal` where `days_past_due > 30` (rule past_due_30, D-17)
+    #    and the rule in_book holds
     (
         "par30_outstanding_principal",
         "contract_snapshot.par30_outstanding_principal",
         "sum",
         "outstanding_principal",
         None,
-        "past_due_30",
+        ("past_due_30", "in_book"),
     ),
-    # 15 `contract_snapshot.outstanding_principal` with the metric filter
+    # 15 `contract_snapshot.outstanding_principal` (which applies in_book) with the metric filter
     #    {rule: contract.restructured}
     (
         "restructured_outstanding_principal",
@@ -817,7 +830,7 @@ MEASURE_TABLE: list[tuple[str, str, str, str | None, str | None, str | None]] = 
         "sum",
         "outstanding_principal",
         None,
-        None,
+        ("in_book",),
     ),
     # 17 sum of `installment_amount` where `is_current` (replaced rows excluded, Q4)
     ("due_amount", "installment.due_amount", "sum", "installment_amount", "is_current", None),
@@ -867,7 +880,7 @@ def test_the_table_covers_the_16_simple_metrics() -> None:
 
 
 @pytest.mark.parametrize(
-    ("metric_name", "measure_ref", "agg", "expr", "flt", "rule"), MEASURE_TABLE
+    ("metric_name", "measure_ref", "agg", "expr", "flt", "rules"), MEASURE_TABLE
 )
 def test_each_simple_metric_computes_what_its_row_says(
     metric_name: str,
@@ -875,7 +888,7 @@ def test_each_simple_metric_computes_what_its_row_says(
     agg: str,
     expr: str | None,
     flt: str | None,
-    rule: str | None,
+    rules: tuple[str, ...] | None,
 ) -> None:
     metric = approved_metrics()[metric_name]
     assert metric.measure == measure_ref
@@ -886,14 +899,11 @@ def test_each_simple_metric_computes_what_its_row_says(
     assert measure.agg == agg
     assert normalised(measure.expr) == normalised(expr)
     assert normalised(measure.filter) == normalised(flt)
-    assert measure.rule == rule
-    # metric-level filters are rule references: the portfolio metrics apply in_book (WP-04B,
-    # D-31), restructured_outstanding_principal also the contract rule; no other metric has one
-    in_book = RuleRef(rule="contract_snapshot.in_book")
+    assert measure.rule_names == (rules or ())
+    # The measures of the book apply in_book themselves (WP-15C, Q1), so no metric repeats it as
+    # a filter. restructured_outstanding_principal has the contract rule; no other metric has one.
     if metric_name == "restructured_outstanding_principal":
-        assert metric.filters == [RuleRef(rule="contract.restructured"), in_book]
-    elif metric_name in IN_BOOK_METRICS:
-        assert metric.filters == [in_book]
+        assert metric.filters == [RuleRef(rule="contract.restructured")]
     else:
         assert not metric.filters
 
@@ -955,7 +965,7 @@ def test_the_draft_write_off_metric_uses_the_write_off_rule() -> None:
         for m in loaded().entities["contract_snapshot"].measures or []
         if m.name == "written_off_outstanding_principal"
     )
-    assert measure.rule == "write_off_position"
+    assert measure.rule_names == ("write_off_position",)
     assert measure.semi_additive == "last"
 
 
@@ -985,7 +995,7 @@ def test_the_write_off_rule_selects_exactly_one_row_per_written_off_contract(
     assert scalar(con, write_off_rows) == scalar(con, written_off)
 
 
-def test_the_snapshot_metrics_apply_in_book_and_only_the_draft_sees_write_offs() -> None:
+def test_the_snapshot_measures_apply_in_book_and_only_the_draft_sees_write_offs() -> None:
     in_book = RuleRef(rule="contract_snapshot.in_book")
     on_snapshot = {
         name
@@ -994,7 +1004,11 @@ def test_the_snapshot_metrics_apply_in_book_and_only_the_draft_sees_write_offs()
     }
     assert on_snapshot == IN_BOOK_METRICS
     for name in on_snapshot:
-        assert in_book in (approved_metrics()[name].filters or []), name
+        metric = approved_metrics()[name]
+        found = loaded().entities["contract_snapshot"].measures or []
+        measure = next(m for m in found if f"contract_snapshot.{m.name}" == metric.measure)
+        assert "in_book" in measure.rule_names, name
+        assert in_book not in (metric.filters or []), name  # the measure says it; no repeat
     draft = loaded().draft_metrics["write_off_amount"]
     assert draft.measure == "contract_snapshot.written_off_outstanding_principal"
     assert in_book not in (draft.filters or [])

@@ -28,6 +28,7 @@ from makna.compiler.snapshot import Model
 from makna.compiler.sqlgen import reparse
 from makna.definitions.issues import Issue
 from makna.definitions.loader import DefinitionFile, DefinitionSet
+from makna.definitions.validate import validate
 from makna.model.definitions import Entity, Metric
 from makna.model.governance import STRICT
 from makna.model.request import ErrorCode, QueryError, QueryRequest
@@ -51,6 +52,14 @@ def model_from_definitions(definitions: DefinitionSet, own: Metric | None = None
     if own is not None:
         metrics.insert(0, own)
     return Model.build(entities, metrics)
+
+
+def validate_for_build(definitions: DefinitionSet) -> list[Issue]:
+    """Every definition error of `definitions`, V01 to V21 including V19: what `makna validate`
+    reports. `makna index build` and the stack's `init` run it and refuse to index when it finds
+    any (C-1): until the lifecycle of WP-18 exists, this is the only gate between a directory and
+    "approved" in the index, so the build must not serve what validation rejects."""
+    return validate(definitions, extra_checks=[check_example_requests])
 
 
 def check_example_requests(definitions: DefinitionSet) -> list[Issue]:

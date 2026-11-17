@@ -37,6 +37,7 @@ from makna.model.search import DEFAULT_EMBEDDING_MODEL, EmbeddingProvider
 from makna.search.embedding import make_provider
 from makna.search.hybrid import HybridSearch
 from makna.services.derive import make_derive
+from makna.services.examples import validate_for_build
 
 DEFINITIONS = "semantic/definitions"
 SEARCHES = 200
@@ -128,7 +129,8 @@ def check_real_model() -> None:
 
 def check_index_builds_with_the_real_model() -> None:
     loaded = load_definitions(DEFINITIONS)
-    assert not loaded.load_issues, loaded.load_issues
+    problems = validate_for_build(loaded)  # the build gate of `index build` and `init` (C-1)
+    assert not problems, [i.format() for i in problems]
     governance = load_governance_runtime()
     # The derive hook, as `init` and `makna index build` pass it: without it the build would
     # drop the available dimensions that the compile evals read from the index.

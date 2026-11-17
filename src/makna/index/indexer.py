@@ -486,8 +486,9 @@ def object_edges(obj: DefinitionObject, lookup: _Lookup) -> set[Edge]:
             entity_name = served.measure.partition(".")[0]
             edges.add((obj.id, f"entity:{entity_name}", "measured_on"))
             entity, measure = lookup.measure(served.measure)
-            if entity is not None and measure is not None and measure.rule:
-                edges.add((obj.id, f"rule:{entity.name}.{measure.rule}", "uses_rule"))
+            if entity is not None and measure is not None:
+                for rule_name in measure.rule_names:
+                    edges.add((obj.id, f"rule:{entity.name}.{rule_name}", "uses_rule"))
             for item in served.filters or []:
                 if isinstance(item, RuleRef):
                     edges.add((obj.id, f"rule:{item.rule}", "uses_rule"))
@@ -565,6 +566,22 @@ def catalog_sensitivity(connection: Connection) -> dict[tuple[str, str], str]:
         )
     )
     return {(fqn.lower(), name.lower()): level for fqn, name, level in rows}
+
+
+def catalog_column_types(connection: Connection) -> dict[tuple[str, str], str]:
+    """`{(engine_fqn, column): data_type}` in lower case, for the columns of live datasets: the
+    type the catalog gives a column (`string`, `integer`, `decimal`, `float`, `boolean`, `date`,
+    `timestamp`, or `other`). The service checks filter values against it (C-9)."""
+    rows = connection.execute(
+        select(
+            catalog_dataset.c.engine_fqn,
+            catalog_column.c.name,
+            catalog_column.c.data_type,
+        )
+        .select_from(catalog_column.join(catalog_dataset))
+        .where(catalog_dataset.c.removed_at.is_(None))
+    )
+    return {(fqn.lower(), name.lower()): data_type for fqn, name, data_type in rows}
 
 
 def catalog_marker(connection: Connection) -> str:
@@ -927,6 +944,10 @@ def index_object(
     others: Iterable[DefinitionObject] = (),
 ) -> IndexResult:
     """Refresh the rows of one object (for an entity also its dimensions and rules).
+
+    **Not gated.** It runs only on a definition set that passed `validate_for_build` (the checks
+    of `makna validate`, V19 included): `makna index build` and `init` run them before they index
+    anything (C-1), and a caller of this function must do the same.
 
     `others` are the other objects of the repository; they only supply labels for the formula
     line. No other object's rows are read or written, except that the edges `obj` states are

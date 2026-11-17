@@ -89,7 +89,7 @@ def test_the_sample_definitions_pass_v05() -> None:
         "SUBSTRING(a, 1, 3)",
         "LENGTH(a)",
         "CONCAT(a, b)",
-        "ROUND(a, 2) + FLOOR(b) + CEIL(c) + ABS(d)",
+        "FLOOR(a) + FLOOR(b) + CEIL(c) + ABS(d)",
         "DATE_TRUNC('month', d)",
         "EXTRACT(year FROM d)",
         "a IN (1, 2) AND b BETWEEN 1 AND 2 OR c IS NULL",
@@ -134,9 +134,9 @@ def test_the_list_holds_no_aggregate_and_no_window() -> None:
     "sql",
     [
         "CAST(a AS INTEGER)", "CAST(a AS BIGINT)", "CAST(a AS DECIMAL(10, 2))", "CAST(a AS REAL)",
-        "CAST(a AS DOUBLE PRECISION)", "CAST(a AS TEXT)", "CAST(a AS VARCHAR(20))",
-        "CAST(a AS CHAR(3))", "CAST(a AS DATE)", "CAST(a AS TIMESTAMP)",
-        "CAST(a AS TIMESTAMPTZ)", "CAST(a AS BOOLEAN)", "a::text",
+        "CAST(a AS DOUBLE PRECISION)", "CAST(a AS TEXT)", "CAST(a AS VARCHAR)",
+        "CAST(a AS DATE)", "CAST(a AS TIMESTAMP)",
+        "CAST(a AS BOOLEAN)", "a::text",
     ],
 )  # fmt: skip
 def test_casts_to_plain_types_are_allowed(sql: str) -> None:
@@ -151,6 +151,9 @@ def test_casts_to_plain_types_are_allowed(sql: str) -> None:
         "CAST(a AS JSON)",
         "CAST(a AS regclass)",
         "CAST(a AS xml)",
+        "CAST(a AS CHAR(3))",  # PostgreSQL pads and truncates, DuckDB does not
+        "CAST(a AS TINYINT)",  # printed as SMALLINT for PostgreSQL
+        "CAST(a AS TIMESTAMPTZ)",  # DuckDB rejects it
     ],
 )
 def test_casts_to_other_types_are_refused_and_name_the_type(sql: str) -> None:

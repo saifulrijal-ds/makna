@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import datetime
 import difflib
-import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -47,9 +46,10 @@ from makna.model.request import (
     RequestFilter,
     ResultColumn,
 )
+from makna.model.values import value_fits_dimension
 
 GRAINS: tuple[str, ...] = get_args(Grain)
-_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _ORDERING_OPS = (">", ">=", "<", "<=")
 
 
@@ -181,6 +181,17 @@ class PlannedRule:
 
 
 @dataclass(frozen=True)
+class DeprecatedEntity:
+    """A deprecated entity that a request reads, by a join or as the entity of a measure. It stays
+    usable (D-32 ruling 4); the response says so, with the reason and the replacement."""
+
+    entity: str
+    label: str
+    reason: str
+    replaced_by: str | None
+
+
+@dataclass(frozen=True)
 class EntityPath:
     entity: str
     steps: JoinPath
@@ -195,7 +206,8 @@ class InputPlan:
     measure_entity: str
     measure: Measure
     time_dimension: Dimension
-    measure_rule: PlannedRule | None
+    measure_rules: tuple[PlannedRule, ...]
+    """The rules of the measure, in the order the definition lists them; every one must hold."""
     definition_filters: tuple[PlannedFilter | PlannedRule, ...]
     paths: tuple[EntityPath, ...]
 
@@ -230,6 +242,8 @@ class QueryPlan:
     raw_columns: frozenset[tuple[str, str]] = frozenset()
     """The personal columns the policy lets the select list and GROUP BY return unmasked, for
     `governance.verify`. Empty under `strict`."""
+    deprecated_entities: tuple[DeprecatedEntity, ...] = ()
+    """The deprecated entities the request reads, by entity name. The compiler warns about them."""
 
     @property
     def min_group_size(self) -> int:
@@ -304,8 +318,9 @@ def available_dimensions(
 
     Simple metric: the dimensions of the measure's entity and of every entity it reaches by the
     path rule. Ratio or derived metric: of an entity every simple input reaches, and only when
-    all inputs enter it through the same final relationship. Entities that need a join choice the
-    metric does not make are left out and reported in `excluded` (and `warnings`).
+    all inputs enter it through a final relationship with the same name and target (its role).
+    Entities that need a join choice the metric does not make are left out and reported in
+    `excluded` (and `warnings`).
 
     The result depends on `governance` (D-29): a personal dimension without a masking rule is
     listed as not available unless the policy allows unmasked personal data. Under
@@ -319,6 +334,7 @@ def available_dimensions(
     excluded: list[ExcludedEntity] = []
     for entity in model.entities.values():
         paths: list[InputPath] = []
+        roles: set[tuple[str, str] | None] = set()
         failures: list[tuple[Metric, QueryError]] = []
         for leaf, start in leaves:
             try:
@@ -327,14 +343,25 @@ def available_dimensions(
                 failures.append((leaf, error))
                 continue
             paths.append(InputPath(leaf.name, tuple(path_names(path))))
+            roles.add(_role(path))
         if failures:
             excluded.append(_exclusion(entity.name, failures))
             continue
-        if len({p.steps[-1] if p.steps else None for p in paths}) > 1:
+        if len(roles) > 1:
             excluded.append(_inconsistent(entity.name, paths))
             continue
         options.extend(_options(model, entity, tuple(paths), governance))
     return AvailableDimensions(tuple(options), tuple(excluded))
+
+
+def _role(path: JoinPath) -> tuple[str, str] | None:
+    """How a path enters its last entity: the name of the last relationship and the entity it
+    points to, or None when the input is measured on that entity itself. A relationship's name
+    is its role (D-32 ruling 3): `payment.contract` and `installment.contract` are both the
+    contract of the row and agree, `contract.booking_branch` and `contract.servicing_branch` are
+    two meanings of "branch" and do not. The entity in front of the name is not compared, because
+    it says which table the row comes from, not what the link means."""
+    return (path[-1].relationship, path[-1].to) if path else None
 
 
 def _show(paths: Sequence[Sequence[str]]) -> str:
@@ -372,14 +399,16 @@ def _inconsistent(entity: str, paths: list[InputPath]) -> ExcludedEntity:
         )
     else:
         advice = (
-            f"a pin helps only if each input can reach {entity} by a chain that ends in the "
-            "same relationship; pin such a chain in every input if such a chain exists"
+            f"a pin helps only if each input can reach {entity} by a chain that ends in a "
+            "relationship with the same name; pin such a chain in every input if such a chain "
+            "exists"
         )
     return ExcludedEntity(
         entity,
         "inconsistent",
         f"{entity} dimensions are left out because the inputs enter {entity} through different "
-        f"relationships ({entries}), so the result would divide unlike numbers; {advice}",
+        f"relationships ({entries}; a relationship's name is its role, and these roles differ), "
+        f"so the result would divide unlike numbers; {advice}",
         tuple(p.steps for p in paths),
     )
 
@@ -490,7 +519,28 @@ def plan_request(
         guard=guard,
         personal_columns=personal,
         raw_columns=raw,
+        deprecated_entities=_deprecated_entities(model, touched),
     )
+
+
+def _deprecated_entities(model: Model, names: set[str]) -> tuple[DeprecatedEntity, ...]:
+    """The deprecated entities among `names`, sorted by name. A deprecated entity stays usable
+    (D-32 ruling 4, ARCHITECTURE 5.2): its dimensions are offered and a request that joins it
+    compiles, and the response warns, so that nobody builds on it without knowing."""
+    found: list[DeprecatedEntity] = []
+    for name in sorted(names):
+        entity = model.entities.get(name)
+        if entity is not None and entity.status == "deprecated":
+            why = entity.deprecation
+            found.append(
+                DeprecatedEntity(
+                    name,
+                    entity.label,
+                    why.reason if why is not None else "no reason was recorded",
+                    why.replaced_by if why is not None else None,
+                )
+            )
+    return tuple(found)
 
 
 def _personal_and_raw_columns(
@@ -807,13 +857,21 @@ def _planned_filter(
 def _invalid_filter(
     flt: RequestFilter, dimension: Dimension, problem: str, personal: bool = False
 ) -> QueryError:
+    return filter_refusal(flt.dimension, dimension, problem, personal)
+
+
+def filter_refusal(
+    ref: str, dimension: Dimension, problem: str, personal: bool = False
+) -> QueryError:
+    """`INVALID_FILTER` for the filter on dimension `ref`. The planner raises it, and so does the
+    service when the catalog type of the column says a value cannot match (C-9)."""
     # The allowed values of a personal dimension are never listed, whatever made it personal.
     allowed = [] if personal else [v.value for v in dimension.values or []]
     return QueryError(
         ErrorCode.INVALID_FILTER,
-        f"Filter on {flt.dimension}: {problem}.",
+        f"Filter on {ref}: {problem}.",
         {
-            "dimension": flt.dimension,
+            "dimension": ref,
             "expected_type": dimension.type,
             "allowed_operators": list(FILTER_OPS),
             "allowed_values": allowed,
@@ -849,7 +907,7 @@ def _checked_value(
         )
     allowed = [v.value for v in dimension.values or []]
     for item in values:
-        if not _type_fits(dimension.type, item):
+        if not value_fits_dimension(dimension.type, item):
             shown = "the value" if personal else f"value {item!r}"
             raise _invalid_filter(
                 flt, dimension, f"{shown} does not fit a {dimension.type} dimension", personal
@@ -862,24 +920,6 @@ def _checked_value(
                 flt, dimension, f"{shown} is not one of the dimension's values", personal
             )
     return values if isinstance(value, tuple) else value
-
-
-def _type_fits(dimension_type: str, value: object) -> bool:
-    if dimension_type == "boolean":
-        return isinstance(value, bool)
-    if isinstance(value, bool):
-        return False
-    if dimension_type == "numeric":
-        return isinstance(value, (int, float)) and math.isfinite(value)
-    if dimension_type == "time":
-        if not isinstance(value, str):
-            return False
-        try:
-            datetime.datetime.fromisoformat(value)
-        except ValueError:
-            return False
-        return True
-    return isinstance(value, (str, int, float))
 
 
 def _personal_date_entities(
@@ -983,9 +1023,9 @@ def _plan_input(
         raise _unresolved(
             leaf.name, f"time dimension {entity.name}.{measure.time_dimension} does not exist"
         )
-    measure_rule = None
-    if measure.rule is not None:
-        measure_rule = _planned_rule(model, leaf, f"{entity.name}.{measure.rule}")
+    measure_rules = tuple(
+        _planned_rule(model, leaf, f"{entity.name}.{name}") for name in measure.rule_names
+    )
 
     definition_filters: list[PlannedFilter | PlannedRule] = []
     for item in leaf.filters or []:
@@ -1008,7 +1048,7 @@ def _plan_input(
         measure_entity=entity.name,
         measure=measure,
         time_dimension=time_found,
-        measure_rule=measure_rule,
+        measure_rules=measure_rules,
         definition_filters=tuple(definition_filters),
         paths=tuple(EntityPath(name, path) for name, path in paths.items()),
     )

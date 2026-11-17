@@ -46,7 +46,8 @@ def metrics_using(rule: str) -> set[str]:
             return False
         measure_entity, _, measure_name = metric["measure"].partition(".")
         measure = next(m for m in entities[measure_entity]["measures"] if m["name"] == measure_name)
-        if measure_entity == entity and measure.get("rule") == name:
+        names = measure.get("rules") or ([measure["rule"]] if "rule" in measure else [])
+        if measure_entity == entity and name in names:
             return True
         return any(f.get("rule") == rule for f in metric.get("filters", []))
 

@@ -43,6 +43,14 @@ def _read(sql: str) -> tuple[str, ...]:
         # that the printer writes out as it is. Such a node reads no columns that we can see, and
         # PostgreSQL may read some: it is not an expression we can reason about.
         raise ExpressionError("is not an expression sqlglot can read (it is kept as raw text)")
+    if tree.find(exp.Bracket) is not None:
+        # `segment['email']` takes a key of a JSON or hstore column, as `->` does (refused too).
+        raise ExpressionError("subscripts a value, which cannot be checked")
+    if tree.find(exp.Dot) is not None:
+        # `(segment).email` selects a field of a composite value. The field name after the dot is
+        # not a column of the table, so no list of columns can say what it reads, and a field of
+        # a personal column would never be compared with the personal columns.
+        raise ExpressionError("selects a field of a value, which cannot be checked")
     return tuple(dict.fromkeys(c.name.lower() for c in tree.find_all(exp.Column)))
 
 
@@ -55,6 +63,18 @@ def columns_read(sql: str | None) -> tuple[str, ...]:
     if sql is None:
         return ()
     return _read(sql)
+
+
+def bare_column(sql: str | None) -> str | None:
+    """The lower-case name of the column when `sql` is exactly one column (`amount`, `t.amount`),
+    else None. An expression that does not parse is not a bare column."""
+    if sql is None:
+        return None
+    try:
+        tree = sqlglot.parse_one(sql, into=exp.Condition)
+    except SqlglotError:
+        return None
+    return tree.name.lower() if isinstance(tree, exp.Column) else None
 
 
 def dimension_columns(dimension: Dimension) -> tuple[str, ...]:

@@ -147,6 +147,37 @@ CASES: list[tuple[str, dict[str, Any], str, list[str]]] = [
            GROUP BY 1 ORDER BY 1""",
         ["contract_snapshot__dpd_bucket", "outstanding_principal"],
     ),
+    (
+        "6 ratio by a contract dimension: payments and installments both reach their contract",
+        {"metric": "collection_rate", "dimensions": ["contract.contract_status"]},
+        """WITH num AS (
+             SELECT c.contract_status s, sum(p.principal_paid + p.interest_paid) v
+             FROM core.payments p JOIN core.contracts c USING (contract_id)
+             WHERE NOT p.is_reversed GROUP BY 1),
+           den AS (
+             SELECT c.contract_status s, sum(i.installment_amount) v
+             FROM core.installment_schedules i JOIN core.contracts c USING (contract_id)
+             WHERE i.is_current GROUP BY 1)
+           SELECT coalesce(num.s, den.s), coalesce(num.v, 0), coalesce(den.v, 0), coalesce(num.v, 0) / nullif(den.v, 0)
+           FROM num FULL JOIN den ON num.s = den.s ORDER BY 1""",
+        ["contract__contract_status", "collected_amount", "due_amount", "collection_rate"],
+    ),
+    (
+        "7 a measure with two rules (non_performing, in_book) applies both, by branch region",
+        {
+            "metric": "npf_outstanding_principal",
+            "dimensions": ["branch.region_name"],
+            "time_start": "2026-06-01",
+            "time_end": "2026-07-01",
+        },
+        """SELECT b.region_name, sum(s.outstanding_principal)
+           FROM core.contract_monthly_snapshots s JOIN core.contracts c USING (contract_id)
+           JOIN core.branches b ON b.branch_id = c.servicing_branch_id
+           WHERE s.snapshot_date = DATE '2026-06-30' AND s.days_past_due > 90
+             AND NOT (c.contract_status = 'written_off' AND c.closed_date = s.snapshot_date)
+           GROUP BY 1 ORDER BY 1""",
+        ["branch__region_name", "npf_outstanding_principal"],
+    ),
 ]  # fmt: skip
 
 
@@ -203,3 +234,23 @@ def test_every_approved_metric_runs_at_its_default_grain_with_no_dimensions(
     names, rows = run_compiled(engine_connection, sql)
     assert rows, f"{metric.name} returned no row"
     assert names == expected_columns(metric) == list(planned)
+
+
+# --- C-9: what PostgreSQL rejects and the service now refuses before writing SQL ----------------
+
+
+def test_postgresql_rejects_a_number_against_a_text_dimension_which_the_service_refuses(
+    engine_connection: psycopg.Connection[Any],
+) -> None:
+    """The planner alone lets `customer.province = 5` through, because it knows no column types.
+    This is the SQL that `compile_query` no longer returns for it (INVALID_FILTER, from the
+    catalog's `data_type`)."""
+    sql, _ = compile_sql(
+        {
+            "metric": "new_customer_count",
+            "filters": [{"dimension": "customer.province", "op": "=", "value": 5}],
+        }
+    )
+    with pytest.raises(psycopg.Error) as caught:
+        run_compiled(engine_connection, sql)
+    assert caught.value.sqlstate == "42883"  # operator does not exist: character varying = integer

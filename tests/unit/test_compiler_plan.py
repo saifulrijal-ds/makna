@@ -421,10 +421,11 @@ def test_a_plan_holds_the_inputs_dimensions_columns_and_paths() -> None:
     npf = plan.inputs[0]
     assert npf.measure_entity == "contract_snapshot"
     assert npf.measure.name == "npf_outstanding_principal"
-    assert (
-        npf.measure_rule is not None and npf.measure_rule.ref == "contract_snapshot.non_performing"
-    )
-    assert npf.measure_rule.expr == "days_past_due > 90"
+    assert [r.ref for r in npf.measure_rules] == [
+        "contract_snapshot.non_performing",
+        "contract_snapshot.in_book",
+    ]
+    assert npf.measure_rules[0].expr == "days_past_due > 90"
     assert npf.time_dimension.name == "snapshot_date"
     assert {p.entity for p in npf.paths} == {"branch", "product", "customer"}
     assert [s.name for s in npf.join_steps] == [
@@ -481,28 +482,23 @@ def test_each_input_of_a_ratio_gets_its_own_path_to_the_same_entity() -> None:
 
 def test_a_measure_with_a_rule_plans_and_adds_no_join() -> None:
     plan = plan_request(lending(), request("npf_outstanding_principal"))
-    rule = plan.inputs[0].measure_rule
-    assert rule is not None
-    assert (rule.ref, rule.entity, rule.name) == (
-        "contract_snapshot.non_performing",
-        "contract_snapshot",
-        "non_performing",
-    )
-    assert plan.inputs[0].join_steps == ()
-    # the metric also applies the rule that leaves out the write-off row (WP-04B, D-31)
-    assert [getattr(r, "ref") for r in plan.inputs[0].definition_filters] == [  # noqa: B009
-        "contract_snapshot.in_book"
+    rules = plan.inputs[0].measure_rules
+    assert [(r.ref, r.entity, r.name) for r in rules] == [
+        ("contract_snapshot.non_performing", "contract_snapshot", "non_performing"),
+        # the measure also applies the rule that leaves out the write-off row (WP-04B, D-31)
+        ("contract_snapshot.in_book", "contract_snapshot", "in_book"),
     ]
+    assert plan.inputs[0].join_steps == ()
+    assert plan.inputs[0].definition_filters == ()
 
 
 def test_a_metric_filter_rule_on_a_joined_entity_plans_and_adds_the_join_to_contract() -> None:
     model = lending()
     plan = plan_request(model, request("restructured_outstanding_principal"))
     only = plan.inputs[0]
-    assert only.measure_rule is None
+    assert [r.ref for r in only.measure_rules] == ["contract_snapshot.in_book"]
     assert [getattr(r, "ref") for r in only.definition_filters] == [  # noqa: B009
         "contract.restructured",
-        "contract_snapshot.in_book",
     ]
     assert [(p.entity, [s.name for s in p.steps]) for p in only.paths] == [
         ("contract", ["contract_snapshot.contract"])
@@ -566,6 +562,10 @@ def test_model_snapshots_of_the_same_objects_are_equal() -> None:
 # Fix round 1
 
 
+def _all_excluded(model: Model, metric: str) -> Any:
+    return available_dimensions(model, model.metrics[metric]).excluded
+
+
 def _excluded(model: Model, metric: str, entity: str) -> Any:
     result = available_dimensions(model, model.metrics[metric])
     return next(e for e in result.excluded if e.entity == entity)
@@ -577,29 +577,49 @@ def test_an_input_that_reads_the_entity_itself_gets_no_advice_to_pin() -> None:
     assert "no pin can" in reason and "pin such" not in reason and "pin one" not in reason
 
 
-def test_inputs_entering_by_different_relationships_get_conditional_pin_advice() -> None:
-    reason = _excluded(lending(), "collection_rate", "contract").reason
-    assert "payment.contract" in reason and "installment.contract" in reason
-    assert "if such a chain exists" in reason
-
-
-def _align_contract(model: Model) -> Model:
+def _pin_collected_branch(model: Model, *chain: str) -> Model:
+    """The sample model with `collected_amount` pinned to reach `branch` by `chain`."""
     collected = model.metrics["collected_amount"]
     pinned = collected.model_copy(
-        update={
-            "join_paths": {
-                **(collected.join_paths or {}),
-                "contract": ["payment.installment", "installment.contract"],
-            }
-        }
+        update={"join_paths": {**(collected.join_paths or {}), "branch": list(chain)}}
     )
     metrics = [pinned if m.name == "collected_amount" else m for m in model.metrics.values()]
     return Model.build(model.entities.values(), metrics)
 
 
-def test_a_longer_pin_can_align_the_final_relationship() -> None:
-    assert "contract.contract_status" not in refs(lending(), "collection_rate")
-    assert "contract.contract_status" in refs(_align_contract(lending()), "collection_rate")
+def test_inputs_entering_by_different_relationships_get_conditional_pin_advice() -> None:
+    # due_amount pins the servicing branch; collected_amount now pins the booking branch.
+    model = _pin_collected_branch(lending(), "payment.contract", "contract.booking_branch")
+    reason = _excluded(model, "collection_rate", "branch").reason
+    assert "contract.booking_branch" in reason and "contract.servicing_branch" in reason
+    assert "if such a chain exists" in reason
+    assert "a relationship's name is its role" in reason
+
+
+def test_a_pin_to_the_same_role_makes_the_inputs_agree_again() -> None:
+    model = _pin_collected_branch(lending(), "payment.contract", "contract.booking_branch")
+    assert "branch.region_name" not in refs(model, "collection_rate")
+    aligned = _pin_collected_branch(lending(), "payment.contract", "contract.servicing_branch")
+    assert "branch.region_name" in refs(aligned, "collection_rate")
+
+
+def test_inputs_that_enter_by_the_same_relationship_name_agree_whatever_their_table() -> None:
+    """D-32 ruling 3. `payment.contract` and `installment.contract` are different relationships
+    of different tables, and both are "the contract of this row", so a ratio of them offers the
+    dimensions of contract. Before, the entity in front of the name made them differ."""
+    offered = refs(lending(), "collection_rate")
+    assert {"contract.contract_status", "contract.tenor_months"} <= set(offered)
+    assert not [e for e in _all_excluded(lending(), "collection_rate") if e.entity == "contract"]
+
+
+def test_two_relationships_with_different_roles_to_one_entity_still_refuse_a_ratio() -> None:
+    """Booking and servicing branch are two meanings of "branch"; the fixture with a billing and a
+    shipping link to one region is the same case."""
+    model = shop(_two_region_links)
+    ratio = available_dimensions(model, model.metrics["revenue_per_order"])
+    assert any(e.entity == "region" and e.kind == "inconsistent" for e in ratio.excluded)
+    lent = _pin_collected_branch(lending(), "payment.contract", "contract.booking_branch")
+    assert "branch.region_name" not in refs(lent, "collection_rate")
 
 
 def test_a_bad_pin_keeps_its_cause_in_the_exclusion() -> None:
