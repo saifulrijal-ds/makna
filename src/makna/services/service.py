@@ -41,6 +41,7 @@ from makna.search.confidence import LOW_GUIDANCE
 from makna.search.embedding import EmbeddingError
 from makna.search.hybrid import HybridSearch, SearchError
 from makna.services import accounts, objects, permissions
+from makna.services.accounts import AccountStore
 from makna.services.caller import Caller
 from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
@@ -81,9 +82,9 @@ SEARCH_UNAVAILABLE_MESSAGE = (
     "The search index is not ready. Ask an administrator to run `makna index build`."
 )
 KINDS_GUIDANCE = (
-    "No governed definition clearly matches among the kinds searched ({kinds}). Tell the user "
-    "that no approved definition was found for this; do not approximate it with a different "
-    "one."
+    "No definition clearly matches among the kinds searched ({kinds}); read the descriptions "
+    "of the hits before deciding. If none of them is what the user asked for, say so and do not "
+    "approximate it with a different one."
 )
 
 
@@ -119,6 +120,11 @@ class Services:
     def policy(self) -> GovernancePolicy:
         """The governance policy of the server configuration, read-only after construction."""
         return self._policy
+
+    @property
+    def accounts(self) -> AccountStore:
+        """Users and tokens on this database, for the web app (it holds no engine)."""
+        return AccountStore(self._engine)
 
     @property
     def snapshots(self) -> SnapshotCache:

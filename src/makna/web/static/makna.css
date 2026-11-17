@@ -1,0 +1,18 @@
+/* The project's own styles, on top of the vendored classless Pico stylesheet. */
+form.inline {
+  display: inline;
+  margin: 0;
+}
+
+form.inline button {
+  margin: 0;
+  width: auto;
+}
+
+nav button {
+  padding: 0.25rem 0.75rem;
+}
+
+code {
+  word-break: break-all;
+}

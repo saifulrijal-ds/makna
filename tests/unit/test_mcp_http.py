@@ -6,6 +6,7 @@ downstream app that reports what it received.
 
 from __future__ import annotations
 
+import secrets
 import threading
 from collections.abc import Callable, MutableMapping
 from typing import Any
@@ -242,7 +243,10 @@ def test_the_host_check_allows_localhost_and_the_configured_hosts_only() -> None
 
 # --- `[mcp]` of config/makna.toml ---
 
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna", "MAKNA_SECRET_KEY": "k"}
+ENV = {
+    "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
+}
 
 
 def test_the_mcp_settings_default_to_localhost_only(tmp_path: Any) -> None:

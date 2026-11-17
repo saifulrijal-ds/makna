@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlalchemy import Engine, text
 
-from evals.golden.schema import Question
+from evals.golden.schema import Question, SearchQuestion
 from evals.scores import (
     RECALL_K,
     SYSTEMS,
@@ -33,9 +33,11 @@ from evals.scores import (
     score_all,
 )
 from makna.model.search import EmbeddingProvider, SearchSettings
-from makna.search.hybrid import HybridSearch, SearchResult
+from makna.search.hybrid import DEFAULT_KINDS, HybridSearch, SearchResult
 
 KINDS = ["metric", "glossary_term"]
+KIND_ROWS = ("metric", "glossary_term", "dimension", "entity")
+"""The kinds of the per-kind recall (`by_kind` of the report), in report order."""
 LIMIT = 10
 ROLE = "viewer"
 """The search role of the service layer for a viewer or an agent token (EVALS section 1 says
@@ -69,6 +71,68 @@ def make_searchers(
 def search_hits(searcher: HybridSearch, query: str) -> SearchResult:
     """One search as the eval makes it. The query is stripped, as the service strips it."""
     return searcher.search(query.strip(), role=ROLE, kinds=list(KINDS), limit=LIMIT)
+
+
+def default_search_hits(searcher: HybridSearch, query: str) -> SearchResult:
+    """One search as an agent makes it with no `kinds`: every kind except raw columns."""
+    return searcher.search(query.strip(), role=ROLE, kinds=list(DEFAULT_KINDS), limit=LIMIT)
+
+
+def _kind_row(kind: str, source: str, found: Sequence[bool]) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "source": source,
+        "n_questions": len(found),
+        "recall_at_3": sum(found) / len(found) if found else None,
+    }
+
+
+def run_kind_recall(
+    engine: Engine,
+    searcher: HybridSearch,
+    questions: Sequence[Question],
+    search_questions: Sequence[SearchQuestion],
+) -> dict[str, Any]:
+    """Recall at 3 per kind of object, reported and not gated (WP-15D). Every search is the one an
+    agent makes with no `kinds` (every kind except columns), so a metric competes with the
+    dimensions and entities too.
+
+    - `metric`: the `answer` and `clarify` questions of the golden set, scored as the gate scores
+      them (distinct metrics, a glossary term counting as its related metrics), here over the
+      default search; the gated figure over kinds `metric` and `glossary_term` stays in `scores`.
+    - `glossary_term`, `dimension`, `entity`: the questions of `search_questions.yaml`; found when
+      one of the expected objects is among the first 3 hits.
+    """
+    metric_found: list[bool] = []
+    for question in questions:
+        if question.outcome not in ("answer", "clarify"):
+            continue
+        ids = default_search_hits(searcher, question.question).ids
+        ranked = distinct_metrics(ids, related_metrics(engine, ids))
+        metric_found.append(bool(recall_hit(_record(question, {"fused": ranked}, ""), ranked)))
+    rows = [_kind_row("metric", "golden questions, default search", metric_found)]
+    details: list[dict[str, Any]] = []
+    by_kind: dict[str, list[bool]] = {kind: [] for kind in KIND_ROWS}
+    for item in search_questions:
+        ids = default_search_hits(searcher, item.question).ids
+        found = bool(set(item.expected) & set(ids[:RECALL_K]))
+        by_kind[item.kind].append(found)
+        details.append(
+            {
+                "id": item.id,
+                "question": item.question,
+                "language": item.language,
+                "kind": item.kind,
+                "expected": list(item.expected),
+                "found_at_3": found,
+                "rank": next((i for i, x in enumerate(ids, 1) if x in item.expected), None),
+                "ranked_ids": ids[:5],
+            }
+        )
+    rows += [
+        _kind_row(kind, "search questions, default search", by_kind[kind]) for kind in KIND_ROWS[1:]
+    ]
+    return {"kinds": list(DEFAULT_KINDS), "limit": LIMIT, "rows": rows, "questions": details}
 
 
 def related_metrics(engine: Engine, object_ids: Sequence[str]) -> dict[str, list[str]]:
@@ -115,6 +179,7 @@ def run_retrieval(
     questions: Sequence[Question],
     *,
     rounds: int = LATENCY_ROUNDS,
+    search_questions: Sequence[SearchQuestion] = (),
 ) -> dict[str, Any]:
     """Search every question with the fused search and each leg alone; score; time the fused
     search. Returns the `retrieval` section of the report."""
@@ -148,6 +213,7 @@ def run_retrieval(
             details.append(_detail(question, record, results, elapsed))
     return {
         "n_questions": len(questions),
+        "by_kind": run_kind_recall(engine, searchers.fused, questions, search_questions),
         "kinds": KINDS,
         "limit": LIMIT,
         "role": ROLE,

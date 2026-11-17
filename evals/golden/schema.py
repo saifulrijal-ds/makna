@@ -35,11 +35,13 @@ Group = Literal[
     "no_metric",
     "refuse",
 ]
+SearchKind = Literal["dimension", "entity", "glossary_term"]
 Reason = Literal["no_definition", "dimension_not_available", "not_approved", "personal_data"]
 GROUPS: tuple[str, ...] = get_args(Group)
 """The eight rows of docs/EVALS.md table 2.4, in table order."""
 
 ID_PATTERN = r"^G\d{2,}$"
+SEARCH_ID_PATTERN = r"^S\d{2,}$"
 TAG_PATTERN = r"^[a-z][a-z0-9_]*$"
 COLUMN_PATTERN = r"^[a-z][a-z0-9_]*$"
 
@@ -50,6 +52,7 @@ ERROR_CODE_FOR_REASON = {
 """The planner error code a `no_metric` request must fail with (docs/EVALS.md section 4, part C)."""
 
 Column = Annotated[str, StringConstraints(pattern=COLUMN_PATTERN)]
+ObjectId = Annotated[str, StringConstraints(pattern=r"^[a-z_]+:\S+$")]
 
 
 class _Strict(BaseModel):
@@ -147,6 +150,48 @@ _FIELDS: dict[str, tuple[set[str], set[str]]] = {
     "no_metric": ({"reason"}, {"reason", "nearest", "request"}),
     "refuse": ({"reason"}, {"reason", "request"}),
 }
+
+
+class SearchQuestion(_Strict):
+    """A question whose right answer is a dimension, an entity, or a glossary term, measured by
+    search alone (`evals/golden/search_questions.yaml`, docs/EVALS.md section 3.1)."""
+
+    id: Annotated[str, StringConstraints(pattern=SEARCH_ID_PATTERN)]
+    question: Annotated[str, StringConstraints(min_length=5)]
+    language: Language
+    kind: SearchKind
+    expected: Annotated[list[ObjectId], Field(min_length=1)]
+    """Object ids of `kind`; any one of them in the first 3 hits is a find."""
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def _expected_are_of_the_kind(self) -> Self:
+        wrong = [o for o in self.expected if not o.startswith(f"{self.kind}:")]
+        if wrong:
+            raise ValueError(f"{self.id}: expected {wrong} is not of kind {self.kind}")
+        return self
+
+
+def load_search_questions(path: Path) -> list[SearchQuestion]:
+    """Read and validate the search questions file. Raises ValueError listing every problem."""
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}: the file must be a list of questions")
+    found: list[SearchQuestion] = []
+    problems: list[str] = []
+    for index, item in enumerate(raw, start=1):
+        try:
+            found.append(SearchQuestion.model_validate(item))
+        except ValidationError as error:
+            label = item.get("id", f"item {index}") if isinstance(item, dict) else f"item {index}"
+            for detail in error.errors():
+                where = ".".join(str(part) for part in detail["loc"])
+                problems.append(f"{label}: {where}: {detail['msg']}")
+    ids = [q.id for q in found]
+    problems += [f"{i}: id used twice" for i in sorted({i for i in ids if ids.count(i) > 1})]
+    if problems:
+        raise ValueError(f"{path}: " + "; ".join(problems))
+    return found
 
 
 def load_questions(path: Path) -> list[Question]:

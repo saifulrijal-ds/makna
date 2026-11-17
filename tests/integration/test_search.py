@@ -9,6 +9,7 @@ from sqlalchemy import Engine, text
 
 from makna.catalog.file import FileConnector
 from makna.catalog.sync import sync_catalog
+from makna.config import load_search_runtime
 from makna.definitions.loader import definition_objects, load_definitions
 from makna.index import indexer
 from makna.model.definitions import Metric, parse_definition
@@ -36,6 +37,31 @@ def test_a_deprecated_metric_is_hidden_unless_asked_for(indexed_engine: Engine) 
     assert "metric:npl_ratio" not in search.search(query, role="curator", limit=10).ids
     shown = search.search(query, role="agent", limit=10, include_deprecated=True)
     assert "metric:npl_ratio" in shown.ids
+
+
+def committed_searcher(engine: Engine) -> HybridSearch:
+    """The search with the weights of `config/makna.toml`, as the application runs it."""
+    return searcher(engine, load_search_runtime().search)
+
+
+def test_a_deprecated_metric_that_matches_best_ranks_first_when_asked_for(
+    indexed_engine: Engine,
+) -> None:
+    """C-3: a deprecated hit is shown only when the caller asks for it, and then it competes at
+    the weight of an approved hit; it used to fall out of the first ten."""
+    result = committed_searcher(indexed_engine).search(
+        "NPL ratio retired", role="viewer", limit=10, include_deprecated=True
+    )
+    assert result.ids[0] == "metric:npl_ratio", result.ids
+    assert result.hits[0].status == "deprecated"
+
+
+def test_a_search_for_region_returns_the_region_dimension_in_the_first_three(
+    indexed_engine: Engine,
+) -> None:
+    """C-3: the kind weight breaks ties; it no longer puts every metric above a dimension."""
+    result = committed_searcher(indexed_engine).search("region", role="viewer", limit=10)
+    assert "dimension:branch.region_name" in result.ids[:3], result.ids
 
 
 @pytest.mark.parametrize("role", ["agent", "viewer"])
@@ -200,7 +226,7 @@ def test_confidence_is_not_low_for_valid_questions(indexed_engine: Engine, query
 def test_confidence_is_low_when_nothing_matches(indexed_engine: Engine, query: str) -> None:
     confidence = searcher(indexed_engine).search(query, role="agent").confidence
     assert confidence.band == "low", confidence
-    assert confidence.guidance and "do not approximate" in confidence.guidance
+    assert confidence.guidance and "read the descriptions of the hits" in confidence.guidance
 
 
 def test_qualifier_words_are_left_out_of_coverage(indexed_engine: Engine) -> None:

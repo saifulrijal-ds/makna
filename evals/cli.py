@@ -26,8 +26,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from evals import compile_eval, gates, report, retrieval
 from evals.golden import freeze as freeze_module
-from evals.golden.reference import EXPECTED_DIR, QUESTIONS_FILE
-from evals.golden.schema import Question, load_questions
+from evals.golden.reference import EXPECTED_DIR, QUESTIONS_FILE, SEARCH_QUESTIONS_FILE
+from evals.golden.schema import Question, SearchQuestion, load_questions, load_search_questions
 from evals.runtime import (
     EvalSetupError,
     Runtime,
@@ -45,9 +45,15 @@ from makna.services.snapshot import SnapshotCache
 EXIT_PASS, EXIT_GATE, EXIT_SETUP = 0, 1, 2
 
 
-def run_retrieval_eval(runtime: Runtime, questions: Sequence[Question]) -> dict[str, Any]:
+def run_retrieval_eval(
+    runtime: Runtime,
+    questions: Sequence[Question],
+    search_questions: Sequence[SearchQuestion] = (),
+) -> dict[str, Any]:
     searchers = retrieval.make_searchers(runtime.engine, runtime.provider, runtime.search)
-    return retrieval.run_retrieval(runtime.engine, searchers, questions)
+    return retrieval.run_retrieval(
+        runtime.engine, searchers, questions, search_questions=search_questions
+    )
 
 
 def log_for(verbose: bool) -> Callable[[str], None]:
@@ -113,6 +119,7 @@ def evaluate_command(args: argparse.Namespace) -> int:
     try:
         thresholds = gates.load_gates(Path(args.gates) if args.gates else gates.GATES_FILE)
         questions = load_questions(QUESTIONS_FILE)
+        search_questions = load_search_questions(SEARCH_QUESTIONS_FILE)
     except (gates.GateError, ValueError) as error:
         print(f"makna-eval: {error}", file=sys.stderr)
         return EXIT_SETUP
@@ -122,7 +129,7 @@ def evaluate_command(args: argparse.Namespace) -> int:
         retrieval_section = compile_section = None
         if args.command in ("all", "retrieval"):
             print("makna-eval: retrieval ...", flush=True)
-            retrieval_section = run_retrieval_eval(runtime, questions)
+            retrieval_section = run_retrieval_eval(runtime, questions, search_questions)
         if args.command in ("all", "compile"):
             print("makna-eval: compile ...", flush=True)
             compile_section = run_compile_eval(runtime, questions, verbose=args.verbose)

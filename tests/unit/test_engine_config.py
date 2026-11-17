@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ import pytest
 from makna.config import ConfigError, load_engine_runtime, load_settings
 
 ROOT = Path(__file__).resolve().parents[2]
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@h/m", "MAKNA_SECRET_KEY": "k"}
+ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@h/m", "MAKNA_SECRET_KEY": secrets.token_hex(32)}
 
 
 def test_the_committed_config_sets_the_timeout() -> None:

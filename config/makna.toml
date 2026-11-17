@@ -17,20 +17,29 @@ w_keyword = 4.0
 w_vector = 0.25
 candidates = 30
 
+# Status and kind weights are tie-breakers, not tiers (review finding C-3, WP-15D). Fused scores
+# of neighbouring ranks differ by only 1 to 2 percent and ranks 1 and 30 of one list by a factor
+# of 0.68, so a weight below 0.68 puts the best match of a kind below every candidate of a heavier
+# kind, and one of 0.8 below about the first ten to fifteen: with the former 0.8 for dimensions, a search for "region" listed six metrics that
+# only mention a region before `dimension:branch.region_name`, which is first in both lists. Every
+# weight is therefore between 0.9 and 1.0 and moves a hit by at most a few ranks. Metrics keep
+# 1.0 because they are what most questions ask for; a glossary term, an entity, a dimension, and a
+# rule lose 4 percent, so that a metric that matches as well as one of them comes first; a domain
+# loses 6 percent and a raw catalog column 8 percent (columns are only searched when asked for).
 [search.status_weights]
 approved = 1.0
-deprecated = 0.5   # shown only when the caller asks for deprecated objects
-draft = 0.5
-in_review = 0.5
+deprecated = 1.0   # shown only when the caller asks for deprecated objects; the hit carries its status
+draft = 0.95       # shown only to curators, approvers, and admins
+in_review = 0.95
 
 [search.kind_weights]
 metric = 1.0
-glossary_term = 0.9
-entity = 0.8
-dimension = 0.8
-rule = 0.8
-domain = 0.7
-column = 0.6
+glossary_term = 0.96
+entity = 0.96
+dimension = 0.96
+rule = 0.96
+domain = 0.94
+column = 0.92
 
 # Confidence band (ARCHITECTURE 8.3). low_cosine stays unset: with the default model the top
 # cosine of the three golden questions that have no definition (0.43 to 0.51) lies inside that of
@@ -96,6 +105,13 @@ statement_timeout_seconds = 30
 # host:port. No scheme, path, or wildcard. Inside the development stack the name is "app".
 [mcp]
 # allowed_hosts = ["makna.example.org"]
+
+# The web pages (ARCHITECTURE section 13). development = true leaves the Secure flag off the session
+# cookie, because the development stack is served over plain http:// and a browser does not send a
+# Secure cookie back over it. Never set it for a deployment behind https. MAKNA_WEB_DEVELOPMENT
+# (true or false) overrides it.
+[web]
+development = false
 
 [sensitivity.tag_map]
 "PII.Sensitive" = "personal"

@@ -232,17 +232,33 @@ def test_the_endpoint_answers_at_mcp_without_a_redirect_and_healthz_stays_open(
                     assert response.status_code == 200, path  # not 307
                     assert parse(response)["result"]["serverInfo"]["name"] == "makna"
                 # Nothing else of the SDK is mounted: no metadata, no registration endpoint.
-                for path in (
-                    "/mcp/mcp",
-                    "/.well-known/oauth-protected-resource",
-                    "/.well-known/oauth-authorization-server",
-                    "/register",
-                    "/authorize",
-                    "/token",
-                ):
-                    assert (await http.get(path, headers=headers)).status_code == 404, path
+                assert (await http.get("/mcp/mcp", headers=headers)).status_code == 404
 
     anyio.run(go)
+
+
+def test_no_sdk_endpoint_is_served_for_a_signed_in_user(
+    service_world: tuple[Engine, Users],
+) -> None:
+    """Since WP-16 a signed-out request to a path that does not exist is a 303 to the sign-in
+    page, which could hide an endpoint. A signed-in user sees the truth: 404 for each."""
+    from . import web_support as w
+
+    engine, _ = service_world
+    app = m.make_app(engine)
+    try:
+        client = w.signed_in(app, w.make_user(engine))
+        for path in (
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-authorization-server",
+            "/register",
+            "/authorize",
+            "/token",
+            "/mcp/mcp",
+        ):
+            assert client.get(path).status_code == 404, path
+    finally:
+        app.state.services.dispose()
 
 
 def test_building_the_application_opens_no_database_connection(

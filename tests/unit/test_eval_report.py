@@ -94,6 +94,19 @@ def test_the_markdown_is_rendered_from_the_json_and_names_every_score() -> None:
     assert text.startswith("# Makna eval report: PASS")
 
 
+def test_the_report_shows_recall_at_3_by_kind_without_gating_it() -> None:
+    document = json.loads(json.dumps(build()))
+    rows = {r["kind"]: r for r in document["retrieval"]["by_kind"]["rows"]}
+    assert set(rows) == {"metric", "glossary_term", "dimension", "entity"}
+    text = report.render_markdown(document)
+    assert "### Recall at 3 by kind of object" in text
+    for kind in rows:
+        assert f"| {kind} |" in text
+    assert "| dimension | 0.750 | 4 |" in text and "| entity | n/a | 0 |" in text
+    assert "S01 | dimension | dimension:a.b | none in 10 |" in text
+    assert not any("kind" in gate["label"].lower() for gate in document["gates"])
+
+
 def test_a_failing_report_says_fail_and_lists_the_failing_request() -> None:
     text = report.render_markdown(build(failing=True))
     assert text.startswith("# Makna eval report: FAIL")

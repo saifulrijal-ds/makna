@@ -2,7 +2,9 @@
 
 This module stores users and tokens and turns a bearer token or a signed-in user into a
 `Caller`. It builds no sign-in page, session, or HTTP middleware: WP-16 and WP-13 use the
-functions here.
+functions here. `AccountStore` is the same functions bound to the database of one `Services`,
+with every database error turned into `AccountStoreError`; the web app uses it, so that it never
+holds the engine.
 
 - Passwords are hashed with Argon2id (library defaults) and the full encoded hash is stored.
   A password is never logged, printed, or put in an exception message.
@@ -31,10 +33,11 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from sqlalchemy import Engine, RowMapping, func, insert, select, update
+from sqlalchemy import Connection, Engine, RowMapping, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -283,11 +286,87 @@ def list_users(engine: Engine) -> list[User]:
     return [_row_user(row._mapping) for row in rows]
 
 
-def deactivate_user(engine: Engine, email: str) -> User:
+def get_user_by_id(engine: Engine, user_id: int) -> User | None:
+    """The user with this id, active or not, or None."""
+    with engine.connect() as connection:
+        row = connection.execute(select(*_USER_COLUMNS).where(app_user.c.id == user_id)).first()
+    return _row_user(row._mapping) if row is not None else None
+
+
+def _active_admin_ids(connection: Connection) -> set[int]:
+    """The ids of the active admins, locked until the transaction ends. Two changes that would
+    each leave one admin therefore queue: the second one sees the first one's result."""
+    return set(
+        connection.execute(
+            select(app_user.c.id)
+            .where(app_user.c.role == "admin", app_user.c.is_active.is_(True))
+            .with_for_update()
+        ).scalars()
+    )
+
+
+def update_user(
+    engine: Engine,
+    email: str,
+    *,
+    role: str | None = None,
+    teams: Iterable[str] | None = None,
+    keep_an_admin: bool = False,
+) -> User:
+    """Change the role, the teams, or both of a user; what is left out stays as it is.
+
+    The role and teams are checked as in `create_user`. The change takes effect on the user's next
+    request: a session holds only the user's id (WP-16). With `keep_an_admin`, a change that would
+    leave no active admin is refused (the web pages pass it; the operator's path does not).
+    """
+    wanted = normalize_email(email)
+    values: dict[str, Any] = {}
+    if role is not None:
+        if role not in ROLES:
+            raise AccountError(f"role: use one of {', '.join(ROLES)}")
+        values["role"] = role
+    if teams is not None:
+        values["teams"] = list(normalize_teams(teams))
+    if not values:
+        raise AccountError("change: give a role, teams, or both")
+    with engine.begin() as connection:
+        admins = _active_admin_ids(connection) if keep_an_admin else set()
+        current = connection.execute(
+            select(app_user.c.id).where(app_user.c.email == wanted)
+        ).first()
+        if current is None:
+            raise AccountError(f"email: no user with the address {wanted}")
+        if (
+            current.id in admins
+            and values.get("role", "admin") != "admin"
+            and admins == {current.id}
+        ):
+            raise AccountError(_LAST_ADMIN)
+        row = connection.execute(
+            update(app_user)
+            .where(app_user.c.id == current.id)
+            .values(**values)
+            .returning(*_USER_COLUMNS)
+        ).one()
+    return _row_user(row._mapping)
+
+
+_LAST_ADMIN = "role: at least one active admin must remain"
+
+
+def deactivate_user(engine: Engine, email: str, *, keep_an_admin: bool = False) -> User:
     """Make a user inactive: sign-in and every token of the user stop working at once.
-    Doing it twice changes nothing. There is no way to delete a user (the logs refer to it)."""
+    Doing it twice changes nothing. There is no way to delete a user (the logs refer to it).
+    With `keep_an_admin`, deactivating the last active admin is refused."""
     wanted = normalize_email(email)
     with engine.begin() as connection:
+        if keep_an_admin:
+            admins = _active_admin_ids(connection)
+            target = connection.execute(
+                select(app_user.c.id).where(app_user.c.email == wanted)
+            ).first()
+            if target is not None and admins == {target.id}:
+                raise AccountError(_LAST_ADMIN)
         row = connection.execute(
             update(app_user)
             .where(app_user.c.email == wanted)
@@ -435,3 +514,56 @@ def authenticate_token(engine: Engine, raw: str, channel: str) -> Caller:
         teams=tuple(row.teams),
         token_id=row.id,
     )
+
+
+class AccountStore:
+    """The functions above, bound to one database, for an interface that must not hold the
+    engine (the web app, through `Services.accounts`).
+
+    A database error is always `AccountStoreError` with its fixed message, never the database's
+    own text (it can carry a hash). The changes the web pages make (`update_user`,
+    `deactivate_user`) keep at least one active admin.
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def caller_for_user(self, user_id: int, channel: str) -> Caller:
+        return caller_for_user(self._engine, user_id, channel)
+
+    def verify_password(self, email: str, password: str) -> User | None:
+        return verify_password(self._engine, email, password)
+
+    def get_user(self, user_id: int) -> User | None:
+        with _store_guard():
+            return get_user_by_id(self._engine, user_id)
+
+    def list_users(self) -> list[User]:
+        with _store_guard():
+            return list_users(self._engine)
+
+    def create_user(
+        self, email: str, display_name: str, role: str, teams: Iterable[str], password: str
+    ) -> User:
+        with _store_guard():
+            return create_user(self._engine, email, display_name, role, teams, password)
+
+    def update_user(self, email: str, *, role: str | None, teams: Iterable[str] | None) -> User:
+        with _store_guard():
+            return update_user(self._engine, email, role=role, teams=teams, keep_an_admin=True)
+
+    def deactivate_user(self, email: str) -> User:
+        with _store_guard():
+            return deactivate_user(self._engine, email, keep_an_admin=True)
+
+    def create_token(self, user_email: str, name: str) -> NewToken:
+        with _store_guard():
+            return create_token(self._engine, user_email, name)
+
+    def list_tokens(self, user_email: str | None = None) -> list[TokenInfo]:
+        with _store_guard():
+            return list_tokens(self._engine, user_email)
+
+    def revoke_token(self, token_id: int) -> None:
+        with _store_guard():
+            revoke_token(self._engine, token_id)

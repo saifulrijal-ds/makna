@@ -17,6 +17,7 @@ from makna.config import Settings, load_settings
 from makna.mcp.http import PATH as MCP_PATH
 from makna.mcp.http import build_mcp_endpoint
 from makna.services import build_services
+from makna.web import install as install_web
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -40,7 +41,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             services.dispose()
 
-    app = FastAPI(title="Makna", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    # No slash redirects: a redirect on `/account/` would be built from the request's `Host`, and
+    # `/mcp` and `/mcp/` are both routed below anyway.
+    app = FastAPI(
+        title="Makna",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+        redirect_slashes=False,
+    )
     app.state.settings = settings
     app.state.services = services
 
@@ -52,5 +62,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # spellings are routed, so a client never meets a redirect.
     for path in (MCP_PATH, MCP_PATH + "/"):
         app.router.routes.append(Route(path, endpoint=mcp.asgi))
+
+    # The web pages: sign-in, sessions, CSRF, account and administration pages (WP-16). Their
+    # gate leaves `/mcp`, `/healthz`, and the static files alone.
+    install_web(app, settings, services)
 
     return app

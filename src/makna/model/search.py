@@ -33,18 +33,18 @@ Weight = Annotated[float, Field(ge=0)]
 
 
 def _status_weights() -> dict[str, float]:
-    return {"approved": 1.0, "deprecated": 0.5, "draft": 0.5, "in_review": 0.5}
+    return {"approved": 1.0, "deprecated": 1.0, "draft": 0.95, "in_review": 0.95}
 
 
 def _kind_weights() -> dict[str, float]:
     return {
         "metric": 1.0,
-        "glossary_term": 0.9,
-        "entity": 0.8,
-        "dimension": 0.8,
-        "rule": 0.8,
-        "domain": 0.7,
-        "column": 0.6,
+        "glossary_term": 0.96,
+        "entity": 0.96,
+        "dimension": 0.96,
+        "rule": 0.96,
+        "domain": 0.94,
+        "column": 0.92,
     }
 
 
