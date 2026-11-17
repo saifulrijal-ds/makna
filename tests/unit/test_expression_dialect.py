@@ -39,14 +39,14 @@ def _revenue_issues(expr: str, tmp_path: Path) -> list[tuple[str, str]]:
 
 DISAGREE = [
     ("total_amount ^ 2", "^"),
-    ("CAST(total_amount AS int8)", "int8"),
-    ("total_amount::int8", "int8"),
-    ("CAST(total_amount AS INT8)", "int8"),
+    ("CAST(total_amount AS int8)", "TINYINT"),
+    ("total_amount::int8", "TINYINT"),
+    ("CAST(total_amount AS INT8)", "TINYINT"),
     ("CAST(total_amount AS int4)", "int4"),
     ("total_amount::int4", "int4"),
     ("CAST(total_amount AS int2)", "int2"),
     ("total_amount::int2", "int2"),
-    ('CAST(total_amount AS "int8")', "int8"),
+    ('CAST(total_amount AS "int8")', "TINYINT"),
     ("CONCAT(status, 'x')", "different"),  # `||` in the neutral reading, CONCAT in PostgreSQL
     ("DATE_PART('year', order_date)", "different"),
     ("BTRIM(status)", "different"),
@@ -65,7 +65,7 @@ def test_v05_refuses_a_spelling_that_means_something_else_in_postgresql(
 AGREE = [
     "total_amount / item_count",  # division is allowed: the neutral reading adds a cast
     "total_amount / 3",
-    "ROUND(total_amount / 3, 2)",
+    "FLOOR(total_amount / 3)",
     "CASE WHEN total_amount IS NOT NULL THEN total_amount END",  # IS NOT NULL is the same condition
     "POWER(total_amount, 2)",
     "CAST(total_amount AS BIGINT)",
@@ -196,6 +196,10 @@ DATE_REFUSED = [
     "DAYOFYEAR(order_date)",
     "QUARTER(order_date)",
     "WEEK(order_date)",
+    "ROUND(total_amount, 2)",
+    "EXTRACT(SECOND FROM order_date)",
+    "SUBSTRING(status, -1, 2)",
+    "TRY_CAST(status AS INT)",
     "GREATEST(total_amount, 0)",
     "LEAST(total_amount, 0)",
 ]
@@ -255,3 +259,10 @@ def test_the_final_check_refuses_a_subscript_in_the_statement() -> None:
     ).from_("t")
     with pytest.raises(final_check.GovernanceError, match="subscripting"):
         final_check.verify(tree, plan)
+
+
+def test_to_char_is_a_v05_issue_because_sqlglot_cannot_print_it_for_duckdb(
+    tmp_path: Path,
+) -> None:
+    issues = _revenue_issues("TO_CHAR(order_date, 'YYYY')", tmp_path)
+    assert [c for c, _ in issues] == ["V05"], issues

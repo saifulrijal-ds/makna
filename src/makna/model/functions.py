@@ -25,7 +25,7 @@ _NODE_NAMES = (
     # conditionals, casts, and the boolean connectors sqlglot models as functions
     "Cast", "Case", "If", "Coalesce", "Nullif", "And", "Or", "Xor", "Not",
     # arithmetic and rounding
-    "Abs", "Round", "Floor", "Ceil", "Sign", "Sqrt", "Pow", "Mod",
+    "Abs", "Floor", "Ceil", "Sign", "Sqrt", "Pow", "Mod",
     # text
     "Lower", "Upper", "Initcap", "Trim", "Substring", "Length", "Concat", "ConcatWs",
     "Left", "Right", "Replace", "StrPosition", "SplitPart", "Pad",
@@ -39,14 +39,17 @@ ALLOWED_NODES: tuple[type[exp.Expr], ...] = tuple(
 ALLOWED_ANONYMOUS: frozenset[str] = frozenset({"btrim", "ltrim", "rtrim", "date_part"})
 
 
+# Types left out on purpose, because PostgreSQL and DuckDB give different values: `CHAR` (PostgreSQL
+# pads and truncates to the length, DuckDB does not), `TINYINT` (sqlglot prints it as SMALLINT, so a
+# value of 300 does not overflow on PostgreSQL), and `TIMESTAMPTZ` (a cast that DuckDB rejects).
 # Types a cast may target. Everything else is refused, `reg*` types and user-defined types
 # included: casting a personal value to a type that can reject it (`CAST(full_name AS INTEGER)`,
 # `CAST(national_id AS regclass)`) makes the engine print the value in its error message.
 ALLOWED_CAST_TYPES: frozenset[object] = frozenset(
     getattr(exp.DataType.Type, name)
     for name in (
-        "TINYINT", "SMALLINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE",
-        "TEXT", "VARCHAR", "CHAR", "DATE", "TIMESTAMP", "TIMESTAMPTZ", "BOOLEAN",
+        "SMALLINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE",
+        "TEXT", "VARCHAR", "DATE", "TIMESTAMP", "BOOLEAN",
     )
     if hasattr(exp.DataType.Type, name)
 )  # fmt: skip
@@ -57,7 +60,7 @@ ALLOWED_CAST_TYPES: frozenset[object] = frozenset(
 # message, which a caller that runs the SQL sees.
 TEXT_CAST_TYPES: frozenset[object] = frozenset(
     getattr(exp.DataType.Type, name)
-    for name in ("TEXT", "VARCHAR", "CHAR")
+    for name in ("TEXT", "VARCHAR")
     if hasattr(exp.DataType.Type, name)
 )
 
@@ -73,6 +76,24 @@ def first_value_dependent_cast(tree: exp.Expr) -> str | None:
                 return "a cast to " + shown
         elif isinstance(node, exp.TsOrDsToDate):
             return "a conversion to a date"
+    return None
+
+
+# The parts of `EXTRACT(part FROM x)` that PostgreSQL and DuckDB return alike (checked on a
+# timestamp with fractional seconds by tests/engine/test_function_parity.py). `SECOND`, `EPOCH`,
+# and `MILLISECOND` come back with fractions on PostgreSQL and without on DuckDB, and
+# `TIMEZONE` does not exist for a timestamp on PostgreSQL.
+ALLOWED_EXTRACT_PARTS: frozenset[str] = frozenset(
+    {
+        "YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "QUARTER", "WEEK", "DOW", "DOY",
+        "MICROSECOND", "DECADE", "CENTURY", "MILLENNIUM", "ISODOW", "ISOYEAR",
+    }
+)  # fmt: skip
+
+
+def _integer_literal(node: object) -> int | None:
+    if isinstance(node, exp.Literal) and not node.is_string and node.name.isdigit():
+        return int(node.name)
     return None
 
 
@@ -100,6 +121,11 @@ def node_problem(node: exp.Expr) -> str | None:
       `TS_OR_DS_ADD` with no unit (PostgreSQL adds a second, DuckDB a day), and `DATEDIFF`
       (PostgreSQL divides a number of seconds, DuckDB counts day boundaries). Write
       `d + INTERVAL '1 day'` and `d1 - d2`;
+    - `ROUND` (PostgreSQL rounds a double half to even, DuckDB half away from zero), `SUBSTRING`
+      unless its start is a positive and its length a non-negative literal whole number (a start
+      below 1 counts from the other end on DuckDB), `EXTRACT` of a part the engines return
+      differently (`SECOND`, `EPOCH`, `MILLISECOND`), `TRY_CAST`, a JSON cast, and a cast to a
+      text type with a length (PostgreSQL truncates);
     - `GREATEST` and `LEAST`: PostgreSQL skips NULL arguments and DuckDB returns NULL, so they
       give different numbers (write a `CASE` expression);
     - subscripting a value (`segment['email']`, `x[1]`): on a JSON or hstore column it takes a key,
@@ -116,6 +142,30 @@ def node_problem(node: exp.Expr) -> str | None:
             f"the function {function_name(node)}, which PostgreSQL ignores NULL in and DuckDB "
             "does not (write a CASE expression)"
         )
+    if isinstance(node, exp.TryCast):
+        return "TRY_CAST, which gives NULL on DuckDB and an error on PostgreSQL"
+    if isinstance(node, exp.JSONCast):
+        return "a cast to JSON, which DuckDB and PostgreSQL read differently"
+    if isinstance(node, exp.Round):
+        return (
+            "the function round, which rounds a double half to even on PostgreSQL and half away "
+            "from zero on DuckDB"
+        )
+    if isinstance(node, exp.Substring):
+        start, length = _integer_literal(node.args.get("start")), node.args.get("length")
+        if not start or (length is not None and _integer_literal(length) is None):
+            return (
+                "SUBSTRING with a start or length that is not a literal whole number (a start "
+                "below 1 counts from the other end on DuckDB and not on PostgreSQL; write a "
+                "positive literal start and a literal length)"
+            )
+    if isinstance(node, exp.Extract):
+        part = node.this.name.upper() if node.this is not None else ""
+        if part not in ALLOWED_EXTRACT_PARTS:
+            return (
+                f"EXTRACT of the part {part or 'unknown'}, which PostgreSQL and DuckDB return "
+                "differently"
+            )
     if isinstance(node, exp.Bracket):
         return "subscripting a value"
     if isinstance(node, (exp.DateDiff, exp.TsOrDsDiff)):
@@ -135,6 +185,14 @@ def node_problem(node: exp.Expr) -> str | None:
         if not isinstance(target, exp.DataType) or target.this not in ALLOWED_CAST_TYPES:
             shown = target.sql() if isinstance(target, exp.DataType) else "an unknown type"
             return "a cast to the type " + shown
+        if target.expressions and target.this in (
+            exp.DataType.Type.VARCHAR,
+            exp.DataType.Type.TEXT,
+        ):
+            return (
+                "a cast to a text type with a length, which PostgreSQL truncates to and DuckDB "
+                "does not"
+            )
     if isinstance(node, exp.Anonymous):
         return (
             None

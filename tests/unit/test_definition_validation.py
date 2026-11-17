@@ -1,4 +1,4 @@
-"""WP-03 criterion 2: for each rule V01 to V18 and V20 to V22, a fixture that breaks only it."""
+"""WP-03 criterion 2: for each rule V01 to V18 and V20 to V23, a fixture that breaks only it."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ def test_the_base_repository_is_valid(tmp_path: Path) -> None:
     assert [i.format() for i in validate(load_definitions(root))] == []
 
 
-def test_every_rule_from_v01_to_v18_and_v20_to_v22_has_a_fixture() -> None:
-    assert sorted(fx.FIXTURES) == [f"V{n:02d}" for n in (*range(1, 19), 20, 21, 22)]
+def test_every_rule_from_v01_to_v18_and_v20_to_v23_has_a_fixture() -> None:
+    assert sorted(fx.FIXTURES) == [f"V{n:02d}" for n in (*range(1, 19), 20, 21, 22, 23)]
 
 
 CASES = [

@@ -600,32 +600,80 @@ def v21_relationship_joins_more_than_the_key(files: Files) -> None:
     )
 
 
-# --- V22 ---
+# --- V22 and V23 ---
+
+
+def _personal_text(files: Files, expr: str) -> None:
+    """A personal categorical dimension with a redact mask (no cast problem of its own, so only
+    its expression is judged)."""
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "probe", "categorical", expr=expr, sensitivity="personal", masking={"method": "redact"}
+        )
+    )
 
 
 def v22_personal_dimension_casts_to_a_number(files: Files) -> None:
     # `CAST(x AS BIGINT)` of a text column fails on "NID-1", and PostgreSQL prints that value
+    _personal_text(files, "CAST(email AS TEXT) || CAST(CAST(email AS BIGINT) AS TEXT)")
+
+
+def v22_personal_dimension_casts_to_a_date(files: Files) -> None:
+    _personal_text(files, "CAST(CAST(birth_date AS DATE) AS TEXT)")
+
+
+def v22_personal_dimension_converts_to_a_date(files: Files) -> None:
+    _personal_text(files, "CAST(TS_OR_DS_TO_DATE(birth_date) AS TEXT)")
+
+
+def v22_personal_dimension_divides(files: Files) -> None:
+    # the PostgreSQL printer turns `/` into a cast to double precision
+    _personal_text(files, "CAST(email / 1 AS TEXT)")
+
+
+def v22_personal_dimension_adds_a_zero_interval(files: Files) -> None:
+    # the printer casts the argument to a timestamp
+    _personal_text(files, "CAST(TS_OR_DS_ADD(birth_date, 0, 'day') AS TEXT)")
+
+
+def v23_bucket_mask_over_trim(files: Files) -> None:
     _entity(files, "customer")["dimensions"].append(
         _dim(
-            "email_number",
+            "band",
             "numeric",
-            expr="CAST(email AS BIGINT)",
+            expr="TRIM(email)",
             sensitivity="personal",
             masking={"method": "bucket", "width": 10},
         )
     )
 
 
-def v22_personal_dimension_casts_to_a_date(files: Files) -> None:
-    _named(_entity(files, "customer")["dimensions"], "birth_year")["expr"] = (
-        "CAST(birth_date AS DATE)"
+def v23_bucket_mask_over_coalesce(files: Files) -> None:
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "band",
+            "numeric",
+            expr="COALESCE(email, '0')",
+            sensitivity="personal",
+            masking={"method": "bucket", "width": 10},
+        )
     )
 
 
-def v22_personal_dimension_converts_to_a_date(files: Files) -> None:
-    _named(_entity(files, "customer")["dimensions"], "birth_year")["expr"] = (
-        "TS_OR_DS_TO_DATE(birth_date)"
+def v23_bucket_mask_over_a_text_cast(files: Files) -> None:
+    _entity(files, "customer")["dimensions"].append(
+        _dim(
+            "band",
+            "numeric",
+            expr="CAST(email AS TEXT)",
+            sensitivity="personal",
+            masking={"method": "bucket", "width": 10},
+        )
     )
+
+
+def v23_truncate_date_mask_over_an_expression(files: Files) -> None:
+    _named(_entity(files, "customer")["dimensions"], "birth_year")["expr"] = "TRIM(birth_date)"
 
 
 # (rule, fixture name) -> mutation. Each must make the validator report exactly that code.
@@ -719,5 +767,13 @@ FIXTURES: dict[str, list[Mutation]] = {
         v22_personal_dimension_casts_to_a_number,
         v22_personal_dimension_casts_to_a_date,
         v22_personal_dimension_converts_to_a_date,
+        v22_personal_dimension_divides,
+        v22_personal_dimension_adds_a_zero_interval,
+    ],
+    "V23": [
+        v23_bucket_mask_over_trim,
+        v23_bucket_mask_over_coalesce,
+        v23_bucket_mask_over_a_text_cast,
+        v23_truncate_date_mask_over_an_expression,
     ],
 }

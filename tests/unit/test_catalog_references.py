@@ -255,3 +255,27 @@ def test_r07_follows_the_catalog_tag_that_makes_a_dimension_personal() -> None:
     )
     # R03 says the dimension is declared below the catalog level; R07 is the mask problem
     assert ("R07", "entity:thing", "dimension:amount") in codes(find_issues([entity], [], tagged))
+
+
+def test_r07_a_mask_over_an_expression_of_a_column_the_catalog_tags_personal() -> None:
+    """V23 cannot know that the catalog tags the column; R07 says the mask needs a bare column."""
+    entity = make_entity(
+        dimensions=[
+            dimension(
+                "band",
+                "TRIM(amount)",
+                type="numeric",
+                sensitivity="internal",
+                masking={"method": "bucket", "width": 10},
+            )
+        ]
+    )
+    base = typed_view(amount="string")
+    tagged = CatalogView(
+        {TABLE: {**base.tables[TABLE], "amount": "personal"}},
+        base.terms,
+        column_types=base.column_types,
+    )
+    found = [f for f in find_issues([entity], [], tagged) if f.code == "R07"]
+    assert len(found) == 1 and "bare column" in found[0].message
+    assert [f for f in find_issues([entity], [], base) if f.code == "R07"] == []

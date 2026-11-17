@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import re
 from typing import Any
 
 import duckdb
@@ -22,11 +23,17 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from makna.definitions.validate import _dialect_problem
-from makna.model.functions import ALLOWED_ANONYMOUS, ALLOWED_NODES, first_disallowed_function
+from makna.model.functions import (
+    ALLOWED_ANONYMOUS,
+    ALLOWED_CAST_TYPES,
+    ALLOWED_EXTRACT_PARTS,
+    ALLOWED_NODES,
+    first_disallowed_function,
+)
 
 D = "DATE '2026-03-15'"
 TS = "TIMESTAMP '2026-03-15 10:20:30'"
+TSF = "TIMESTAMP '2026-03-15 10:20:30.5'"
 
 # expression -> reason it is an expected difference (None: the engines must agree)
 CASES: dict[str, str | None] = {
@@ -40,6 +47,13 @@ CASES: dict[str, str | None] = {
     "CAST(1 AS BOOLEAN)": None,
     "CAST(2 AS DOUBLE PRECISION)": None,
     "CAST(2.5 AS DECIMAL(10, 2))": None,
+    "CAST(300 AS SMALLINT)": None,
+    "CAST(1.5 AS FLOAT)": None,
+    "CAST(2.5 AS DECIMAL(3, 0))": None,
+    "CAST(1.5 AS TEXT)": None,
+    "CAST('  abc ' AS VARCHAR)": None,
+    f"CAST({D} AS TIMESTAMP)": None,
+    "CAST(TRUE AS INTEGER)": None,
     "CASE WHEN 1 > 2 THEN 'a' ELSE 'b' END": None,
     "IF(1 > 2, 'a', 'b')": None,
     "COALESCE(NULL, 3)": None,
@@ -49,9 +63,6 @@ CASES: dict[str, str | None] = {
     "NOT TRUE": None,
     # arithmetic
     "ABS(-3)": None,
-    "ROUND(2.567, 2)": None,
-    "ROUND(2.5)": None,
-    "ROUND(-2.5)": None,
     "FLOOR(-2.1)": None,
     "CEIL(2.1)": None,
     "SIGN(-4)": None,
@@ -70,6 +81,9 @@ CASES: dict[str, str | None] = {
     "TRIM('  x ')": None,
     "SUBSTRING('abcdef', 2, 3)": None,
     "SUBSTRING('abcdef', 4)": None,
+    "SUBSTRING('abcdef', 2, 0)": None,
+    "SUBSTRING('abcdef', 10, 3)": None,
+    "SUBSTRING('abcdef' FROM 2 FOR 3)": None,
     "LENGTH('héllo')": None,
     "'a' || 'b'": None,
     "CONCAT_WS('-', 'a', 'b')": None,
@@ -81,6 +95,9 @@ CASES: dict[str, str | None] = {
     "LPAD('7', 3, '0')": None,
     "RPAD('7', 3, '0')": None,
     "BTRIM('xxhixx', 'x')": "DuckDB has no btrim; V05 refuses BTRIM anyway (it prints TRIM)",
+    # known limits (ARCHITECTURE 5.1): the engines differ, nothing refuses these
+    "UPPER('ß')": "case mapping of non-ASCII text differs (known limit)",
+    "CAST(1e20 AS TEXT)": "the text form of a float differs (known limit)",
     "LTRIM('xxhixx', 'x')": None,
     "RTRIM('xxhixx', 'x')": None,
     # dates
@@ -91,6 +108,8 @@ CASES: dict[str, str | None] = {
     f"EXTRACT(YEAR FROM {D})": None,
     f"EXTRACT(DOW FROM {D})": None,
     f"EXTRACT(DOY FROM {D})": None,
+    f"DATE_PART('year', {D})": None,
+    f"DATE_PART('quarter', {TSF})": None,
     f"YEAR({D})": None,
     f"MONTH({D})": None,
     f"DAY({D})": None,
@@ -102,24 +121,8 @@ CASES: dict[str, str | None] = {
     f"TS_OR_DS_TO_DATE({TS})": None,
 }  # fmt: skip
 
-# What a curator might write that the product now refuses, because the engines differ.
-REFUSED = [
-    f"DATE_ADD({D}, 1)",
-    f"DATE_SUB({D}, 1)",
-    f"TS_OR_DS_ADD({D}, 1)",
-    f"DATEDIFF({TS}, TIMESTAMP '2026-03-14 23:00:00')",
-    f"DAYOFWEEK({D})",
-    f"DAYOFMONTH({D})",
-    f"DAYOFYEAR({D})",
-    "GREATEST(1, NULL)",  # PostgreSQL ignores NULL, DuckDB returns NULL
-    "GREATEST(1, 5, 3)",
-    "LEAST(4, NULL)",
-    "LEAST(4, 2, 3)",
-    f"DATE_PART('year', {D})",  # the two parses print it differently
-    f"QUARTER({D})",  # PostgreSQL has no quarter(date)
-    f"WEEK({D})",  # PostgreSQL has no week(date)
-    f"TO_CHAR({D}, 'YYYY-MM')",  # sqlglot cannot print a format for DuckDB
-]
+# Every part of EXTRACT that the product allows, on a timestamp with fractional seconds.
+CASES.update({f"EXTRACT({part} FROM {TSF})": None for part in sorted(ALLOWED_EXTRACT_PARTS)})
 
 # Allow-listed node classes that no neutral expression can reach, so no case can exist.
 UNREACHABLE = {
@@ -151,13 +154,19 @@ def _both(connection: psycopg.Connection[Any], sql: str) -> tuple[Any, Any]:
     return _plain(row[0]), _plain(mine[0])
 
 
-@pytest.mark.parametrize("sql", sorted(CASES), ids=str)
+def _params() -> list[Any]:
+    return [
+        pytest.param(sql, id=sql, marks=pytest.mark.xfail(strict=True, reason=reason))
+        if reason is not None
+        else pytest.param(sql, id=sql)
+        for sql, reason in sorted(CASES.items())
+    ]
+
+
+@pytest.mark.parametrize("sql", _params())
 def test_the_engines_agree_on_an_allowed_function(
     engine_connection: psycopg.Connection[Any], sql: str
 ) -> None:
-    reason = CASES[sql]
-    if reason is not None:
-        pytest.xfail(reason)
     postgres, mine = _both(engine_connection, sql)
     assert postgres == mine, (sql, postgres, mine)
 
@@ -170,33 +179,28 @@ def test_every_case_is_a_valid_definition_expression(sql: str) -> None:
 
 def test_every_function_on_the_allow_list_has_a_case() -> None:
     covered: set[type[exp.Expr]] = set()
-    names: set[str] = set()
     for sql in CASES:
         for node in sqlglot.parse_one(sql, into=exp.Condition).walk():
             covered.add(type(node))
-            if isinstance(node, exp.Anonymous):
-                names.add(node.name.lower())
     missing = [
         n.__name__
         for n in ALLOWED_NODES
         if n.__name__ not in UNREACHABLE and not any(issubclass(c, n) for c in covered)
     ]
     assert not missing, f"allow-listed nodes with no case in this file: {missing}"
-    # `ltrim` and `rtrim` parse to nodes, and `date_part` is refused (below); only `btrim` stays
-    # an unknown name that the list must name
-    assert {"btrim"} <= names and names <= ALLOWED_ANONYMOUS, names
 
 
-@pytest.mark.parametrize("sql", REFUSED, ids=str)
-def test_what_the_engines_read_differently_is_refused(sql: str) -> None:
-    tree = sqlglot.parse_one(sql, into=exp.Condition)
-    assert first_disallowed_function(tree) is not None or _dialect_problem(sql) is not None, sql
+def test_every_cast_type_on_the_allow_list_has_a_case() -> None:
+    covered = {
+        node.args["to"].this
+        for sql in CASES
+        for node in sqlglot.parse_one(sql, into=exp.Condition).walk()
+        if isinstance(node, exp.Cast) and isinstance(node.args.get("to"), exp.DataType)
+    }
+    assert not set(ALLOWED_CAST_TYPES) - covered, set(ALLOWED_CAST_TYPES) - covered
 
 
-@pytest.mark.parametrize("sql", ["GREATEST(1, NULL)", "LEAST(4, NULL)"])
-def test_greatest_and_least_are_refused_with_a_case_expression_as_the_alternative(
-    sql: str,
-) -> None:
-    tree = sqlglot.parse_one(sql, into=exp.Condition)
-    problem = first_disallowed_function(tree)
-    assert problem is not None and "CASE" in problem, problem
+def test_every_function_name_on_the_allow_list_has_a_case() -> None:
+    text = "\n".join(CASES).lower()
+    missing = [n for n in sorted(ALLOWED_ANONYMOUS) if not re.search(rf"\b{n}\(", text)]
+    assert not missing, f"allow-listed names with no case in this file: {missing}"

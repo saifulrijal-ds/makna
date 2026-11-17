@@ -1,4 +1,4 @@
-"""Definition errors V01 to V18 and V20 to V22 (ARCHITECTURE section 5.3).
+"""Definition errors V01 to V18 and V20 to V23 (ARCHITECTURE section 5.3).
 
 `validate` takes a `DefinitionSet` and returns every problem as an `Issue`. V01 problems are
 found while loading; a file that failed V01 is left out of the other checks, so one broken
@@ -441,8 +441,10 @@ class _Checker:
                     "expr" if dim.expr is not None else "name",
                 )
         for i, dim in enumerate(e.dimensions):
-            if _is_personal(e, dim) and dim.expr is not None:
-                self.v22_personal_casts_text_only(dim, i)
+            if _is_personal(e, dim):
+                if dim.expr is not None:
+                    self.v22_personal_casts_text_only(dim, i)
+                self.v23_mask_sits_on_a_bare_column(dim, i)
         for i, rule in enumerate(e.rules or []):
             self.check_expression(rule.expr, f"rule {rule.name}", "rules", i, "expr")
             overlap, unknown = personal.overlap(partial(columns_read, rule.expr))
@@ -487,12 +489,38 @@ class _Checker:
         except _ExprError:
             return  # V05 reports it
         found = first_value_dependent_cast(tree)
+        if found is None:
+            # Judge what PostgreSQL will run, not only what was written: its printer adds casts
+            # (`x / 1` becomes a cast to double precision, `TS_OR_DS_ADD` casts to a timestamp).
+            try:
+                printed = sqlglot.parse_one(tree.sql(dialect="postgres"), read="postgres")
+            except SqlglotError:
+                return  # `_parse` printed it, so this does not happen
+            found = first_value_dependent_cast(printed)
         if found is not None:
             self.add(
                 "V22",
                 f"personal dimension {dim.name} uses {found}; the expression of a personal "
                 "dimension may cast only to text, because a value that does not fit would be "
                 "printed in the error of the engine",
+                "dimensions",
+                index,
+                "expr",
+            )
+
+    def v23_mask_sits_on_a_bare_column(self, dim: Dimension, index: int) -> None:
+        """A `bucket` or `truncate_date` mask casts its column, and R07 judges the catalog type of
+        that column, so the dimension must be that column and nothing else: `TRIM(x)`,
+        `COALESCE(x, '0')` or `CAST(x AS TEXT)` would hide the type from R07 and could still make
+        the mask's cast fail on a value, which PostgreSQL prints."""
+        if dim.masking is None or dim.masking.method not in ("bucket", "truncate_date"):
+            return
+        if dim.expr is not None and bare_column(dim.expr) is None:
+            self.add(
+                "V23",
+                f"personal dimension {dim.name} has a {dim.masking.method} mask over an "
+                "expression; the mask needs a bare column (no expr, or an expr that is the "
+                "column), so that its catalog type can be checked (R07)",
                 "dimensions",
                 index,
                 "expr",

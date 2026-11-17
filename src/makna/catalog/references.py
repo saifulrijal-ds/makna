@@ -219,6 +219,24 @@ def _entity_findings(
             continue
         report_missing(part, read)
         own = bare_column(dimension.expr) if dimension.expr else dimension.name.lower()
+        if own is None and dimension.masking is not None:
+            # a mask over an expression hides the column type from this check; V23 refuses it
+            # when the definition declares the dimension personal, and the catalog may have
+            # made it so
+            if dimension.masking.method in _MASK_COLUMN_TYPES and any(
+                columns.get(c) == "personal" for c in read
+            ):
+                findings.append(
+                    Finding(
+                        object_id,
+                        part,
+                        "R07",
+                        f"dimension {dimension.name} has a {dimension.masking.method} mask over "
+                        "an expression of a column that the catalog tags personal; the mask "
+                        "needs a bare column, so that the catalog type of the column can be "
+                        "checked",
+                    )
+                )
         if own is not None and own in columns:
             found = _mask_finding(
                 entity, dimension, own, columns[own], view.column_types.get(table, {})
