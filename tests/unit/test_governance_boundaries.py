@@ -8,6 +8,7 @@ builds from configuration), and `makna validate` (V19) always checks in `strict`
 from __future__ import annotations
 
 import inspect
+import secrets
 import shutil
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,10 @@ GOVERNANCE_FIELDS = (
     "apply_masks",
     "allow_unmasked_personal",
 )
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna", "MAKNA_SECRET_KEY": "k"}
+ENV = {
+    "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
+}
 
 
 # ---- no request field sets the mode ---------------------------------------------------

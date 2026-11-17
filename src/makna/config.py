@@ -158,8 +158,26 @@ class McpSettings(BaseModel):
         return value
 
 
-class Settings(BaseModel):
+MIN_SECRET_KEY_LENGTH = 32
+
+
+class WebSettings(BaseModel):
+    """`[web]` of `config/makna.toml`: the web pages (ARCHITECTURE section 13).
+
+    `development` is for the local development stack, which is served over plain HTTP: it leaves
+    the `Secure` flag off the session cookie, because a browser would not send a `Secure` cookie
+    back over `http://`. It is false unless set, and `MAKNA_WEB_DEVELOPMENT` overrides the file.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    development: StrictBool = False
+
+
+class Settings(BaseModel):
+    # An error never shows the value it refused: a short secret key or a database URL with its
+    # password would otherwise appear in the traceback.
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     # From the environment (secrets and connection settings).
     database_url: SecretStr
@@ -172,6 +190,18 @@ class Settings(BaseModel):
     # Two-person approval is on unless this is true (D-11).
     allow_self_approval: bool = False
 
+    @field_validator("secret_key")
+    @classmethod
+    def _long_enough(cls, value: SecretStr) -> SecretStr:
+        # The session cookies are signed with a key derived from this value, and a viewer holds
+        # one of them, so a short value can be recovered from it offline. Never show the value.
+        if len(value.get_secret_value()) < MIN_SECRET_KEY_LENGTH:
+            raise ValueError(
+                f"must be at least {MIN_SECRET_KEY_LENGTH} characters, for example "
+                "the output of: openssl rand -hex 32"
+            )
+        return value
+
     # From config/makna.toml.
     dialect: str = "postgres"
     search: SearchSettings = Field(default_factory=SearchSettings)
@@ -180,6 +210,7 @@ class Settings(BaseModel):
     sensitivity: SensitivitySettings = Field(default_factory=SensitivitySettings)
     engine: EngineSettings = Field(default_factory=EngineSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
 
 
 _ENV_FIELDS = (
@@ -216,6 +247,9 @@ def _collect_values(env: Mapping[str, str], config_path: Path | str | None) -> d
         embedding = dict(values.get("embedding") or {})
         embedding["fastembed"] = {**(embedding.get("fastembed") or {}), "cache_dir": cache_dir}
         values["embedding"] = embedding
+    development = env.get(ENV_PREFIX + "WEB_DEVELOPMENT")
+    if development:
+        values["web"] = {**(values.get("web") or {}), "development": _env_bool(development)}
     allow = env.get(ENV_PREFIX + "EMBEDDING_ALLOW_DOWNLOAD")
     if allow:
         embedding = dict(values.get("embedding") or {})
@@ -224,11 +258,20 @@ def _collect_values(env: Mapping[str, str], config_path: Path | str | None) -> d
     return values
 
 
+def _env_bool(value: str) -> bool | str:
+    """`true` or `false` in any letter case is a boolean; anything else stays text, so that the
+    settings model names the mistake (a typo must not turn the Secure flag off silently)."""
+    lowered = value.strip().lower()
+    return {"true": True, "false": False}.get(lowered, value)
+
+
 def _problems(error: ValidationError) -> str:
     problems = []
     for item in error.errors():
         where = ".".join(str(part) for part in item["loc"])
         name = ENV_PREFIX + where.upper() if where in _ENV_FIELDS else where
+        if where == "web.development":
+            name = "web.development (MAKNA_WEB_DEVELOPMENT)"
         problems.append(f"{name}: {item['msg']}")
     return "Invalid settings: " + "; ".join(problems)
 
@@ -253,7 +296,7 @@ def load_settings(
     try:
         return Settings.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
 
 
 class SearchRuntime(BaseModel):
@@ -263,7 +306,7 @@ class SearchRuntime(BaseModel):
     `MAKNA_SECRET_KEY`.
     """
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
     embedding_provider: EmbeddingProvider = "fastembed"
     embedding_api_key: SecretStr | None = None
@@ -282,7 +325,7 @@ def load_search_runtime(
     try:
         return SearchRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
 
 
 def load_tag_map(config_path: Path | str | None = None) -> dict[str, str]:
@@ -305,7 +348,7 @@ class EngineRuntime(BaseModel):
     `MAKNA_SECRET_KEY`. `engine_url` is None when `MAKNA_ENGINE_URL` is not set.
     """
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
 
     engine_url: SecretStr | None = None
     engine: EngineSettings = Field(default_factory=EngineSettings)
@@ -322,7 +365,7 @@ def load_engine_runtime(
     try:
         return EngineRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None
 
 
 class GovernanceRuntime(BaseModel):
@@ -349,4 +392,4 @@ def load_governance_runtime(
     try:
         return GovernanceRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
-        raise ConfigError(_problems(error)) from error
+        raise ConfigError(_problems(error)) from None

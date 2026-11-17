@@ -455,7 +455,7 @@
         "WP-12B"
       ],
       "suggested_model": "Sonnet 5.5",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": "WP-17",
@@ -599,7 +599,7 @@
         "WP-13"
       ],
       "suggested_model": "Haiku 5.5",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": "WP-23",

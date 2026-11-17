@@ -5,6 +5,7 @@ application's services, and the governance settings the indexer's hook needs."""
 from __future__ import annotations
 
 import dataclasses
+import secrets
 from pathlib import Path
 
 import pytest
@@ -23,10 +24,14 @@ from makna.model.governance import STRICT, GovernancePolicy
 from makna.model.request import QueryRequest
 from makna.model.sensitivity import effective_level
 from makna.services import ServiceError, Services
+from tests.route_support import iter_routes
 
 from .compiler_support import DEFINITIONS, lending
 
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna", "MAKNA_SECRET_KEY": "k"}
+ENV = {
+    "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
+}
 
 
 def sample_objects() -> list:  # type: ignore[type-arg]
@@ -216,8 +221,26 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
     assert services.policy == STRICT
     response = TestClient(app).get("/healthz")  # no database runs at localhost: still ok
     assert response.status_code == 200 and response.json() == {"status": "ok"}
-    # The MCP endpoint (WP-13) is the one route beside /healthz; the web pages (WP-16) add theirs.
-    assert {getattr(route, "path", None) for route in app.routes} == {"/healthz", "/mcp", "/mcp/"}
+    # /healthz, the MCP endpoint (WP-13), and the web pages (WP-16). FastAPI lists an included
+    # router as one entry without a path, so `iter_routes` looks inside it. Exactly these
+    # routes exist: a new one has to be added here, and then be seen by the tests of its access.
+    assert {path for path, _ in iter_routes(app)} == {
+        "/healthz",
+        "/mcp",
+        "/mcp/",
+        "/static",
+        "/",
+        "/login",
+        "/logout",
+        "/account",
+        "/account/tokens",
+        "/account/tokens/{token_id}/revoke",
+        "/admin/users",
+        "/admin/users/{user_id}/update",
+        "/admin/users/{user_id}/deactivate",
+        "/admin/tokens",
+        "/admin/tokens/{token_id}/revoke",
+    }
 
 
 def test_create_app_builds_the_services_with_the_configured_policy(tmp_path: Path) -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,7 +11,10 @@ from makna.app import create_app
 from makna.cli.main import main
 from makna.config import ConfigError, load_settings
 
-ENV = {"MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna", "MAKNA_SECRET_KEY": "k"}
+ENV = {
+    "MAKNA_DATABASE_URL": "postgresql://u:p@localhost/makna",
+    "MAKNA_SECRET_KEY": secrets.token_hex(32),
+}
 
 
 def test_healthz_returns_ok() -> None:

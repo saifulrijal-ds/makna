@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<h1>Users</h1>
+{% if notice %}
+<p role="status"><ins>{{ notice }}</ins></p>
+{% endif %}
+{% if error %}
+<p role="alert"><mark>{{ error }}</mark></p>
+{% endif %}
+
+<h2>Create a user</h2>
+<form method="post" action="/admin/users">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Email
+    <input type="email" name="email" value="{{ form.email }}" maxlength="254" required>
+  </label>
+  <label>Name
+    <input type="text" name="display_name" value="{{ form.display_name }}" maxlength="200" required>
+  </label>
+  <label>Role
+    <select name="role">
+      {% for role in roles %}
+      <option value="{{ role }}"{% if role == form.role %} selected{% endif %}>{{ role }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Teams (separated by commas)
+    <input type="text" name="teams" value="{{ form.teams }}">
+  </label>
+  <label>Initial password (at least {{ min_password_length }} characters; it is not shown again)
+    <input type="password" name="password" autocomplete="new-password" required>
+  </label>
+  <button type="submit">Create user</button>
+</form>
+
+<h2>All users</h2>
+{% for u in users %}
+<article>
+  <header>{{ u.display_name }} ({{ u.email }}){% if not u.is_active %} - <mark>inactive</mark>{% endif %}</header>
+  {% if u.is_active %}
+  <form method="post" action="/admin/users/{{ u.id }}/update">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Role
+      <select name="role">
+        {% for role in roles %}
+        <option value="{{ role }}"{% if role == u.role %} selected{% endif %}>{{ role }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Teams (separated by commas)
+      <input type="text" name="teams" value="{{ u.teams | join(', ') }}">
+    </label>
+    <button type="submit">Save role and teams</button>
+  </form>
+  <form method="post" action="/admin/users/{{ u.id }}/deactivate">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="secondary">Deactivate</button>
+  </form>
+  {% else %}
+  <p>Role {{ u.role }}. This user cannot sign in and none of their tokens work.</p>
+  {% endif %}
+</article>
+{% endfor %}
+{% endblock %}

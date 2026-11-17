@@ -57,7 +57,7 @@ def make_settings(url: URL, allowed_hosts: tuple[str, ...] = (HOST,)) -> Setting
     return Settings.model_validate(
         {
             "database_url": url.render_as_string(hide_password=False),
-            "secret_key": secrets.token_hex(16),
+            "secret_key": secrets.token_hex(32),
             "embedding_provider": "hash",
             "mcp": {"allowed_hosts": list(allowed_hosts)},
         }

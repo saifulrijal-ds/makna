@@ -1,0 +1,3 @@
+In FastAPI 0.162, `app.routes` shows a router added with `include_router` as one `_IncludedRouter` with no `path`, so a test that lists the application's routes must walk `original_router.routes`.
+
+Checked on 2026-11-16 with FastAPI 0.162.4 (Starlette 1.10). The routes of the included router still have their full `path` (prefix included) and `methods`. `tests/integration/web_support.py` (`iter_routes`) does the walk; the test that every web route redirects to `/login` when signed out depends on it, and asserts that known paths are found, so a change in FastAPI that hides them fails the test instead of passing it empty. `_IncludedRouter` is a private class: check the walk again after a FastAPI upgrade.

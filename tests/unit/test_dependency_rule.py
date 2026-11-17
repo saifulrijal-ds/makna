@@ -167,6 +167,14 @@ def test_every_package_of_the_architecture_exists() -> None:
         ("mcp/tools.py", "from makna.catalog import base\n", "makna.catalog"),
         ("mcp/tools.py", "from makna.engine import base\n", "makna.engine"),
         ("mcp/tools.py", "from makna.app import create_app\n", "makna.app"),
+        ("web/routes.py", "from makna.mcp import http\n", "makna.mcp"),
+        ("web/routes.py", "from makna.app import create_app\n", "makna.app"),
+        ("web/gate.py", "from makna.index.tables import app_user\n", "makna.index.tables"),
+        ("web/pages.py", "from makna.definitions import loader\n", "makna.definitions"),
+        ("web/routes.py", "from makna.compiler import plan\n", "makna.compiler"),
+        ("web/routes.py", "from makna.search import hybrid\n", "makna.search"),
+        ("web/security.py", "from makna.cli import main\n", "makna.cli"),
+        ("mcp/http.py", "from makna.web import gate\n", "makna.web"),
         ("mcp/bridge.py", "from makna.model import request\n", "makna.model"),
         ("mcp/bridge.py", "from makna.services import Caller\n", "makna.services"),
         ("mcp/bridge.py", "from makna.mcp import texts\n", "makna.mcp"),
@@ -211,6 +219,14 @@ def test_allowed_imports_pass(tmp_path: Path) -> None:
     _write(tmp_path, "mcp/a.py", "from makna.services import x\nfrom makna.model import y\n")
     _write(tmp_path, "web/a.py", "from makna import config\nfrom makna.config import Settings\n")
     _write(tmp_path, "web/b.py", "from . import a\nfrom .a import thing\n")
+    _write(
+        tmp_path,
+        "web/c.py",
+        "from makna.services import accounts, permissions\n"
+        "from makna.services.accounts import User\n"
+        "from makna.model.request import QueryRequest\n"
+        "from makna.config import Settings\n",
+    )
     _write(tmp_path, "cli/a.py", "from makna.definitions import v\nfrom makna.engine import e\n")
     _write(tmp_path, "cli/b.py", "from makna.app import create_app\n")
     _write(tmp_path, "cli/c.py", "from makna.mcp.bridge import main\n")

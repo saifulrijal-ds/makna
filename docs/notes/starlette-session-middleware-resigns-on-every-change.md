@@ -1,0 +1,3 @@
+Starlette's `SessionMiddleware` keeps no issue time of its own and re-signs (and so renews) the cookie whenever the session is modified, so an "8 hours from sign-in, no renewal" rule needs the issue time in the payload and Makna's own check.
+
+Checked on 2026-11-16 in the source of Starlette 1.10 (`starlette/middleware/sessions.py`): the signature's timestamp is the time of the last write, and `max_age` is applied from it. A page that writes anything to the session (a flash message, a refreshed token) therefore extends the session. WP-16 uses itsdangerous directly with `iat` in the payload, and `makna.web.gate` writes the session cookie only at sign-in.
