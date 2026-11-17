@@ -1,5 +1,65 @@
 {
   "updated": "2026-11-17",
+  "partly_met": {
+    "note": "Set at milestone review 1 (docs/reviews/core-complete.md, C-13) and checked by WP-15E against PLAN and the code. A requirement listed here is done-marked under a package, but at this milestone it is only partly met, or it is met in code now and its status is recorded here. 'completed_by' names the package that finishes it, as PLAN assigns it.",
+    "NFR-1": {
+      "status": "partly",
+      "in_code": "the compose stack has an app service that runs makna serve, which serves the web pages since WP-16",
+      "completed_by": [
+        "WP-23"
+      ],
+      "why": "the one-command stack and the release check of all parts are WP-23; the stack was not run in WP-15E (no Docker)"
+    },
+    "WEB-5": {
+      "status": "met",
+      "in_code": "users and tokens (WP-12B) and sign-in, sessions and admin pages (WP-16, done)",
+      "completed_by": [
+        "WP-16"
+      ],
+      "why": "C-13 wrote this when sign-in was not built; it is now"
+    },
+    "SEM-3": {
+      "status": "partly",
+      "in_code": "files are validated against the published schema and build-time checks run (WP-15C)",
+      "completed_by": [
+        "WP-18"
+      ],
+      "why": "the version-controlled write path and its lifecycle are WP-18 (not started)"
+    },
+    "SEM-4": {
+      "status": "partly",
+      "in_code": "the catalog data exists and the sync stores it (WP-06)",
+      "completed_by": [
+        "WP-19C"
+      ],
+      "why": "the catalog admin pages are WP-19C (not started)"
+    },
+    "GOV-2": {
+      "status": "partly",
+      "in_code": "the tool-call log is written (WP-12)",
+      "completed_by": [
+        "WP-19C"
+      ],
+      "why": "the report pages over the log are WP-19C (not started)"
+    },
+    "NFR-5": {
+      "status": "partly",
+      "in_code": "unit and integration tiers run in CI; the agent eval is not in CI",
+      "completed_by": [
+        "WP-22B",
+        "WP-23"
+      ],
+      "why": "the agent eval harness and its CI job are WP-22B; WP-23 is the release check"
+    },
+    "SRC-1": {
+      "status": "met",
+      "in_code": "ranking was fixed by WP-15D (C-3: weights between 0.9 and 1.0) and the retrieval eval has per-kind questions for dimensions, entities and terms (EVALS 3.1)",
+      "completed_by": [
+        "WP-15D"
+      ],
+      "why": "C-13 pointed at C-3, which WP-15D fixed"
+    }
+  },
   "statuses": [
     "not_started",
     "in_progress",
@@ -427,7 +487,7 @@
         "WP-15B"
       ],
       "suggested_model": "Haiku 5.5",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": "WP-14C",

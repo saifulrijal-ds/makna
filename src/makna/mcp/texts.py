@@ -27,7 +27,7 @@ SEARCH_DESCRIPTION = (
     "`limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, read "
     "the descriptions of the hits before deciding. If no hit's description matches the "
     "question, no approved definition exists: say so, and do not use a different metric "
-    "instead. If `ambiguous_between` is present, ask the user to choose."
+    "instead."
 )
 
 GET_DEFINITION_DESCRIPTION = (

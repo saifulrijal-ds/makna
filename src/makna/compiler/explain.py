@@ -9,15 +9,18 @@ is fixed so that a reader (and a test) can rely on it:
 3. for each input, the filters and rules that are part of its definition;
 4. the filters the request added;
 5. the join path behind every dimension or filter that lives on another entity;
-6. for each masked personal dimension, that it is masked and how;
-7. when the governance policy relaxes a rule (D-29), one sentence that names the mode and each
+6. when the request has a dimension or a grain, one sentence that says the result is cut at the
+   request's limit in the order of its keys, and that a result of exactly that many rows may be
+   incomplete (QRY-3, review C-8);
+7. for each masked personal dimension, that it is masked and how;
+8. when the governance policy relaxes a rule (D-29), one sentence that names the mode and each
    relaxed rule.
 
 A balance metric adds a warning, and so does each deprecated entity the plan reads (it stays
 usable, D-32 ruling 4), and so does a personal dimension while the policy has a minimum
 group size: groups built from fewer than the minimum number of records are left out, and the
 result column that says how many is named. A relaxed policy adds one more warning that says the
-same as sentence 7. Nothing here changes what the SQL does.
+same as sentence 8. Nothing here changes what the SQL does.
 """
 
 from __future__ import annotations
@@ -66,6 +69,9 @@ def explain(model: Model, plan: QueryPlan) -> Explanation:
         sentences.extend(_definition_sentences(model, item))
     sentences.extend(_request_filter_sentences(plan))
     sentences.extend(_join_sentences(model, plan))
+    limit = _limit_sentence(plan)
+    if limit is not None:
+        sentences.append(limit)
     sentences.extend(_mask_sentence(model, d) for d in plan.dimensions if d.masked)
     relaxed = relaxed_rules_text(plan.governance)
     if relaxed is not None:
@@ -294,6 +300,27 @@ def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
 
 
 # --------------------------------------------------------------------------------------
+# 8. The row limit
+
+
+def _limit_sentence(plan: QueryPlan) -> str | None:
+    """Only a request with a grain or a dimension has keys to order by. The SQL orders by the
+    period of the grain and then by each dimension, ascending (`sqlgen.build_tree`), and cuts
+    the rows after the limit. A request with no keys returns at most one row, so it gets no
+    sentence. A request that leaves out its limit has the default, so N is always a whole number."""
+    keys = ([plan.grain] if plan.grain is not None else []) + [
+        d.dimension.label or _words(d.name) for d in plan.dimensions
+    ]
+    if not keys:
+        return None
+    return _sentence(
+        f"The result is cut at {plan.limit} rows: the rows are sorted ascending by "
+        f"{_list(keys)}, and only the first {plan.limit} are returned, so a result of exactly "
+        f"{plan.limit} rows may be incomplete"
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Warnings
 
 
@@ -336,10 +363,12 @@ def _group_size_warning(plan: QueryPlan) -> str:
     records = _list([f"{g.label} records" for g in plan.guard])
     return (
         f"Groups built from fewer than {plan.min_group_size} {records} are left out of this "
-        "result to protect personal data. This does not stop someone from comparing two "
-        "requests that differ by one person. The number of groups left out "
-        f"is in the result column {GROUPS_LEFT_OUT}, the same on every row. A result with no rows "
-        "can mean that every group was left out."
+        "result, so that a small group does not show in it. This is not a privacy guarantee for "
+        "personal data: "
+        "someone who compares two requests that differ by one person can still read that "
+        "person's value, and access control in the query engine is the protection. The number "
+        f"of groups left out is in the result column {GROUPS_LEFT_OUT}, the same on every row. "
+        "A result with no rows can mean that every group was left out."
     )
 
 

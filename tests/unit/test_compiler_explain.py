@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from makna.compiler.compile import compile_request
 from makna.compiler.explain import explain
 from makna.compiler.plan import plan_request
@@ -127,3 +130,57 @@ def test_a_rule_of_the_definition_on_another_entity_gets_a_join_sentence() -> No
         response.explanation, "the rule contract.restructured holds", "rows are joined"
     )
     assert filter_at < join_at
+
+
+def limit_sentences(sentences: tuple[str, ...]) -> list[str]:
+    return [text for text in sentences if "is cut at" in text]
+
+
+def test_a_request_with_a_dimension_says_the_result_is_cut_at_the_limit_in_key_order() -> None:
+    response = compile_request(lending(), request("collection_rate", **COLLECTION_BY_REGION))
+    [sentence] = limit_sentences(response.explanation)
+    assert sentence == (
+        "The result is cut at 1000 rows: the rows are sorted ascending by region name, "
+        "and "
+        "only the first 1000 are returned, so a result of exactly 1000 rows may be incomplete."
+    )
+    assert response.explanation[-1] == sentence
+    # The SQL orders by the dimension and then cuts at the limit, as the sentence says.
+    assert "ORDER BY" in response.sql and response.sql.endswith("LIMIT 1000")
+
+
+def test_a_grain_alone_gets_the_limit_sentence_naming_the_period() -> None:
+    response = compile_request(
+        lending(), request("collection_rate", grain="month", **{"time_start": "2026-01-01"})
+    )
+    [sentence] = limit_sentences(response.explanation)
+    assert "sorted ascending by month, and only the first 1000" in sentence
+
+
+def test_a_request_with_no_dimension_and_no_grain_gets_no_limit_sentence() -> None:
+    response = compile_request(lending(), request("collection_rate"))
+    assert limit_sentences(response.explanation) == []
+
+
+def test_the_limit_sentence_states_the_requested_limit_and_its_keys_in_request_order() -> None:
+    response = compile_request(
+        lending(),
+        request(
+            "collection_rate",
+            grain="month",
+            dimensions=["branch.region_name", "branch.branch_name"],
+            limit=50,
+        ),
+    )
+    [sentence] = limit_sentences(response.explanation)
+    assert sentence.startswith("The result is cut at 50 rows")
+    assert "sorted ascending by month, region name and branch name" in sentence
+    assert "exactly 50 rows may be incomplete" in sentence
+    assert "LIMIT 50" in response.sql
+
+
+def test_the_limit_is_always_a_whole_number_so_the_sentence_always_has_one() -> None:
+    # An omitted limit is the default of 1000; an explicit null is refused at the boundary.
+    assert request("collection_rate").limit == 1000
+    with pytest.raises(ValidationError):
+        request("collection_rate", limit=None)
