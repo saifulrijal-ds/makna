@@ -11,7 +11,10 @@ is fixed so that a reader (and a test) can rely on it:
 5. the join path behind every dimension or filter that lives on another entity;
 6. for each masked personal dimension, that it is masked and how;
 7. when the governance policy relaxes a rule (D-29), one sentence that names the mode and each
-   relaxed rule.
+   relaxed rule;
+8. when the request has a dimension or a grain, one sentence that says the result is cut at the
+   request's limit in the order of its keys, and that a result of exactly that many rows may be
+   incomplete (QRY-3, review C-8).
 
 A balance metric adds a warning, and so does each deprecated entity the plan reads (it stays
 usable, D-32 ruling 4), and so does a personal dimension while the policy has a minimum
@@ -70,6 +73,9 @@ def explain(model: Model, plan: QueryPlan) -> Explanation:
     relaxed = relaxed_rules_text(plan.governance)
     if relaxed is not None:
         sentences.append(_relaxed_sentence(plan.governance, relaxed))
+    limit = _limit_sentence(plan)
+    if limit is not None:
+        sentences.append(limit)
     warnings = [w for item in plan.inputs if (w := _balance_warning(model, plan, item))]
     warnings.extend(_deprecated_warning(d) for d in plan.deprecated_entities)
     if plan.guard:
@@ -291,6 +297,27 @@ def _mask_sentence(model: Model, planned: PlannedDimension) -> str:
         f"{_named(model, planned.ref)} is personal data, so it is masked: {how} ({masking.method})"
     )
     return _sentence(text[0].upper() + text[1:])
+
+
+# --------------------------------------------------------------------------------------
+# 8. The row limit
+
+
+def _limit_sentence(plan: QueryPlan) -> str | None:
+    """Only a request with a grain or a dimension has keys to order by. The SQL orders by the
+    period of the grain and then by each dimension, ascending (`sqlgen.build_tree`), and cuts
+    the rows after the limit. A request with no keys returns at most one row, so it gets no
+    sentence. A request that leaves out its limit has the default, so N is always a whole number."""
+    keys = ([plan.grain] if plan.grain is not None else []) + [
+        d.dimension.label or _words(d.name) for d in plan.dimensions
+    ]
+    if not keys:
+        return None
+    return _sentence(
+        f"The result is cut at {plan.limit} rows: the rows are sorted in ascending order by "
+        f"{_list(keys)}, and only the first {plan.limit} are returned, so a result of exactly "
+        f"{plan.limit} rows may be incomplete"
+    )
 
 
 # --------------------------------------------------------------------------------------
