@@ -11,7 +11,7 @@ These are settled. Do not reopen them without new information.
 | D-1 | The platform is open and company-agnostic. It ships with synthetic data only. Company-specific connectors and definitions are added later by the adopting organization, outside this repository. | 2026-11-11 |
 | D-2 | The platform layers on top of a data catalog. The catalog stays the source of truth for physical metadata. | 2026-11-11 |
 | D-3 | Curators and business users are equally important users of the MVP web app. | 2026-11-11 |
-| D-4 | Agents get read-only access in the MVP (search, read, compile, optionally run). Agents never approve definitions. | 2026-11-11 |
+| D-4 | Agents get read-only access in the MVP (search, read, compile, optionally run). Agents never approve definitions. *Dated 2026-11-17 (WP-15E, review section 7): D-21 supersedes the run part of this decision, so agents search, read and compile only; the original wording is kept.* | 2026-11-11 |
 | D-5 | Draft definitions, including AI-drafted ones, are never official until an authorized owner approves them. | 2026-11-11 |
 | D-6 | Semantic definitions are stored as YAML under version control. The database is an index. | 2026-11-11 |
 | D-7 | ~~Trino is the reference query engine.~~ Superseded by D-22: PostgreSQL is the MVP target engine and DuckDB the unit-test engine. | 2026-11-11 |

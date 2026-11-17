@@ -118,7 +118,7 @@ Questions to add early in the remaining set: "Berapa hapus buku tahun lalu?" (`n
 
 ## 3. Retrieval eval (EVL-2)
 
-**Run.** For each question, call the search service with the question text, kinds `metric` and `glossary_term`, approved only, limit 10. A glossary term in the results counts as its `related` metrics, placed at the term's rank. Record the ranked list of distinct metrics.
+**Run.** For each question, call the search with the question text, kinds `metric` and `glossary_term`, approved only, limit 10 (as built, the code the service calls: see *As built* below). A glossary term in the results counts as its `related` metrics, placed at the term's rank. Record the ranked list of distinct metrics.
 
 *As built (WP-15).* The runner calls the code the service calls, `HybridSearch` with the configured search settings and embedding provider, as a viewer would, and not `Services.search`, which writes a `tool_call_log` row per call; an integration test checks that both return the same ranked ids. Keyword only and vector only are the same search with the other leg's weight set to 0 (the statement keeps only documents with a fused score above zero, so what is left is that leg's candidates, in that leg's order multiplied by the status and kind weights; a test shows that with flat kind weights the order is exactly the leg's own rank).
 
