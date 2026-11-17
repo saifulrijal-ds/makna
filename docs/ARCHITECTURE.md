@@ -727,9 +727,9 @@ Design rules for responses: JSON with short keys that are full words; no nulls o
 
 Description given to the agent:
 
-> Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, read the descriptions of the hits before deciding. If no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead. If `ambiguous_between` is present, ask the user to choose.
+> Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, read the descriptions of the hits before deciding. If no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead.
 
-Input: `query` (string), `kinds` (optional list of `metric`, `glossary_term`, `entity`, `dimension`, `column`; default all but `column`), `domain` (optional), `limit` (default 5, maximum 10).
+Input: `query` (string), `kinds` (optional list of `metric`, `glossary_term`, `entity`, `dimension`, `column`; default every kind except `column`, which also returns `rule` and `domain` hits that `kinds` cannot name; WP-15E, review section 7), `domain` (optional), `limit` (default 5, maximum 10).
 
 Output (budget: 2,500 characters at the default limit):
 
@@ -775,6 +775,8 @@ Output for a metric (budget: 12,000 characters in `full`; `brief` omits dimensio
   "caveats": "...", "example_questions": ["What is our NPF?"]
 }
 ```
+
+The `ambiguous_between` field is not returned by any service yet. WP-20 builds it, and restores the sentence that asks the user to choose in the tool description (C-12, WP-15E).
 
 Entities return their description, dimensions, rules, and relationships. Glossary terms return the definition and related objects. Unknown id: error `NOT_FOUND` with up to 3 close ids.
 
@@ -826,7 +828,7 @@ Details settled in WP-13 (`makna.mcp`: `texts` the wording, `server` the tools, 
 - **Host check.** The SDK's DNS rebinding protection stays on: `421` for a `Host` other than localhost, `127.0.0.1`, or `[::1]`, `403` for another browser `Origin`. Other names are listed in `[mcp] allowed_hosts` of `config/makna.toml` (inside the development stack, `app`).
 - **The bridge.** `makna mcp` pipes the SDK's stdio server streams to its HTTP client streams, so everything comes from the server. It reads `MAKNA_URL`, the base URL of the application, to which `/mcp` is appended (a trailing `/mcp` is not doubled), and `MAKNA_TOKEN`, and nothing else; `http://` is accepted only for localhost and a URL with a user name is refused. A missing or unusable variable is one line naming it and exit 2 before any connection; a `401` ends it with a fixed line and exit 1, and so does a server that cannot be reached. If the server sends a malformed body, the SDK's JSON-RPC parse error on the bridge's standard output quotes a short piece of it, to the agent's own MCP client only; standard error carries no server text. The console script is a launcher (`makna.cli.entry`) that imports only the bridge for `makna mcp`, so that process holds no service or database code.
 - **Sizes**, measured on the sample domain with the hash embedding provider. The largest `makna_search` text of the 20 questions of `docs/EVALS.md` section 2.5 is 1,892 characters (budget 2,500). A `full` definition is 4,419 to 10,875 characters (budget 12,000). The owner raised the budget from 6,000 on 2026-11-15, because dropping dimension descriptions and values (which is what `brief` does) was the only way to reach 6,000; `brief` stays under 6,000 (largest 5,161).
-- **Disagreements with the services.** The `makna_search` description mentions `ambiguous_between`, which the services do not return yet (WP-20), and the default kinds of a search include `rule` and `domain`, which `kinds` does not accept.
+- **Disagreements with the services (review section 7, WP-15E).** The `makna_search` description no longer mentions `ambiguous_between` (removed until WP-20 builds it; the sentence is restored with it). The default kinds of a search include `rule` and `domain` hits, which `kinds` does not accept; this is recorded as known, not fixed: the default is the ranking pool that WP-15D tuned, and a change of it would change the retrieval results and the eval. Both kinds of hit are ids that `makna_get_definition` accepts. The other tool texts were checked: no other promise in them names a service behaviour that is missing.
 
 ## 13. The web app (P-4, D-8)
 

@@ -5,7 +5,7 @@ Makna holds the approved business definitions for this organization's data. To a
 
 ## makna_search
 description:
-Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, read the descriptions of the hits before deciding. If no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead. If `ambiguous_between` is present, ask the user to choose.
+Find approved metrics, business terms, entities, and dimensions by meaning. Use this first for any question about a business number or term, in English or Indonesian. Returns up to `limit` ranked hits and a `confidence` of high, medium, or low. If confidence is low, read the descriptions of the hits before deciding. If no hit's description matches the question, no approved definition exists: say so, and do not use a different metric instead.
 annotations: {"destructiveHint": false, "idempotentHint": true, "openWorldHint": false, "readOnlyHint": true}
 inputSchema:
 {

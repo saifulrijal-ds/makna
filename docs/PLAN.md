@@ -430,7 +430,7 @@ Source: `docs/reviews/core-complete.md`; findings C-1 to C-13 and open questions
 ### WP-20 Resolver and test bench
 
 - **Read**: `docs/ARCHITECTURE.md` sections 8.3, 8.4, 13 (`/bench`); `docs/EVALS.md` section 5.4 (last paragraph).
-- **Build**: `makna.resolve` (rules of section 8.4, with the time and grain vocabulary of `makna.search.terms` from WP-07; `today` is always a parameter); the `resolve` service function; `/bench`; a resolver score in `makna-eval` (informative, no gate).
+- **Build**: `makna.resolve` (rules of section 8.4, with the time and grain vocabulary of `makna.search.terms` from WP-07; `today` is always a parameter); the `resolve` service function; `/bench`; a resolver score in `makna-eval` (informative, no gate); and the `makna_search` description regains the sentence "If `ambiguous_between` is present, ask the user to choose." (removed by WP-15E, review C-12), once the search service returns `ambiguous_between`.
 - **Acceptance**
   1. Unit tests for the time grammar: each phrase listed in section 8.4, in English and Indonesian, with today = 2026-07-01, gives the expected `time_start` and `time_end`.
   2. On the first 20 golden questions with today = 2026-07-01: G16 and G17 resolve to `ambiguous` with both candidates; G18 resolves to `no_match` or to `resolved` with low confidence flagged; at least 10 of the 15 `answer` questions produce a request equal to `expected.request`. Report the exact number; do not special-case question ids.
