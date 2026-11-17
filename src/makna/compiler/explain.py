@@ -363,10 +363,11 @@ def _group_size_warning(plan: QueryPlan) -> str:
     records = _list([f"{g.label} records" for g in plan.guard])
     return (
         f"Groups built from fewer than {plan.min_group_size} {records} are left out of this "
-        "result to protect personal data. This does not stop someone from comparing two "
-        "requests that differ by one person. The number of groups left out "
-        f"is in the result column {GROUPS_LEFT_OUT}, the same on every row. A result with no rows "
-        "can mean that every group was left out."
+        "result, so that a small group does not show in it. This is not a privacy guarantee: "
+        "someone who compares two requests that differ by one person can still read that "
+        "person's value, and access control in the query engine is the protection. The number "
+        f"of groups left out is in the result column {GROUPS_LEFT_OUT}, the same on every row. "
+        "A result with no rows can mean that every group was left out."
     )
 
 

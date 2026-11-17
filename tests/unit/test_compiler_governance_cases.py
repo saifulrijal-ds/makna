@@ -224,6 +224,7 @@ def test_the_warning_claims_only_that_small_groups_are_left_out_of_this_result()
     assert "single person" not in warning
     assert "picked out" not in warning
     assert "left out of this result" in warning
+    assert "not a privacy guarantee" in warning and "to protect" not in warning
 
 
 # ---- fix 7: R02 on any entity the plan touches refuses the request -----------------------
