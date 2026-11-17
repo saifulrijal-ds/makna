@@ -222,33 +222,23 @@ def test_the_band_summary_counts_valid_questions_that_come_back_low() -> None:
     assert summary["found_at_3_by_band"]["high"] == 1
 
 
-def with_heldout(section: dict[str, Any]) -> dict[str, Any]:
-    questions = [
-        {
-            "id": "H01",
-            "question": "q",
-            "language": "en",
-            "expected": ["npf_ratio"],
-            "confidence": "low",
-            "coverage": 0.1,
-            "top_cosine": 0.4,
-            "ranked_ids": ["metric:x"],
-            "rankings": {"fused": ["x"], "keyword": ["x"], "vector": ["x"]},
-            "found_at_3": {"fused": False, "keyword": False, "vector": False},
-            "reciprocal_rank": {"fused": 0.0, "keyword": 0.0, "vector": 0.0},
-        }
-    ]
-    held = retrieval_section(recall_ok=False)
-    return {
-        **section,
-        "heldout": {
-            "n_questions": 1,
-            "provenance": "Written by a fresh agent that never read the repository.",
-            "scores": held["scores"],
-            "confidence": heldout_eval.band_summary(questions),
-            "questions": questions,
-        },
+def with_missed_question(section: dict[str, Any]) -> dict[str, Any]:
+    """The fixture section with one held-out question that was not found and came back `low`."""
+    question = {
+        "id": "H01",
+        "question": "q",
+        "language": "en",
+        "expected": ["npf_ratio"],
+        "confidence": "low",
+        "coverage": 0.1,
+        "top_cosine": 0.4,
+        "ranked_ids": ["metric:x"],
+        "rankings": {"fused": ["x"], "keyword": ["x"], "vector": ["x"]},
+        "found_at_3": {"fused": False, "keyword": False, "vector": False},
+        "reciprocal_rank": {"fused": 0.0, "keyword": 0.0, "vector": 0.0},
     }
+    heldout = {**section["heldout"], "questions": [question]}
+    return {**section, "heldout": heldout}
 
 
 def test_the_report_shows_the_tuned_and_the_held_out_split_side_by_side() -> None:
@@ -270,13 +260,13 @@ def test_the_report_shows_the_tuned_and_the_held_out_split_side_by_side() -> Non
             "dialect": "postgres",
             "index": {"embedding_model": "m", "documents": 1, "definitions_version": "v"},
         },
-        "retrieval": with_heldout(retrieval_section()),
+        "retrieval": with_missed_question(retrieval_section()),
         "gates": [],
         "passed": True,
     }
     text = report.render_markdown(document)
     assert "### Tuned and held-out splits" in text
-    assert "| tuned (golden) | 10 |" in text and "| held-out | 1 |" in text
+    assert "| tuned (golden) | 10 |" in text and "| held-out | 10 |" in text
     assert "Confidence bands of the held-out questions" in text
     assert "never read the repository" in text
     assert "Held-out questions not found in the first 3" in text and "H01" in text

@@ -298,6 +298,7 @@ def test_the_retrieval_command_writes_both_reports_and_exits_by_the_gates(
         mrr_min=0.0,
         false_abstention_rate_max=1.0,
         indonesian_recall_gap_max=1.0,
+        heldout_recall_at_3_min=0.0,
         latency_p95_ms_below=100000,
     )
     out = tmp_path / "easy"

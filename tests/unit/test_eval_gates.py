@@ -26,6 +26,7 @@ def test_the_committed_gates_are_the_thresholds_of_the_eval_design(
         "mrr_min": 0.75,
         "false_abstention_rate_max": 0.05,
         "indonesian_recall_gap_max": 0.10,
+        "heldout_recall_at_3_min": 0.75,
         "latency_p95_ms_below": 500,
     }
     assert committed["compile"] == {
@@ -39,7 +40,7 @@ def test_a_good_report_passes_every_gate_and_exits_zero(
     committed: dict[str, dict[str, float]],
 ) -> None:
     results = evaluate(full_report(), committed)
-    assert len(results) == len(gates.SPECS) == 8
+    assert len(results) == len(gates.SPECS) == 9
     assert all(r.passed for r in results)
     assert exit_code(results) == 0
 
@@ -62,6 +63,25 @@ def test_recall_below_its_gate_fails(committed: dict[str, dict[str, float]]) -> 
     assert "retrieval.recall_at_3_min" in failed
     assert "retrieval.indonesian_recall_gap_max" in failed  # English 1.0, Indonesian 0.0
     assert exit_code(results) == 1
+
+
+def test_the_held_out_gate_fails_below_its_threshold_and_names_itself(
+    committed: dict[str, dict[str, float]],
+) -> None:
+    at = evaluate(full_report(retrieval={"heldout_recall": 0.8}), committed)
+    assert all(r.passed for r in at)
+    below = evaluate(full_report(retrieval={"heldout_recall": 0.7}), committed)
+    assert [r.name for r in below if not r.passed] == ["retrieval.heldout_recall_at_3_min"]
+    assert exit_code(below) == 1
+
+
+def test_a_report_without_the_held_out_split_fails_its_gate(
+    committed: dict[str, dict[str, float]],
+) -> None:
+    section = retrieval_section()
+    del section["heldout"]
+    results = evaluate({"retrieval": section}, committed)
+    assert [r.name for r in results if not r.passed] == ["retrieval.heldout_recall_at_3_min"]
 
 
 def test_a_gate_at_the_threshold_passes(committed: dict[str, dict[str, float]]) -> None:

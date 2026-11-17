@@ -13,6 +13,12 @@ mrr_min = 0.75
 false_abstention_rate_max = 0.05
 # Recall at 3 for English minus recall at 3 for Indonesian questions.
 indonesian_recall_gap_max = 0.10
+# Recall at 3 of the fused search over the held-out questions (docs/EVALS.md section 3.2): the
+# 46 questions that nobody tuned on. PROPOSED in WP-14C; the owner approves the threshold. It is
+# set a little below the measured 0.783 (36 of 46) of the committed configuration, so that one
+# question lost to a change fails nothing and two fail the gate. Never raise it by tuning on the
+# held-out file, and never lower it to let a change pass.
+heldout_recall_at_3_min = 0.75
 # 95th percentile of one search call, in milliseconds (NFR-2); strictly below.
 latency_p95_ms_below = 500
 

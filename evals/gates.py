@@ -69,6 +69,12 @@ def _score(name: str) -> Getter:
     return read
 
 
+def _heldout_recall(report: Mapping[str, Any]) -> float | None:
+    heldout = report["retrieval"].get("heldout")
+    value = None if heldout is None else heldout["scores"]["fused"]["recall_at_3"]
+    return None if value is None else float(value)
+
+
 def _latency(report: Mapping[str, Any]) -> float | None:
     value = report["retrieval"]["latency"]["p95_ms"]
     return None if value is None else float(value)
@@ -98,6 +104,13 @@ SPECS: tuple[GateSpec, ...] = (
         "English minus Indonesian recall at 3",
         "<=",
         _gap,
+    ),
+    GateSpec(
+        "retrieval",
+        "heldout_recall_at_3_min",
+        "Held-out recall at 3 (fused)",
+        ">=",
+        _heldout_recall,
     ),
     GateSpec("retrieval", "latency_p95_ms_below", "Search latency p95 (ms)", "<", _latency),
     GateSpec(
