@@ -112,12 +112,15 @@ def _dialect_problem(sql: str) -> str | None:
     return None
 
 
-AMBIGUOUS_TYPE_NAMES = frozenset({"int2", "int4", "int8"})
+# `int8` is not here: the neutral parser reads it as TINYINT, which the cast list refuses before
+# this check runs, so no input reaches it with that name. A test pins the message it gets.
+AMBIGUOUS_TYPE_NAMES = frozenset({"int2", "int4"})
 
 
 def _refuse_ambiguous_spellings(sql: str, tree: exp.Condition) -> None:
-    """`^` is a power in PostgreSQL and an exclusive or in neutral SQL; `int2`, `int4`, and `int8`
-    are PostgreSQL's sizes of an integer, and neutral SQL reads `int8` as a one-byte integer."""
+    """`^` is a power in PostgreSQL and an exclusive or in neutral SQL; `int2` and `int4`
+    are PostgreSQL's sizes of an integer, spellings of SMALLINT and INT that the cast list
+    allows and whose names are PostgreSQL's (`int8` is refused as the cast to TINYINT)."""
     if tree.find(exp.BitwiseXor) is not None:
         raise _ExprError(
             "uses ^, which is a power in PostgreSQL and an exclusive or in neutral SQL; "
@@ -130,8 +133,8 @@ def _refuse_ambiguous_spellings(sql: str, tree: exp.Condition) -> None:
     for token in tokens:
         if token.token_type != TokenType.STRING and token.text.lower() in AMBIGUOUS_TYPE_NAMES:
             raise _ExprError(
-                f"uses the type name {token.text.lower()}, whose size differs between "
-                "PostgreSQL and neutral SQL; write SMALLINT, INTEGER, or BIGINT"
+                f"uses the type name {token.text.lower()}, which is PostgreSQL spelling; "
+                "write SMALLINT or INTEGER"
             )
 
 

@@ -17,6 +17,7 @@ from makna.model.functions import (
     TEXT_CAST_TYPES,
     first_disallowed_function,
     first_value_dependent_cast,
+    node_problem,
 )
 
 D = "DATE '2026-03-15'"
@@ -47,6 +48,12 @@ REFUSED = {
     "SUBSTRING('abcdef', 2, y)": "SUBSTRING",
     "SUBSTRING('abcdef', 2, -1)": "SUBSTRING",
     "SUBSTRING('abcdef' FROM 0 FOR 2)": "SUBSTRING",
+    "SPLIT_PART(x, '', 1)": "SPLIT_PART",
+    "SPLIT_PART('abc', '', 1)": "SPLIT_PART",
+    "SPLIT_PART('a,b', ',', 0)": "SPLIT_PART",
+    "SPLIT_PART('a,b', ',', n)": "SPLIT_PART",
+    "SPLIT_PART('a,b', d, 1)": "SPLIT_PART",
+    "SPLIT_PART('a,b', ',', 1.5)": "SPLIT_PART",
     f"EXTRACT(SECOND FROM {TS})": "SECOND",
     f"EXTRACT(EPOCH FROM {TS})": "EPOCH",
     f"EXTRACT(MILLISECOND FROM {TS})": "MILLISECOND",
@@ -62,8 +69,11 @@ def test_the_allow_list_refuses(sql: str) -> None:
 
 def test_a_json_cast_is_refused_explicitly() -> None:
     tree = exp.JSONCast(this=exp.column("x"), to=exp.DataType.build("json"))
-    assert first_disallowed_function(tree) is not None
-    assert "JSON" in (first_disallowed_function(tree) or "")
+    assert (
+        first_disallowed_function(tree)
+        == "a cast to JSON, which DuckDB and PostgreSQL read differently"
+    )
+    assert node_problem(tree) == first_disallowed_function(tree)  # the branch's own message
 
 
 ACCEPTED = [
@@ -71,6 +81,9 @@ ACCEPTED = [
     "SUBSTRING('abcdef', 2)",
     "SUBSTRING('abcdef', 2, 0)",
     "SUBSTRING('abcdef' FROM 2 FOR 3)",
+    "SPLIT_PART('a,b,c', ',', 2)",
+    "SPLIT_PART('a,b,c', ',', -1)",
+    "SPLIT_PART(x, '::', 3)",
     f"EXTRACT(YEAR FROM {TS})",
     f"EXTRACT(MICROSECOND FROM {TS})",
     "CAST(2.5 AS DECIMAL(10, 2))",
@@ -113,3 +126,13 @@ def test_text_casts_are_not_value_dependent(sql: str) -> None:
 @pytest.mark.parametrize("sql", ["CAST(x AS INT)", "CAST(x AS DATE)", "TS_OR_DS_TO_DATE(x)"])
 def test_other_casts_are_value_dependent(sql: str) -> None:
     assert first_value_dependent_cast(sqlglot.parse_one(sql, into=exp.Condition)) is not None
+
+
+def test_a_pg_spelled_int_type_name_is_refused_by_the_name_and_int8_by_the_cast_list() -> None:
+    assert "int4" in (_dialect_problem("CAST(x AS int4)") or "")
+    assert "int2" in (_dialect_problem("x::int2") or "")
+    assert _dialect_problem("CAST(x AS INTEGER)") is None
+    # int8 is read as TINYINT, which the allow-list refuses before the dialect check runs
+    assert "TINYINT" in (problem("CAST(x AS int8)") or "")
+    # and were TINYINT ever allowed again, the print comparison would still refuse int8
+    assert "means something different" in (_dialect_problem("CAST(x AS int8)") or "")

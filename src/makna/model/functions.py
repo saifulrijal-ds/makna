@@ -97,6 +97,12 @@ def _integer_literal(node: object) -> int | None:
     return None
 
 
+def _nonzero_integer_literal(node: object) -> bool:
+    if isinstance(node, exp.Neg):
+        node = node.this
+    return _integer_literal(node) not in (None, 0)
+
+
 def function_name(node: exp.Expr) -> str:
     """The name of a function node as written in SQL."""
     if isinstance(node, exp.Func) and not isinstance(node, exp.Anonymous):
@@ -126,6 +132,8 @@ def node_problem(node: exp.Expr) -> str | None:
       below 1 counts from the other end on DuckDB), `EXTRACT` of a part the engines return
       differently (`SECOND`, `EPOCH`, `MILLISECOND`), `TRY_CAST`, a JSON cast, and a cast to a
       text type with a length (PostgreSQL truncates);
+    - `SPLIT_PART` unless the delimiter is a non-empty text literal and the field a non-zero
+      whole number literal;
     - `GREATEST` and `LEAST`: PostgreSQL skips NULL arguments and DuckDB returns NULL, so they
       give different numbers (write a `CASE` expression);
     - subscripting a value (`segment['email']`, `x[1]`): on a JSON or hstore column it takes a key,
@@ -158,6 +166,16 @@ def node_problem(node: exp.Expr) -> str | None:
                 "SUBSTRING with a start or length that is not a literal whole number (a start "
                 "below 1 counts from the other end on DuckDB and not on PostgreSQL; write a "
                 "positive literal start and a literal length)"
+            )
+    if isinstance(node, exp.SplitPart):
+        delimiter, index = node.args.get("delimiter"), node.args.get("part_index")
+        if not (
+            isinstance(delimiter, exp.Literal) and delimiter.is_string and delimiter.name
+        ) or not _nonzero_integer_literal(index):
+            return (
+                "SPLIT_PART unless its delimiter is a non-empty text literal and its field a "
+                "non-zero whole number literal (an empty delimiter splits into characters on "
+                "DuckDB and not on PostgreSQL, and field 0 is an error on PostgreSQL)"
             )
     if isinstance(node, exp.Extract):
         part = node.this.name.upper() if node.this is not None else ""
