@@ -169,6 +169,73 @@ def test_the_tuning_imports_nothing_that_can_reach_the_held_out_file() -> None:
         assert "HELDOUT_QUESTIONS_FILE" not in text, name
 
 
+LISTING_CALLS = {"glob", "rglob", "iterdir", "listdir", "scandir", "walk", "fnmatch"}
+ALLOWED_LISTINGS = {("evals.golden.reference", "reference_sql_files")}
+"""The one listing in the closure: the reference SQL files of the compile eval, which tuning
+never calls (it lists `reference_sql/`, not the directory of the question files)."""
+
+
+def listing_calls(source: str) -> list[tuple[str, int]]:
+    """`(function, line)` of every glob or directory listing call in a source text."""
+    found: list[tuple[str, int]] = []
+
+    def visit(node: ast.AST, function: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = (
+                child.name
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+                else function
+            )
+            if isinstance(child, ast.Call):
+                target = child.func
+                name = (
+                    target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                )
+                if name in LISTING_CALLS:
+                    found.append((function, child.lineno))
+            visit(child, inner)
+
+    visit(ast.parse(source), "<module>")
+    return found
+
+
+def test_nothing_the_tuning_imports_globs_or_lists_a_directory() -> None:
+    """A glob over `evals/golden/` would find the held-out file without naming it."""
+    problems = [
+        f"{name}:{function}:{line}"
+        for name, path in closure("evals.tune").items()
+        for function, line in listing_calls(path.read_text(encoding="utf-8"))
+        if (name, function) not in ALLOWED_LISTINGS
+    ]
+    assert problems == []
+
+
+def test_the_listing_check_detects_a_glob_in_an_unused_function() -> None:
+    mutation = (
+        "from pathlib import Path\n"
+        "def unused():\n"
+        "    return [p.read_text() for p in Path('evals/golden').glob('*.yaml')]\n"
+        "def other():\n    import os\n    return os.listdir('.')\n"
+    )
+    assert [f for f, _ in listing_calls(mutation)] == ["unused", "other"]
+
+
+def test_the_tuned_questions_come_from_two_named_files() -> None:
+    source = (EVALS / "tune.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    (loader,) = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "load_tuned_questions"
+    ]
+    names = {n.id for n in ast.walk(loader) if isinstance(n, ast.Name)}
+    assert {"QUESTIONS_FILE", "SEARCH_QUESTIONS_FILE"} <= names
+    assert not any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"
+        for n in ast.walk(loader)
+    )
+
+
 def test_the_check_detects_a_module_that_imports_the_held_out_loader(tmp_path: Path) -> None:
     source = tmp_path / "x.py"
     source.write_text("from evals.golden.heldout import load_heldout_questions\n")

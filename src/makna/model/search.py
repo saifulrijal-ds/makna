@@ -54,7 +54,7 @@ class ConfidenceSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     high: Annotated[float, Field(ge=0, le=1)] = 0.6
-    low: Annotated[float, Field(ge=0, le=1)] = 0.3
+    low: Annotated[float, Field(ge=0, le=1)] = 0.2
     low_cosine: float | None = None
     """Set from the real model's score distribution (WP-15); while unset only coverage is used."""
 
@@ -65,7 +65,7 @@ class SearchSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     w_keyword: Weight = 1.0
-    w_vector: Weight = 1.0
+    w_vector: Weight = 0.125
     status_weights: dict[str, Weight] = Field(default_factory=_status_weights)
     kind_weights: dict[str, Weight] = Field(default_factory=_kind_weights)
     candidates: Annotated[int, Field(ge=1)] = 30
