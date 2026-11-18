@@ -153,3 +153,24 @@ def test_build_index_refuses_definitions_that_fail_validation_before_touching_th
     )
     with pytest.raises(init.InitError, match=r"nothing was indexed: .*contract\.yaml.*V05"):
         init.build_index_step(ctx)
+
+
+def test_the_freshness_step_runs_after_the_index_build_and_before_the_demo_users() -> None:
+    names = [step.name for step in init.STEPS]
+    assert names.index("refresh-freshness") == names.index("build-index") + 1
+    assert names.index("demo-users") == names.index("refresh-freshness") + 1
+
+
+def test_the_freshness_step_skips_without_the_engine_url_and_keeps_it_out_of_repr(
+    tmp_path: Path,
+) -> None:
+    assert init.refresh_freshness_step(context(tmp_path)).startswith("skipped (MAKNA_ENGINE_URL")
+    with_url = Context(
+        data_dir=tmp_path,
+        seed=1,
+        scale=0.05,
+        database_url="postgresql://unused",
+        lending_loader_url="postgresql://unused",
+        engine_url="postgresql://lending_reader:the-password@db/lending",
+    )
+    assert "the-password" not in repr(with_url)

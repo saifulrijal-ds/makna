@@ -1,0 +1,58 @@
+{% macro badge(status) %}<span class="badge badge-{{ status | replace(' ', '-') }}">{{ status }}</span>{% endmacro %}
+
+{% macro link(text, href) %}{% if href %}<a href="{{ href }}">{{ text }}</a>{% else %}{{ text }}{% endif %}{% endmacro %}
+
+{% macro object_list(rows) %}
+<ul class="objects">
+  {% for row in rows %}
+  <li>
+    {{ link(row.item.label, row.href) }}
+    {{ badge(row.status) }}
+    {% if row.item.description %}<br><small>{{ row.item.description }}</small>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro related_list(rows) %}
+{% if rows %}
+<section data-field="related">
+  <h2>Related</h2>
+  <ul class="objects">
+    {% for row in rows %}
+    <li>
+      {{ link(row.item.label, row.href) }}
+      <small>({{ row.kind | lower }}, {{ row.relation }})</small>
+      {% if row.item.description %}<br><small>{{ row.item.description }}</small>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro deprecation_notice(deprecation) %}
+{% if deprecation %}
+<aside role="alert" data-field="deprecation">
+  <p><strong>Deprecated.</strong> {{ deprecation.reason }}</p>
+  {% if deprecation.replacement %}
+  <p>Use instead: {{ link(deprecation.replacement.text, deprecation.replacement.href) }}</p>
+  {% endif %}
+</aside>
+{% endif %}
+{% endmacro %}
+
+{% macro curator_notes(view) %}
+{% if view.issues or view.warnings or view.proposal_status %}
+<section data-field="curator-notes">
+  <h2>For curators</h2>
+  {% if view.proposal_status %}<p>This object also has a proposal: {{ view.proposal_status | replace("_", " ") }}.</p>{% endif %}
+  {% for text in view.warnings %}<p>{{ text }}</p>{% endfor %}
+  {% if view.issues %}
+  <ul>
+    {% for issue in view.issues %}<li><strong>{{ issue.code }}</strong> {{ issue.message }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+{% endmacro %}

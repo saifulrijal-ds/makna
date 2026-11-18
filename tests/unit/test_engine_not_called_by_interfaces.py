@@ -11,11 +11,10 @@ three packages with `ast` and fails on
 - a call of a connector: `PostgresConnector(...)`, or a method call `.list_tables(...)` or
   `.latest_value(...)`.
 
-`ALLOWED_MODULES` is empty today. The freshness service (WP-17) is the one module that will be
-added to it, by name, in the pull request that builds it; any other module in the list needs a
-decision record. The dependency rule (`test_dependency_rule.py`) already keeps `mcp` and `web`
-from importing `engine` at all; this test also covers `services`, which that rule allows to
-depend on everything, and the call sites.
+`ALLOWED_MODULES` holds the freshness service (WP-17) and nothing else; any other module in the
+list needs a decision record. The dependency rule (`test_dependency_rule.py`) already keeps `mcp`
+and `web` from importing `engine` at all; this test also covers `services`, which that rule allows
+to depend on everything, and the call sites.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ import pytest
 from .test_dependency_rule import SRC, _imported_modules, _module_name
 
 PACKAGES = ("services", "mcp", "web")
-ALLOWED_MODULES: frozenset[str] = frozenset()  # the freshness service, when it exists
+ALLOWED_MODULES: frozenset[str] = frozenset({"makna.services.freshness"})
 CONNECTOR_METHODS = frozenset({"list_tables", "latest_value"})
 CONNECTOR_CLASSES = frozenset({"PostgresConnector", "EngineConnector"})
 
@@ -65,8 +64,9 @@ def test_no_interface_module_reaches_the_engine() -> None:
     assert engine_uses(SRC) == []
 
 
-def test_the_allowlist_is_empty_until_the_freshness_service_exists() -> None:
-    assert ALLOWED_MODULES == frozenset()
+def test_the_allowlist_is_the_freshness_service_alone() -> None:
+    assert ALLOWED_MODULES == frozenset({"makna.services.freshness"})
+    assert (SRC / "makna" / "services" / "freshness.py").is_file()
 
 
 def test_the_packages_the_test_walks_exist_and_hold_modules() -> None:
