@@ -31,7 +31,9 @@ USERS: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "viewer": ("viewer", ()),
     "curator": ("curator", ("credit-risk",)),
     "curator2": ("curator", ("credit-risk",)),
+    "sales": ("curator", ("sales-performance",)),
     "outsider": ("curator", ("marketing",)),
+    "outsider2": ("curator", ("marketing",)),
     "approver": ("approver", ()),
     "approver2": ("approver", ()),
     "governance": ("approver", ("data-governance",)),
@@ -182,20 +184,72 @@ def metric_text(**changes: Any) -> str:
     return yaml.safe_dump(data, sort_keys=False)
 
 
-def official_yaml_with(world: World, object_id: str, **changes: Any) -> str:
-    """The official file of an object as YAML, with top-level keys changed."""
-    import yaml
+def official_text(world: World, object_id: str) -> str:
+    """The official file of an object in the canonical YAML, as the index holds it."""
+    from makna.index.tables import semantic_object
 
-    from makna.definitions import layout
-
-    ref = layout.parse_object_id(object_id)
-    assert ref is not None
     with world.engine.connect() as connection:
-        from makna.index.tables import semantic_object
-
         official = connection.execute(
             select(semantic_object.c.official).where(semantic_object.c.id == object_id)
         ).scalar_one()
-    data = dict(official)
-    data.update(changes)
-    return to_yaml(parse_definition(data)) if not changes else yaml.safe_dump(data, sort_keys=False)
+    return to_yaml(parse_definition(official))
+
+
+def edited(text: str, edit: Any) -> str:
+    """`text` (YAML of one definition) after `edit(data)` changed the decoded mapping."""
+    import yaml
+
+    data = yaml.safe_load(text)
+    edit(data)
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
+def head(world: World) -> str:
+    sha = world.repo.rev_parse("HEAD")
+    assert sha is not None
+    return sha
+
+
+def object_row(world: World, object_id: str) -> Mapping[str, Any]:
+    from makna.index.tables import semantic_object
+
+    with world.engine.connect() as connection:
+        row = connection.execute(
+            select(semantic_object).where(semantic_object.c.id == object_id)
+        ).one_or_none()
+    assert row is not None, object_id
+    return row._asdict()
+
+
+def has_object(world: World, object_id: str) -> bool:
+    from makna.index.tables import semantic_object
+
+    with world.engine.connect() as connection:
+        return (
+            connection.execute(
+                select(semantic_object.c.id).where(semantic_object.c.id == object_id)
+            ).first()
+            is not None
+        )
+
+
+def state_dump(engine: Engine) -> dict[str, list[Any]]:
+    """Every row of the tables the write path and the indexer touch (for "changes nothing")."""
+    from sqlalchemy import text
+
+    dump: dict[str, list[Any]] = {}
+    with engine.connect() as connection:
+        for table, order in (
+            ("audit_event", "id"),
+            ("semantic_object", "id"),
+            ("object_edge", "src_id, dst_id, type"),
+            ("index_state", "key"),
+            ("reference_issue", "id"),
+        ):
+            rows = connection.execute(text(f"SELECT * FROM {table} ORDER BY {order}")).all()  # noqa: S608
+            dump[table] = [tuple(r) for r in rows]
+        rows = connection.execute(
+            text("SELECT object_id, status, text_hash FROM search_document ORDER BY object_id")
+        ).all()
+        dump["search_document"] = [tuple(r) for r in rows]
+    return dump

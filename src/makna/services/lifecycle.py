@@ -614,7 +614,11 @@ class Lifecycle:
                     "replaced_by",
                     "an existing approved object of the same kind, other than this one",
                 )
-        deprecation = Deprecation(reason=reason, replaced_by=replaced_by)
+        deprecation = (
+            Deprecation(reason=reason)
+            if replaced_by is None
+            else Deprecation(reason=reason, replaced_by=replaced_by)
+        )
         text = to_yaml(
             with_state(
                 official,

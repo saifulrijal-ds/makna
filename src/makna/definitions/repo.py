@@ -357,18 +357,28 @@ class GitRepo:
         remove a file `HEAD` does not have). Best effort, used after a failed commit."""
         head = self.rev_parse("HEAD")
         for path in paths:
+            committed = self.show(head, path) if head is not None else None
             try:
-                if head is not None and self.show(head, path) is not None:
+                if committed is not None:
                     self._git(["reset", "-q", "HEAD", *self._pathspecs([path])])
-                    self._git(["checkout", "-q", "HEAD", *self._pathspecs([path])])
                 else:
-                    self._git(["rm", "-q", "--force", "--cached", "--ignore-unmatch",
-                               *self._pathspecs([path])])  # fmt: skip
-                    target = self.path / path
-                    if target.is_file() and not target.is_symlink():
-                        target.unlink()
-            except (RepoError, OSError):
-                logger.warning("could not undo an uncommitted file (%s)", type(self).__name__)
+                    self._git(
+                        ["rm", "-q", "--force", "--cached", "--ignore-unmatch",
+                         *self._pathspecs([path])]
+                    )  # fmt: skip
+            except RepoError:
+                logger.warning("could not unstage a file (%s)", type(self).__name__)
+            # The working tree is fixed without git, so it is right even when git is locked.
+            target = self.path / path
+            try:
+                if target.is_symlink():
+                    continue
+                if committed is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_bytes(committed)
+            except OSError:
+                logger.warning("could not restore a file (%s)", type(self).__name__)
 
     @staticmethod
     def _check_sha(sha: str) -> None:
