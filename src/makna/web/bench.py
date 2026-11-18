@@ -47,6 +47,13 @@ SKELETON = '{\n  "metric": ""\n}'
 bench_router = APIRouter()
 
 
+def _size(text: str) -> int:
+    """The bytes of `text` as the form sent it. The server counts bytes; the text area's
+    `maxlength` counts characters, and a character is at least one byte, so a browser never lets
+    a user type more characters than the limit has bytes (it may refuse less than the server)."""
+    return len(text.encode("utf-8", "surrogatepass"))
+
+
 def today() -> datetime.date:
     """The date the bench counts as today: the server's date, read once per request."""
     return datetime.date.today()
@@ -146,7 +153,7 @@ def parse_request(text: str) -> tuple[QueryRequest | None, str | None]:
     The reason names the place and the rule, never the text that was sent. A field that
     `QueryRequest` does not have is refused.
     """
-    if len(text.encode("utf-8")) > MAX_REQUEST_BYTES:
+    if _size(text) > MAX_REQUEST_BYTES:
         return None, f"The request is longer than {MAX_REQUEST_BYTES // 1024} KiB."
     try:
         data = json.loads(text)
@@ -155,6 +162,9 @@ def parse_request(text: str) -> tuple[QueryRequest | None, str | None]:
         return None, f"This is not valid JSON: {error.msg} ({place})."
     except RecursionError:
         return None, "This is not a request: the JSON is nested too deeply."
+    except ValueError:
+        # Python refuses an integer of more than 4300 digits with a plain ValueError.
+        return None, "This is not a request: a number in the JSON is too large."
     if not isinstance(data, dict):
         return None, 'The request must be a JSON object such as {"metric": "npf_ratio"}.'
     try:
@@ -165,6 +175,8 @@ def parse_request(text: str) -> tuple[QueryRequest | None, str | None]:
             for item in error.errors(include_input=False, include_url=False)
         ]
         return None, "The request does not have the shape of section 7.1. " + "; ".join(problems)
+    except ValueError:
+        return None, "This is not a request: a value in the JSON is too large or not acceptable."
 
 
 def _submit(
@@ -225,7 +237,7 @@ async def bench_compile(
 ) -> Response:
     context = _signed_in(request)
     question = q.strip()
-    if len(request_json.encode("utf-8")) > MAX_REQUEST_BYTES:
+    if _size(request_json) > MAX_REQUEST_BYTES:
         # The text is not echoed back: the box keeps the skeleton and the page says why.
         view = Bench(question, today())
         view.input_error = f"The request is longer than {MAX_REQUEST_BYTES // 1024} KiB."

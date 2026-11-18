@@ -266,6 +266,33 @@ def test_a_request_with_the_wrong_shape_is_refused(
     assert "<h2>SQL</h2>" not in response.text
 
 
+@pytest.mark.parametrize(
+    "request_json",
+    [
+        '{"metric": "average_ticket_size", "limit": ' + "9" * 5000 + "}",
+        '{"metric": "average_ticket_size", "filters": [{"dimension": "x", "op": "=", "value": '
+        + "9" * 5000
+        + "}]}",
+        "-" + "9" * 5000,
+    ],
+)
+def test_an_integer_of_thousands_of_digits_is_refused_not_a_crash(
+    app: Any, engine: Engine, request_json: str
+) -> None:
+    client = client_for(app, engine)
+    response = post(client, request_json)
+    assert response.status_code == 400, response.status_code
+    assert "too large" in response.text or "must be a JSON object" in response.text
+    # The box keeps the text that was posted (escaped); the message does not repeat it.
+    assert "9" * 100 not in response.text.split("<mark>")[-1]
+
+
+def test_a_lone_surrogate_in_the_json_is_not_a_crash(app: Any, engine: Engine) -> None:
+    client = client_for(app, engine)
+    response = post(client, '{"metric": "\\ud800"}')
+    assert response.status_code in (200, 400)
+
+
 def test_a_request_over_16_kib_is_refused_and_not_echoed(app: Any, engine: Engine) -> None:
     client = client_for(app, engine)
     big = '{"metric": "' + "m" * 17000 + '"}'
@@ -364,3 +391,30 @@ def test_the_bench_has_no_route_that_runs_sql(app: Any) -> None:
     assert paths == {"/bench"}
     methods = {m for path, ms in w.iter_routes(app) if path == "/bench" for m in ms}
     assert methods == {"GET", "POST"}
+
+
+def test_markup_in_the_compiled_sql_and_explanation_is_escaped_on_the_page(
+    app: Any, engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What the compiler returns is text from definitions. Plant markup in every part of it and
+    look at the page the browser gets."""
+    from makna.model.request import CompileResponse, MetricRef, ResultColumn
+    from makna.services import Services
+
+    evil = "<script>alert('x')</script>\"><img src=x onerror=alert(1)>"
+    response = CompileResponse(
+        sql=f"SELECT '{evil}' AS a",
+        dialect="postgres",
+        columns=(ResultColumn(name=evil, role="metric", unit=evil),),
+        explanation=(f"Explained {evil}",),
+        warnings=(f"Warned {evil}",),
+        metric=MetricRef(id=f"metric:{evil}", version=1),
+    )
+    monkeypatch.setattr(Services, "compile_query", lambda self, caller, request: response)
+    page = client_for(app, engine).get("/bench", params={"q": QUESTION}).text
+    escaped = str(escape(evil))
+    assert page.count(escaped) >= 5  # sql, column, unit, explanation, warning (and the id)
+    assert "<script>alert('x')" not in page and "<img src=x" not in page
+    for tag in re.findall(r"<script[^>]*>", page):
+        assert 'src="/static/' in tag
+    assert re.search(r'<code id="sql-text">SELECT &#39;&lt;script&gt;', page)

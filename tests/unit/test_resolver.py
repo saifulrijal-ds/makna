@@ -445,3 +445,35 @@ def test_ambiguous_pair_reads_the_pre_fusion_score_of_the_hits() -> None:
         )
         == ()
     )
+
+
+def test_the_boundaries_are_strict_for_the_gap_and_inclusive_for_the_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Values that are exact in binary, so that a `<` turned into `<=` (or `>=` into `>`) shows.
+    from makna.search import confidence
+
+    monkeypatch.setattr(confidence, "AMBIGUITY_COVERAGE_GAP", 0.25)
+    monkeypatch.setattr(confidence, "AMBIGUITY_SCORE_RATIO", 0.5)
+    assert is_ambiguous(1.0, 1.0, 0.5, 0.8125) is True  # ratio exactly 0.5; gap 0.1875
+    assert is_ambiguous(1.0, 1.0, 0.5, 0.75) is False  # a gap of exactly 0.25 is not "less than"
+    assert is_ambiguous(1.0, 0.75, 0.5, 1.0) is False  # the same, the other way round
+    assert is_ambiguous(1.0, 1.0, 0.4999, 1.0) is False  # a ratio below 0.5
+
+
+@pytest.mark.parametrize(
+    ("question", "phrase", "ref"),
+    [
+        ("disbursement by customer name", "customer name", "customer.full_name"),
+        ("disbursement by tahun lahir", "tahun lahir", "customer.birth_year"),
+        ("disbursement per nomor telepon", "nomor telepon", "customer.phone_number"),
+    ],
+)
+def test_a_personal_dimension_that_is_asked_for_is_left_out_with_a_note(
+    question: str, phrase: str, ref: str
+) -> None:
+    result = run(question, *clear("disbursement_amount"))
+    assert result.request is not None and result.request.dimensions == ()
+    assert any(phrase in n and ref in n and "personal data" in n for n in result.notes), (
+        result.notes
+    )

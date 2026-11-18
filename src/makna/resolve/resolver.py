@@ -227,15 +227,17 @@ def _speakable_dimensions(
 
 
 def _other_dimensions(
-    model: Model, speakable: Sequence[tuple[str, Dimension]]
+    model: Model, speakable: Sequence[tuple[str, Dimension]], *, personal: bool
 ) -> list[tuple[str, Dimension]]:
-    """The non-personal dimensions of the model that the metric does not offer."""
+    """The dimensions of the model that the metric does not offer and the resolver does not
+    match: the non-personal ones, or (`personal`) the personal ones, masked or not."""
     offered = {ref for ref, _ in speakable}
     others: list[tuple[str, Dimension]] = []
     for entity in model.entities.values():
         for dimension in entity.dimensions:
             ref = f"{entity.name}.{dimension.name}"
-            if ref not in offered and model.effective_sensitivity(entity, dimension) != "personal":
+            is_personal = model.effective_sensitivity(entity, dimension) == "personal"
+            if is_personal == personal and (personal or ref not in offered):
                 others.append((ref, dimension))
     return others
 
@@ -343,12 +345,14 @@ def _read_dimensions(
     reading: _Reading,
     table: Mapping[tuple[str, ...], list[str]],
     elsewhere: Mapping[tuple[str, ...], list[str]],
+    personal: Mapping[tuple[str, ...], list[str]],
     metric: str,
 ) -> None:
     """Dimensions: the phrases after a cue ("by", "per", "each", "tiap"), one or more.
 
     A phrase that names a dimension the metric cannot be cut by (`elsewhere`) is not guessed at: it
-    stays unresolved, with a note that says so.
+    stays unresolved, with a note that says so; so does a personal dimension, which is never
+    matched.
     """
     refs: list[str] = []
     words = reading.words
@@ -367,6 +371,11 @@ def _read_dimensions(
                     reading.notes.append(
                         f'"{" ".join(other[0])}" names {", ".join(sorted(other[1]))}, '
                         f"which {metric} cannot be cut by."
+                    )
+                elif not used and (secret := _longest(words, j, personal, reading.taken)):
+                    reading.notes.append(
+                        f'"{" ".join(secret[0])}" names {", ".join(sorted(secret[1]))}, which '
+                        "is personal data: it is never matched and was left out."
                     )
                 break
             phrase, options = found
@@ -512,8 +521,9 @@ def resolve(
     speakable, note = _speakable_dimensions(model, metric, policy)
     if note:
         reading.notes.append(note)
-    elsewhere = _dimension_phrases(_other_dimensions(model, speakable))
-    _read_dimensions(reading, _dimension_phrases(speakable), elsewhere, metric.name)
+    elsewhere = _dimension_phrases(_other_dimensions(model, speakable, personal=False))
+    secret = _dimension_phrases(_other_dimensions(model, speakable, personal=True))
+    _read_dimensions(reading, _dimension_phrases(speakable), elsewhere, secret, metric.name)
     _read_filters(reading, _value_phrases(speakable), explained)
     request = QueryRequest(
         metric=first.name,
