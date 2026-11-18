@@ -279,7 +279,7 @@ def _object_values(
 async def metric(request: Request, name: str) -> Response:
     caller, view, related = await _definition(request, "metric", name, detail="brief")
     state = _state(request)
-    freshness = await _db(state.services.discovery.freshness, name)
+    freshness = await _db(state.services.discovery.freshness, caller, name)
     values = _object_values(caller, view, related)
     values["freshness"] = freshness_text(freshness)
     values["examples"] = [(q, bench_path(q)) for q in view.example_questions]

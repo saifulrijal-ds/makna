@@ -24,7 +24,7 @@ from sqlalchemy import ColumnElement, Engine, select
 from makna.index.tables import data_freshness, semantic_object
 from makna.model.metrics import dependency_closure
 from makna.search.hybrid import visible_statuses
-from makna.services import permissions
+from makna.services import objects, permissions
 from makna.services.caller import Caller
 from makna.services.freshness import measure_id
 from makna.services.snapshot import SnapshotCache
@@ -188,14 +188,21 @@ class Discovery:
         with self._engine.connect() as connection:
             return [_listed(row) for row in connection.execute(query)]
 
-    def freshness(self, metric_name: str) -> Freshness:
+    def freshness(self, caller: Caller, metric_name: str) -> Freshness:
         """The freshness of an approved metric from the stored rows of its measures.
 
         A metric built from other metrics reads every measure underneath it. `latest` is the
         earliest of the measures' dates, the honest answer for a number that mixes them; it is
         None, "not available", when the metric is not approved, reads no measure, or one of its
-        measures has no stored date yet. `checked_at` is the oldest check among them.
+        measures has no stored date yet. `checked_at` is the oldest check among them. The date is
+        the latest value found in the data: for a schedule column such as the due date it can lie
+        in the future. A metric the caller may not see has no freshness, as for `get_definition`.
         """
+        permissions.require(caller, permissions.Permission.READ_APPROVED)
+        with self._engine.connect() as connection:
+            row = objects.fetch_object(connection, f"metric:{metric_name}")
+        if row is None or not row.visible_to(permissions.can_see_drafts(caller)):
+            return Freshness()
         snapshot, _ = self._cache.current()
         root = snapshot.model.metrics.get(metric_name)
         if root is None:

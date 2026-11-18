@@ -360,6 +360,55 @@ def test_stored_text_is_escaped_and_a_question_with_special_characters_is_encode
         app.state.services.dispose()
 
 
+def test_stored_text_is_escaped_on_the_entity_glossary_and_domain_pages_and_in_the_owner(
+    fresh_service_world: tuple[Engine, Any], tmp_path: Path
+) -> None:
+    engine, _ = fresh_service_world
+    root = tmp_path / "definitions"
+    shutil.copytree(DEFINITIONS, root)
+    planted = {
+        "domain.yaml": None,
+        "entities/contract.yaml": None,
+        "glossary/npf.yaml": None,
+        "metrics/penalty_income.yaml": None,
+    }
+    for name in planted:
+        path = root / "lending" / name
+        content = yaml.safe_load(path.read_text(encoding="utf-8"))
+        content["description"] = f"{SCRIPT} " + content["description"]
+        content["owner"]["team"] = SCRIPT
+        content["synonyms"]["en"].append(SCRIPT)
+        for relation in content.get("relationships") or []:
+            relation["description"] = SCRIPT
+        for dimension in content.get("dimensions") or []:
+            dimension["description"] = SCRIPT + " " + dimension["description"]
+        for rule in content.get("rules") or []:
+            rule["description"] = SCRIPT + " " + rule["description"]
+        path.write_text(
+            yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+    reindex(engine, root)
+    app = w.make_app(engine.url)
+    try:
+        client = w.signed_in(app, w.make_user(engine, "viewer"))
+        escaped = "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;"
+        for url in (
+            "/domains/lending",
+            "/entities/contract",
+            "/glossary/npf",
+            "/metrics/penalty_income",
+        ):
+            response = client.get(url)
+            assert response.status_code == 200, url
+            assert "<script>alert" not in response.text, url
+            assert all(s.get("src") for s in parsed(response.text).scripts), url
+            assert escaped in response.text, url
+            if url != "/domains/lending":
+                assert escaped in section(response.text, "owner"), url
+    finally:
+        app.state.services.dispose()
+
+
 # --- criterion 4: a deprecated metric ---
 
 

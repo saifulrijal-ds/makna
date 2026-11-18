@@ -25,7 +25,7 @@ from sqlglot import exp
 from makna.cli.main import main
 from makna.engine.base import EngineError
 from makna.index.tables import data_freshness
-from makna.services.discovery import Discovery
+from makna.services.discovery import Discovery, Freshness
 from makna.services.freshness import measure_checks, refresh
 from makna.services.snapshot import SnapshotCache
 
@@ -174,11 +174,15 @@ def test_a_metric_over_two_tables_shows_the_earlier_date_and_says_so(
 def test_a_draft_metric_has_no_freshness_and_a_viewer_cannot_open_it(
     fresh_service_world: tuple[Engine, Any],
 ) -> None:
-    engine, _ = fresh_service_world
+    engine, users = fresh_service_world
     services = w.make_app(engine.url).state.services
     try:
-        assert services.discovery.freshness("write_off_amount").latest is None
-        assert services.discovery.freshness("no_such_metric").measures == 0
+        found = services.discovery.freshness
+        viewer = users.caller("viewer", "web")
+        assert found(viewer, "write_off_amount") == Freshness()
+        assert found(viewer, "no_such_metric") == Freshness()
+        assert found(users.caller("curator", "web"), "write_off_amount").latest is None
+        assert found(viewer, "outstanding_principal").measures == 1
     finally:
         services.dispose()
 
