@@ -265,8 +265,9 @@ def _refuse_foreign_tables(
     ).first()
     if clash is not None:
         raise ConnectorError(
-            f"source.name {source_name!r}: table {clash[0]} already belongs to source "
-            f"{clash[1]!r}; a source cannot be renamed by changing source.name in the file"
+            f"source {source_name!r}: table {clash[0]} already belongs to source "
+            f"{clash[1]!r}; a source cannot be renamed, and tables are not moved to another "
+            "source or connector"
         )
 
 

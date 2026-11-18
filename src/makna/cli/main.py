@@ -10,6 +10,7 @@ from pathlib import Path
 
 from makna.catalog.base import ConnectorError
 from makna.catalog.file import FileConnector
+from makna.catalog.openmetadata import OpenMetadataConnector
 from makna.catalog.references import load_view, open_issues
 from makna.catalog.sync import sync_catalog
 from makna.cli import accounts as account_commands
@@ -17,6 +18,7 @@ from makna.config import (
     ConfigError,
     load_engine_runtime,
     load_governance_runtime,
+    load_openmetadata_runtime,
     load_search_runtime,
     load_tag_map,
 )
@@ -94,10 +96,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     sync.add_argument(
+        "--source",
+        choices=("file", "openmetadata"),
+        default="file",
+        help=(
+            "where the catalog is read from (default: file). openmetadata reads the REST API "
+            "named in [catalog.openmetadata] of config/makna.toml with MAKNA_OPENMETADATA_TOKEN"
+        ),
+    )
+    sync.add_argument(
         "--file",
         type=Path,
-        default=DEFAULT_CATALOG_FILE,
-        help=f"catalog export file (default: {DEFAULT_CATALOG_FILE})",
+        default=None,
+        help=f"catalog export file, for --source file only (default: {DEFAULT_CATALOG_FILE})",
     )
     sync.add_argument(
         "--definitions",
@@ -288,10 +299,41 @@ def _definitions_directory(given: Path | None) -> Path | None:
     return DEFAULT_DEFINITIONS if DEFAULT_DEFINITIONS.is_dir() else None
 
 
-def _catalog_sync(file: Path, definitions: Path | None) -> int:
+def _openmetadata_connector() -> OpenMetadataConnector:
+    """The connector from `[catalog.openmetadata]` and `MAKNA_OPENMETADATA_TOKEN`.
+
+    Raises `ConfigError` for a missing token or section; the token is read here, never in
+    `makna.catalog`, and handed over as a `SecretStr`.
+    """
+    runtime = load_openmetadata_runtime()
+    settings = runtime.catalog.openmetadata
+    if settings is None:
+        raise ConfigError("[catalog.openmetadata] is missing from config/makna.toml")
+    if runtime.openmetadata_token is None:
+        raise ConfigError("MAKNA_OPENMETADATA_TOKEN is not set")
+    return OpenMetadataConnector(
+        settings.base_url,
+        runtime.openmetadata_token,
+        services=settings.services,
+        source_name=settings.source_name,
+        page_size=settings.page_size,
+        max_pages=settings.max_pages,
+        timeout=settings.timeout_seconds,
+    )
+
+
+def _catalog_sync(source: str, file: Path | None, definitions: Path | None) -> int:
     from sqlalchemy.exc import SQLAlchemyError
 
+    if source != "file" and file is not None:
+        print("makna catalog sync: --file is for --source file only", file=sys.stderr)
+        return 2
+    connector: FileConnector | OpenMetadataConnector | None = None
     try:
+        if source == "openmetadata":
+            connector = _openmetadata_connector()
+        else:
+            connector = FileConnector(file or DEFAULT_CATALOG_FILE)
         engine = make_engine(database_url_from_env())
         tag_map = load_tag_map()
         directory = _definitions_directory(definitions)
@@ -311,7 +353,7 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
             )
         result = sync_catalog(
             engine,
-            FileConnector(file),
+            connector,
             tag_map=tag_map,
             entities=entities,
             glossary_terms=terms,
@@ -323,6 +365,16 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
     except (ConnectorError, SQLAlchemyError) as error:
         print(f"makna catalog sync: {error}", file=sys.stderr)
         return 1
+    finally:
+        if isinstance(connector, OpenMetadataConnector):
+            connector.close()
+    if isinstance(connector, OpenMetadataConnector):
+        for service, count in sorted(connector.skipped_services.items()):
+            print(
+                f"makna catalog sync: skipped {count} table(s) of OpenMetadata service "
+                f"{service!r}: not in [catalog.openmetadata.services]",
+                file=sys.stderr,
+            )
     for warning in result.warnings:
         print(f"makna catalog sync: warning: {warning}", file=sys.stderr)
     summary = result.summary.as_dict()
@@ -547,7 +599,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return bridge_main()
     if args.command == "catalog":
         if args.catalog_command == "sync":
-            return _catalog_sync(args.file, args.definitions)
+            return _catalog_sync(args.source, args.file, args.definitions)
         if args.catalog_command == "issues":
             return _catalog_issues()
         if args.catalog_command == "compare":
