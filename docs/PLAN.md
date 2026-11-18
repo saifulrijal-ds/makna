@@ -25,7 +25,7 @@ M1 Agent path         WP-06 → WP-07; WP-08 → WP-09 → WP-10 → WP-10B, WP-
    -- Fable review 1: core complete (model, search, compiler) --
 M1 fixes             WP-15B → WP-15C, WP-15D, WP-15E; WP-15D → WP-14C
 M2 People path        WP-16 → WP-17; WP-18 → WP-19 → WP-19B; WP-19C; WP-20; WP-21; WP-22 → WP-22B; WP-22C; WP-23
-   -- Fable review 2: before the MVP release --
+   -- Milestone review 2 (Opus, D-37): before the MVP release --
 ```
 
 Packages that can run in parallel once their dependencies are done: WP-02 with WP-03; WP-04 with WP-05; WP-06 with WP-08; WP-07 with WP-09 and WP-10; WP-14 with WP-12, WP-12B, and WP-13; WP-17, WP-18, WP-21, WP-22, WP-22C with each other; WP-19B with WP-19C; WP-15C, WP-15D, and WP-15E with each other. M2 packages that touch none of the fixes (WP-16, WP-21, WP-22, WP-22C) may run alongside the M1 fixes; WP-18 waits for WP-15C, and WP-20 and WP-22B wait for WP-14C.
@@ -491,4 +491,4 @@ Source: `docs/reviews/core-complete.md`; findings C-1 to C-13 and open questions
   6. Every package in `docs/progress.json` is `done`, or listed with its reason in the release pull request.
   7. EVL-4 (the brief's first success criterion): the full-run report of WP-22B is committed and shows the gate result of `docs/EVALS.md` section 5.4, or the release pull request contains the owner's written waiver. A missing run is not a waiver.
 
-**Fable review 2 (before the MVP release)** follows WP-23.
+**Milestone review 2 (before the MVP release)** follows WP-23. An Opus 5.5 reviewer does it with a fresh context (D-37).

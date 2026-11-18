@@ -7,6 +7,8 @@
     tune        grid over the weights on the tuned split; prints the setting the rule chooses
     freeze      re-run the reference SQL and rewrite evals/golden/expected/ (after a deliberate
                 change of the data or of a definition)
+    agent-report  build the agent comparison report from a runs file (docs/EVALS.md section 5;
+                no model, no database; WP-22B adds `agent`, which records the runs)
 
 Exit codes: 0 every gate passed, 1 a gate failed (each failing gate, question, or request is
 named), 2 the evals could not run (a setting, database, or model problem).
@@ -27,6 +29,11 @@ import psycopg
 from sqlalchemy.exc import SQLAlchemyError
 
 from evals import compile_eval, gates, heldout_eval, report, resolver_eval, retrieval, tune
+from evals.agent.bootstrap import DEFAULT_SEED as DEFAULT_BOOTSTRAP_SEED
+from evals.agent.golden import load_golden
+from evals.agent.record import RunsFileError
+from evals.agent.report import report_from_runs_file
+from evals.agent.scan import generated_scan
 from evals.golden import freeze as freeze_module
 from evals.golden.heldout import HeldoutFile, load_heldout_questions
 from evals.golden.reference import EXPECTED_DIR, QUESTIONS_FILE, SEARCH_QUESTIONS_FILE
@@ -246,12 +253,38 @@ def freeze_command(args: argparse.Namespace) -> int:
     return freeze_module.main([])
 
 
+def agent_report_command(args: argparse.Namespace) -> int:
+    """Score a runs file and write `report.json` and `report.md` (next to it by default)."""
+    from data.generator import DEFAULT_SEED  # `data/` is not needed by the other commands
+
+    runs = Path(args.runs)
+    try:
+        golden = load_golden()
+        scan = generated_scan(DEFAULT_SEED if args.seed is None else args.seed, args.scale)
+        report, _, md_path = report_from_runs_file(
+            runs,
+            golden,
+            scan,
+            out_dir=Path(args.out) if args.out else None,
+            seed=args.bootstrap_seed,
+        )
+    except (RunsFileError, ValueError, OSError) as error:
+        print(f"makna-eval: cannot report: {error}", file=sys.stderr)
+        return EXIT_SETUP
+    gate = report["gate"]
+    state = "not stated" if not gate["stated"] else ("pass" if gate["passed"] else "fail")
+    print(f"mode: {report['mode']}; gate: {state}")
+    print(f"makna-eval: wrote {md_path}")
+    return EXIT_PASS
+
+
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "all": evaluate_command,
     "retrieval": evaluate_command,
     "compile": evaluate_command,
     "tune": tune_command,
     "freeze": freeze_command,
+    "agent-report": agent_report_command,
 }
 
 
@@ -279,6 +312,26 @@ def build_parser() -> argparse.ArgumentParser:
         "golden and search questions. Prints the setting; changes no file but the report.",
     )
     tuning.add_argument("--out", help="report directory (default: evals/reports/<date>)")
+    scoring = commands.add_parser(
+        "agent-report",
+        help="build the agent comparison report from a runs file",
+        description="Score a runs file (docs/EVALS.md section 5) and write report.json and "
+        "report.md next to it. Calls no model and needs no database; the personal data scan "
+        "generates the sample customers again from the seed and scale.",
+    )
+    scoring.add_argument("runs", help="the runs.jsonl of a run")
+    scoring.add_argument("--out", help="report directory (default: the runs file's directory)")
+    scoring.add_argument(
+        "--seed",
+        type=int,
+        help="seed the sample data was generated with (default: the data generator's)",
+    )
+    scoring.add_argument(
+        "--scale", type=float, default=1.0, help="scale the sample data was generated with"
+    )
+    scoring.add_argument(
+        "--bootstrap-seed", type=int, default=DEFAULT_BOOTSTRAP_SEED, help="seed of the bootstrap"
+    )
     commands.add_parser(
         "freeze",
         help="rewrite evals/golden/expected/ from the reference SQL",

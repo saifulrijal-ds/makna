@@ -16,7 +16,7 @@ Fable usage is limited, so Fable does only the work where judgment decides the o
 |---|---|---|
 | A. Design | Fable 5.2, effort `high` | Architecture, semantic model schema, answers to the open questions, sample domain metrics, eval design, and a work plan split into packages. Small code spikes only where a design risk needs proof. |
 | B. Build | Opus 5.5 orchestrates; Sonnet 5.5 does most packages; Haiku 5.5 does well-specified, high-volume pieces (data generation, fixtures, boilerplate) | Implement the packages in `docs/PLAN.md`, each on its own branch with tests. |
-| C. Review | Fable 5.2, fresh context | Review at two milestones: after the core (model, search, compiler) and before the MVP release. Fable reviews against the spec; it does not build. |
+| C. Review | Fable 5.2, fresh context (review 1); Opus 5.5, fresh context (review 2, D-37) | Review at two milestones: after the core (model, search, compiler) and before the MVP release. The reviewer reviews against the spec; it does not build. |
 
 Why Fable is not the orchestrator for phase B: orchestration runs for the whole build, so it would spend most of the Fable allowance on coordination. Opus 5.5 orchestrates well at a lower cost. Fable's judgment goes where it pays most: the decisions everything else depends on, and independent review.
 
