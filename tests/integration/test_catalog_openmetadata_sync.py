@@ -67,3 +67,15 @@ def test_the_cli_syncs_from_openmetadata_and_reports_skipped_services(
     assert code == 0, captured.err
     assert "datasets: added 1" in captured.out
     assert "skipped 2 table(s) of OpenMetadata service 'marketing_sample'" in captured.err
+
+
+def test_a_database_synced_from_openmetadata_refuses_the_file_and_keeps_its_tables(
+    migrated_engine: Engine,
+) -> None:
+    om_sync(migrated_engine)
+    with pytest.raises(ConnectorError, match="already belongs to source 'openmetadata'"):
+        sync_catalog(migrated_engine, FileConnector(EXPORT), tag_map=TAG_MAP)
+    with migrated_engine.connect() as connection:
+        assert connection.execute(select(func.count()).select_from(catalog_dataset)).scalar() == 9
+        names = connection.execute(select(catalog_source.c.name)).scalars().all()
+    assert names == ["openmetadata"]

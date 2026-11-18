@@ -40,16 +40,30 @@ def test_every_image_is_pinned_to_an_exact_version_and_the_readme_records_them()
     # Elasticsearch and MySQL are not permissive: OpenSearch (Apache-2.0) and PostgreSQL.
     assert "elastic" not in "".join(images.values()) and "mysql" not in "".join(images.values())
     assert images["opensearch"] == "opensearchproject/opensearch:3.4.0"
-    assert "Apache-2.0" in readme and "PostgreSQL License" in readme
+    licences = {
+        "docker.getcollate.io/openmetadata/postgresql:2.0.7": "PostgreSQL License",
+        "opensearchproject/opensearch:3.4.0": "Apache-2.0",
+        "docker.getcollate.io/openmetadata/server:2.0.7": "Apache-2.0",
+    }
+    for image, licence in licences.items():
+        row = next(
+            line for line in readme.splitlines() if line.startswith("|") and f"`{image}`" in line
+        )
+        assert licence in row, image
+    assert set(licences) == set(images.values())
     environment = COMPOSE["x-server-environment"]
     assert environment["SEARCH_TYPE"] == "opensearch"
     assert environment["ELASTICSEARCH_HOST"] == "opensearch"
 
 
 def test_the_stack_binds_to_localhost_and_is_separate_from_the_main_stack() -> None:
-    for service in COMPOSE["services"].values():
-        for port in service.get("ports", []):
-            assert port.startswith("127.0.0.1:"), port
+    published = {name: service.get("ports", []) for name, service in COMPOSE["services"].items()}
+    assert published == {
+        "postgresql": [],
+        "opensearch": [],
+        "migrate": [],
+        "server": ["127.0.0.1:8585:8585"],
+    }
     main = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text(encoding="utf-8"))
     assert COMPOSE["name"] != main.get("name")
     assert not set(COMPOSE["services"]) & set(main["services"])
@@ -81,8 +95,10 @@ def test_the_table_bodies_match_the_shapes_of_the_fixtures() -> None:
         ]
         assert [(o["type"]) for o in body["owners"]] == [o["type"] for o in shape["owners"]]
         assert {o["id"] for o in body["owners"]} == set(owners.values())
+        assert body.get("tableConstraints") == shape.get("tableConstraints")
         assert set(body) <= {
             "name", "description", "tableType", "columns", "databaseSchema", "owners", "tags",
+            "tableConstraints",
         }  # fmt: skip
 
 
@@ -157,3 +173,89 @@ def test_the_seeder_needs_the_token_and_a_safe_url(
     assert seed.main(["--url", "http://catalog.example.org"]) == 1
     err = capsys.readouterr().err
     assert "https://" in err and "secret-token-value" not in err
+
+
+# --- The create bodies against what OpenMetadata 2.0.7 requires on create ---
+
+# `required` of the create schemas at the tag (api/data, api/services, api/teams,
+# api/classification,
+# api/data/createGlossary*), and the rules of `DatabaseUtil.validateColumns` and
+# `validateConstraints` (openmetadata-service, resources/databases), which `PUT /api/v1/tables` runs
+# on every body. The create schemas also have `additionalProperties: false`.
+REQUIRED = {
+    "service": {"name", "serviceType"},
+    "database": {"name", "service"},
+    "schema": {"name", "database"},
+    "team": {"name", "teamType"},
+    "user": {"name", "email"},
+    "classification": {"name", "description"},
+    "tag": {"name", "description"},
+    "glossary": {"name", "description"},
+    "term": {"glossary", "name", "description"},
+    "table": {"name", "columns", "databaseSchema"},
+}
+LENGTH_TYPES = {"CHAR", "VARCHAR", "BINARY", "VARBINARY"}
+
+
+def table_problems(body: dict[str, Any]) -> list[str]:
+    """The reasons the server would answer 400 to a table body (rules of DatabaseUtil)."""
+    problems = []
+    columns = body["columns"]
+    names = [c["name"] for c in columns]
+    if len(set(names)) != len(names):
+        problems.append("a column name is repeated")
+    for column in columns:
+        if not {"name", "dataType"} <= set(column):
+            problems.append(f"{column.get('name')}: name and dataType are required")
+        if column["dataType"] in LENGTH_TYPES and not column.get("dataLength", 0) > 0:
+            problems.append(f"{column['name']}: dataLength must not be null")
+        if column["dataType"] == "ARRAY" and "arrayDataType" not in column:
+            problems.append(f"{column['name']}: arrayDataType must not be null")
+        if column.get("scale") is not None and column.get("precision") is None:
+            problems.append(f"{column['name']}: scale without precision")
+    key_columns = [c for c in columns if c.get("constraint") == "PRIMARY_KEY"]
+    if len(key_columns) > 1:
+        problems.append("multiple columns tagged with primary key constraints")
+    for constraint in body.get("tableConstraints", []):
+        if constraint["constraintType"] == "PRIMARY_KEY" and key_columns:
+            problems.append("a column key and a table key together")
+        if not set(constraint["columns"]) <= set(names):
+            problems.append("a table constraint names a column that does not exist")
+    return problems
+
+
+def test_every_create_body_satisfies_what_the_server_requires() -> None:
+    owners = {("team", "data-governance"): "11111111-1111-4111-8111-111111111111"}
+    for dataset in CATALOG["datasets"]:
+        body = seed.table_body(dataset, owners)
+        assert REQUIRED["table"] <= set(body)
+        assert table_problems(body) == [], dataset["name"]
+    assert REQUIRED["service"] <= set(seed.service_body())
+    assert REQUIRED["database"] <= set(seed.database_body())
+    assert REQUIRED["schema"] <= set(seed.schema_body("core"))
+    assert REQUIRED["team"] <= set(seed.team_body("data-governance"))
+    assert REQUIRED["user"] <= set(seed.user_body("rina.wijaya"))
+    assert REQUIRED["classification"] <= set(seed.classification_body("PII"))
+    assert REQUIRED["tag"] <= set(seed.tag_body("PII.Sensitive"))
+    assert REQUIRED["glossary"] <= set(seed.glossary_body())
+    for term in CATALOG["glossary_terms"]:
+        assert REQUIRED["term"] <= set(seed.term_body(term))
+        assert seed.term_body(term)["description"]
+
+
+def test_the_sample_has_a_varchar_a_composite_key_and_the_checker_catches_both() -> None:
+    owners = {("team", "data-governance"): "11111111-1111-4111-8111-111111111111"}
+    bodies = {d["name"]: seed.table_body(d, owners) for d in CATALOG["datasets"]}
+    snapshots = bodies["contract_monthly_snapshots"]
+    assert snapshots["tableConstraints"] == [
+        {"constraintType": "PRIMARY_KEY", "columns": ["snapshot_date", "contract_id"]}
+    ]
+    assert not [c for c in snapshots["columns"] if c.get("constraint") == "PRIMARY_KEY"]
+    assert any(c["dataType"] == "VARCHAR" for b in bodies.values() for c in b["columns"])
+    broken = json.loads(json.dumps(bodies["customers"]))
+    for column in broken["columns"]:
+        column.pop("dataLength", None)
+    assert any("dataLength" in p for p in table_problems(broken))
+    keys = json.loads(json.dumps(bodies["branches"]))
+    keys["columns"][1]["constraint"] = "PRIMARY_KEY"
+    assert any("multiple columns" in p for p in table_problems(keys))

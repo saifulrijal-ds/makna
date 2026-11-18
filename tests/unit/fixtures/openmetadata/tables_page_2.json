@@ -141,6 +141,7 @@
           "name": "contract_status",
           "dataType": "VARCHAR",
           "dataTypeDisplay": "varchar",
+          "dataLength": 255,
           "description": "Status of the contract.",
           "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.contract_status",
           "tags": [],
@@ -435,6 +436,7 @@
           "name": "payment_channel",
           "dataType": "VARCHAR",
           "dataTypeDisplay": "varchar",
+          "dataLength": 255,
           "description": "Channel the payment came through.",
           "fullyQualifiedName": "lending_sample.lending_prod.core.payments.payment_channel",
           "tags": [],
@@ -522,6 +524,7 @@
           "name": "jns_aksi",
           "dataType": "VARCHAR",
           "dataTypeDisplay": "varchar",
+          "dataLength": 255,
           "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.jns_aksi",
           "tags": [],
           "ordinalPosition": 4
@@ -538,6 +541,7 @@
           "name": "hasil",
           "dataType": "VARCHAR",
           "dataTypeDisplay": "varchar",
+          "dataLength": 255,
           "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.hasil",
           "tags": [],
           "ordinalPosition": 6

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -70,19 +71,32 @@ def tag_label(tag: str) -> dict[str, Any]:
     return {"tagFQN": tag, "source": "Classification", "labelType": "Manual", "state": "Confirmed"}
 
 
-def column_entity(table_fqn: str, column: dict[str, Any], position: int) -> dict[str, Any]:
+DEFAULT_VARCHAR_LENGTH = 255  # the export has no length; the server requires one for VARCHAR
+
+
+def data_length(column: dict[str, Any]) -> int:
+    """The length of `varchar(N)` in the native type, else the default."""
+    found = re.fullmatch(r"varchar\((\d+)\)", str(column["native_type"]))
+    return int(found.group(1)) if found else DEFAULT_VARCHAR_LENGTH
+
+
+def column_entity(
+    table_fqn: str, column: dict[str, Any], position: int, composite: bool
+) -> dict[str, Any]:
     entity: dict[str, Any] = {
         "name": column["name"],
         "dataType": OM_TYPES[column["data_type"]],
         "dataTypeDisplay": column["native_type"],
     }
+    if entity["dataType"] == "VARCHAR":
+        entity["dataLength"] = data_length(column)
     if column.get("description"):
         entity["description"] = column["description"]
     entity["fullyQualifiedName"] = f"{table_fqn}.{column['name']}"
     entity["tags"] = [tag_label(t) for t in column.get("tags", [])]
-    if column.get("is_primary_key"):
+    if column.get("is_primary_key") and not composite:
         entity["constraint"] = "PRIMARY_KEY"
-    elif column.get("nullable", True) is False:
+    elif column.get("nullable", True) is False or column.get("is_primary_key"):
         entity["constraint"] = "NOT_NULL"
     entity["ordinalPosition"] = position + 1
     return entity
@@ -99,6 +113,10 @@ def table_entity(dataset: dict[str, Any]) -> dict[str, Any]:
     }
     if dataset.get("description"):
         entity["description"] = dataset["description"]
+    keys = [c["name"] for c in dataset["columns"] if c.get("is_primary_key")]
+    composite = (
+        len(keys) > 1
+    )  # the server allows one PRIMARY_KEY column; more go in tableConstraints
     entity.update(
         {
             "version": 0.1,
@@ -106,7 +124,7 @@ def table_entity(dataset: dict[str, Any]) -> dict[str, Any]:
             "updatedBy": "admin",
             "tableType": "Regular",
             "columns": [
-                column_entity(table_fqn, c, position)
+                column_entity(table_fqn, c, position, composite)
                 for position, c in enumerate(dataset["columns"])
             ],
             "owners": [reference(o["type"], o["name"]) for o in dataset.get("owners", [])],
@@ -118,6 +136,8 @@ def table_entity(dataset: dict[str, Any]) -> dict[str, Any]:
             "deleted": False,
         }
     )
+    if composite:
+        entity["tableConstraints"] = [{"constraintType": "PRIMARY_KEY", "columns": keys}]
     return entity
 
 

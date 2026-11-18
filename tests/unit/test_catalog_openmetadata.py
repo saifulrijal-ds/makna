@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +82,19 @@ class FakeServer:
         body = pages.get(request.url.params.get("after"))
         if body is None:
             return httpx.Response(400, json={"message": "body-canary"})
+        if request.url.path == TABLES_PATH:
+            body = self._as_the_server_answers(body, request.url.params.get("fields", ""))
         return httpx.Response(200, json=body)
+
+    @staticmethod
+    def _as_the_server_answers(body: dict[str, Any], fields: str) -> dict[str, Any]:
+        """OpenMetadata returns `tableConstraints` only when it is asked for (TableRepository)."""
+        if "tableConstraints" in fields.split(","):
+            return body
+        stripped: dict[str, Any] = json.loads(json.dumps(body))
+        for table in stripped["data"]:
+            table.pop("tableConstraints", None)
+        return stripped
 
     def queries(self, path: str) -> list[dict[str, str]]:
         return [dict(r.url.params) for r in self.requests if r.url.path == path]
@@ -193,7 +206,7 @@ def test_a_listing_over_several_pages_is_read_in_full_with_the_cursor() -> None:
     assert [q.get("after") for q in queries][0] is None
     assert queries[1]["after"] == chain("tables")[None]["paging"]["after"]
     assert all(q["limit"] == "4" for q in queries)
-    assert all(q["fields"] == "columns,tags,owners" for q in queries)
+    assert all(q["fields"] == "columns,tableConstraints,tags,owners" for q in queries)
     list(connector(server, page_size=5).list_glossary_terms())
     assert [q["limit"] for q in server.queries(GLOSSARY_TERMS_PATH)] == ["5", "5"]
 
@@ -371,6 +384,10 @@ def test_a_listing_of_exactly_the_cap_is_accepted() -> None:
         "https://user:pw@catalog.example.org",
         "https://catalog.example.org?x=1",
         "https://catalog.example.org:notaport",
+        "http://local\nhost",
+        "https://catalog.example.org/a b",
+        "http://local\x00host",
+        "http://[::2]:8585",
     ],
 )
 def test_a_base_url_that_could_send_the_token_in_clear_is_refused(url: str) -> None:
@@ -385,6 +402,7 @@ def test_a_base_url_that_could_send_the_token_in_clear_is_refused(url: str) -> N
     [
         "https://catalog.example.org",
         "https://catalog.example.org:8443/om/",
+        "http://[::1]:8585",
         "http://localhost:8585",
         "http://127.0.0.1:8585/",
         "HTTP://LOCALHOST",
@@ -438,11 +456,111 @@ def test_a_table_without_a_service_or_a_four_part_name_is_a_shape_error() -> Non
     assert dataset.engine_fqn == "lending.core.t"
 
 
-def test_a_table_name_the_model_cannot_hold_is_an_error() -> None:
-    body = load("hand_tables_unmapped_service.json")
-    body["data"][2]["name"] = "a.b"
-    with pytest.raises(ConnectorError, match="cannot be mapped"):
+def test_a_table_the_model_cannot_hold_is_skipped_and_named_not_fatal() -> None:
+    instance = connector(single("hand_tables_unmappable_names.json"))
+    datasets = list(instance.list_datasets())
+    assert [d.engine_fqn for d in datasets] == ["lending.core.fine_table"]
+    assert instance.skipped_tables == [
+        "lending_sample.core.my table",
+        "lending_sample.core.v2.events",
+        "lending_sample.core.twin_columns",
+    ]
+
+
+def test_the_composite_key_of_the_sample_comes_from_table_constraints() -> None:
+    snapshots = next(
+        d
+        for d in connector(sample_server()).list_datasets()
+        if d.name == "contract_monthly_snapshots"
+    )
+    keys = [c.name for c in snapshots.columns if c.is_primary_key]
+    assert len(keys) == 2 and all(not c.nullable for c in snapshots.columns if c.is_primary_key)
+    assert keys == [
+        c["name"]
+        for d in generator_export()["datasets"]
+        if d["name"] == "contract_monthly_snapshots"
+        for c in d["columns"]
+        if c.get("is_primary_key")
+    ]
+
+
+def generator_export() -> dict[str, Any]:
+    import yaml
+
+    data = yaml.safe_load(EXPORT.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
+
+
+# --- Malformed answers ---
+
+
+def test_a_body_nested_beyond_the_parser_is_an_error_without_the_body() -> None:
+    depth = 100_000
+    bomb = b"[" * depth + b"]" * depth
+    with pytest.raises(ConnectorError) as raised:
+        list(connector(lambda request: httpx.Response(200, content=bomb)).list_datasets())
+    assert_clean(raised.value)
+    assert "not JSON" in str(raised.value)
+
+
+@pytest.mark.parametrize("stamp", [10**30, 10**18, -(10**18), True, 1.5, "yesterday"])
+def test_an_updated_at_that_is_not_a_date_is_an_error(stamp: Any) -> None:
+    body = load("hand_tables_owners_and_tags.json")
+    body["data"][0]["updatedAt"] = stamp
+    with pytest.raises(ConnectorError) as raised:
         list(connector(FakeServer(tables={None: body})).list_datasets())
+    assert_clean(raised.value)
+    assert "Makna cannot read" in str(raised.value) or "date" in str(raised.value)
+
+
+@pytest.mark.parametrize("change", [{"name": ""}, {"id": ""}])
+def test_a_glossary_term_without_a_name_or_an_id_is_an_error(change: dict[str, str]) -> None:
+    body = load("hand_glossary_term_with_synonyms.json")
+    body["data"][0].update(change)
+    with pytest.raises(ConnectorError) as raised:
+        list(connector(FakeServer(terms={None: body})).list_glossary_terms())
+    assert_clean(raised.value)
+    assert str(raised.value) == (
+        f"OpenMetadata answered {GLOSSARY_TERMS_PATH} with a term that has no name or no id"
+    )
+
+
+# --- Time and size limits ---
+
+
+class _Drip(httpx.SyncByteStream):
+    """A body that sends a byte every `pause` seconds, for `count` bytes."""
+
+    def __init__(self, count: int, pause: float) -> None:
+        self.count, self.pause = count, pause
+
+    def __iter__(self) -> Iterator[bytes]:
+        for _ in range(self.count):
+            time.sleep(self.pause)
+            yield b" "
+
+
+def test_an_answer_that_trickles_in_hits_the_overall_deadline() -> None:
+    instance = connector(lambda request: httpx.Response(200, stream=_Drip(200, 0.01)), timeout=0.1)
+    started = time.monotonic()
+    with pytest.raises(ConnectorError) as raised:
+        instance.check()
+    assert time.monotonic() - started < 1.5
+    assert str(raised.value) == (
+        f"OpenMetadata did not finish answering {TABLES_PATH} within 0.4 seconds"
+    )
+
+
+def test_the_timeout_setting_reaches_the_http_client() -> None:
+    assert connector(sample_server(), timeout=2.5)._client.timeout == httpx.Timeout(2.5)
+
+
+def test_an_answer_larger_than_the_cap_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("makna.catalog.openmetadata.MAX_BODY_BYTES", 1000)
+    big = {"data": [], "paging": {}, "padding": "x" * 5000}
+    with pytest.raises(ConnectorError, match="more than 1000 bytes"):
+        connector(lambda request: httpx.Response(200, json=big)).check()
 
 
 # --- The token ---

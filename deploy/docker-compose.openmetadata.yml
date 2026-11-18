@@ -59,8 +59,6 @@ services:
       - plugins.security.disabled=true
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${MAKNA_OPENMETADATA_SEARCH_PASSWORD:-OpenMetadata_password123!!!}
       - indices.query.bool.max_clause_count=4096
-    ports:
-      - "127.0.0.1:9200:9200"
     volumes:
       - search-data:/usr/share/opensearch/data
     healthcheck:

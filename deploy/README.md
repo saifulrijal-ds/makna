@@ -31,7 +31,7 @@ job, and here together. The Makna image installs `uv` 0.11.32 (the version CI us
 
 `deploy/docker-compose.openmetadata.yml` runs an OpenMetadata server apart from the main stack
 (its own project name, `makna-openmetadata`, and its own volumes; ports bind to `127.0.0.1`).
-It needs Docker and about 3 GB of memory. Only the web interface (8585) and OpenSearch (9200) are published, so it does not clash with the main stack's PostgreSQL on 5432.
+It needs Docker and about 3 GB of memory. Only the web interface (8585) is published (to 127.0.0.1); the database and OpenSearch are reached over the compose network only, so it does not clash with the main stack's PostgreSQL on 5432.
 
 | Service | Image | Licence |
 |---|---|---|

@@ -17,7 +17,7 @@
           "description": "Month-end date of the position.",
           "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.snapshot_date",
           "tags": [],
-          "constraint": "PRIMARY_KEY",
+          "constraint": "NOT_NULL",
           "ordinalPosition": 1
         },
         {
@@ -27,7 +27,7 @@
           "description": "Contract the position is for.",
           "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.contract_id",
           "tags": [],
-          "constraint": "PRIMARY_KEY",
+          "constraint": "NOT_NULL",
           "ordinalPosition": 2
         },
         {
@@ -52,6 +52,7 @@
           "name": "dpd_bucket",
           "dataType": "VARCHAR",
           "dataTypeDisplay": "varchar",
+          "dataLength": 255,
           "description": "Past-due bucket.",
           "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.dpd_bucket",
           "tags": [],
@@ -61,6 +62,7 @@
           "name": "collectibility",
           "dataType": "VARCHAR",
           "dataTypeDisplay": "varchar",
+          "dataLength": 255,
           "description": "Kol",
           "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.collectibility",
           "tags": [],
@@ -99,7 +101,16 @@
         "fullyQualifiedName": "lending_sample.lending_prod.core",
         "deleted": false
       },
-      "deleted": false
+      "deleted": false,
+      "tableConstraints": [
+        {
+          "constraintType": "PRIMARY_KEY",
+          "columns": [
+            "snapshot_date",
+            "contract_id"
+          ]
+        }
+      ]
     }
   ],
   "paging": {

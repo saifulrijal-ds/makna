@@ -88,9 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     catalog_commands = catalog.add_subparsers(dest="catalog_command", metavar="<command>")
     sync = catalog_commands.add_parser(
         "sync",
-        help="sync a catalog export file into the database and run the reference check",
+        help="sync a catalog (export file or OpenMetadata) into the database and check references",
         description=(
-            "Read a makna-catalog/v1 file, write the difference into the catalog tables, and "
+            "Read a catalog (a makna-catalog/v1 file, or OpenMetadata with --source "
+            "openmetadata), write the difference into the catalog tables, and "
             "check the definitions against it (reference issues R01 to R04). Prints a summary. "
             "Exits 0 on success, 1 if the file or the database cannot be used, 2 on bad usage."
         ),
@@ -369,6 +370,12 @@ def _catalog_sync(source: str, file: Path | None, definitions: Path | None) -> i
         if isinstance(connector, OpenMetadataConnector):
             connector.close()
     if isinstance(connector, OpenMetadataConnector):
+        for table in connector.skipped_tables:
+            print(
+                f"makna catalog sync: skipped table {table!r} of OpenMetadata: "
+                "its name cannot be held by the common catalog model",
+                file=sys.stderr,
+            )
         for service, count in sorted(connector.skipped_services.items()):
             print(
                 f"makna catalog sync: skipped {count} table(s) of OpenMetadata service "

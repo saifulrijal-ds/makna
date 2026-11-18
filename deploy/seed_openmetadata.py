@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -112,18 +113,33 @@ def tag_label(tag: str) -> dict[str, Any]:
     return {"tagFQN": tag, "source": "Classification", "labelType": "Manual", "state": "Confirmed"}
 
 
-def column_body(column: Mapping[str, Any], position: int) -> dict[str, Any]:
+# The export has no length, and the server refuses a VARCHAR column without one
+# (DatabaseUtil.validateColumnDataLength, 2.0.7).
+DEFAULT_VARCHAR_LENGTH = 255
+
+
+def data_length(column: Mapping[str, Any]) -> int:
+    """The length of `varchar(N)` in the native type, else the default."""
+    found = re.fullmatch(r"varchar\((\d+)\)", str(column["native_type"]))
+    return int(found.group(1)) if found else DEFAULT_VARCHAR_LENGTH
+
+
+def column_body(
+    column: Mapping[str, Any], position: int, composite: bool = False
+) -> dict[str, Any]:
     body: dict[str, Any] = {
         "name": column["name"],
         "dataType": OM_TYPES[column["data_type"]],
         "dataTypeDisplay": column["native_type"],
     }
+    if body["dataType"] == "VARCHAR":
+        body["dataLength"] = data_length(column)
     if column.get("description"):
         body["description"] = column["description"]
     body["tags"] = [tag_label(t) for t in column.get("tags", [])]
-    if column.get("is_primary_key"):
+    if column.get("is_primary_key") and not composite:
         body["constraint"] = "PRIMARY_KEY"
-    elif column.get("nullable", True) is False:
+    elif column.get("nullable", True) is False or column.get("is_primary_key"):
         body["constraint"] = "NOT_NULL"
     body["ordinalPosition"] = position + 1
     return body
@@ -134,13 +150,19 @@ def table_body(
 ) -> dict[str, Any]:
     """The `PUT /api/v1/tables` body; `owner_ids` maps `(type, name)` to the id the server gave."""
     _, schema, name = dataset["engine_fqn"].split(".")
+    keys = [c["name"] for c in dataset["columns"] if c.get("is_primary_key")]
+    composite = (
+        len(keys) > 1
+    )  # the server allows one PRIMARY_KEY column; more go in tableConstraints
     body: dict[str, Any] = {"name": name}
     if dataset.get("description"):
         body["description"] = dataset["description"]
+    if composite:
+        body["tableConstraints"] = [{"constraintType": "PRIMARY_KEY", "columns": keys}]
     body.update(
         {
             "tableType": "Regular",
-            "columns": [column_body(c, i) for i, c in enumerate(dataset["columns"])],
+            "columns": [column_body(c, i, composite) for i, c in enumerate(dataset["columns"])],
             "databaseSchema": f"{SERVICE}.{DATABASE}.{schema}",
             "owners": [
                 {"id": owner_ids[(o["type"], o["name"])], "type": o["type"]}

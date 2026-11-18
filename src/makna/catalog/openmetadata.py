@@ -8,9 +8,9 @@ Safety rules, each tested in `tests/unit/test_catalog_openmetadata.py`:
 
 - The token reaches the connector as a `SecretStr`, is unwrapped only to build the header of one
   request, and is in no message, no `repr` and no log line.
-- `base_url` must be `https://`, except `http://localhost` and `http://127.0.0.1`, so the bearer
-  token never travels in clear to another host. Redirects are never followed: a redirect would
-  send the token to the host the server names.
+- `base_url` must be `https://`, except `http://localhost`, `http://127.0.0.1` and
+  `http://[::1]`, so the bearer token never travels in clear to another host. Redirects are
+  never followed: a redirect would send the token to the host the server names.
 - Every failure is a `ConnectorError` with a fixed text per kind. A text names the endpoint
   path and the status at most; a response body is never quoted, because it can hold names and
   data.
@@ -18,14 +18,16 @@ Safety rules, each tested in `tests/unit/test_catalog_openmetadata.py`:
 
 from __future__ import annotations
 
+import json
 import re
+import time
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, ValidationError
 from pydantic.alias_generators import to_camel
 
 from makna.catalog.base import ConnectorError
@@ -39,9 +41,14 @@ from makna.model.catalog import (
 
 TABLES_PATH = "/api/v1/tables"
 GLOSSARY_TERMS_PATH = "/api/v1/glossaryTerms"
-TABLE_FIELDS = "columns,tags,owners"
+TABLE_FIELDS = "columns,tableConstraints,tags,owners"
 GLOSSARY_TERM_FIELDS = "relatedTerms,tags"
-LOCAL_HOSTS = ("localhost", "127.0.0.1")
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+MAX_BODY_BYTES = 64 * 1024 * 1024
+"""The largest answer read: one page of tables with their columns. A larger body is an error."""
+DEADLINE_FACTOR = 4
+"""A request, headers and body together, may take this many times `timeout` (the library's
+timeout is per operation, so a server that sends one byte at a time would never trip it)."""
 
 # What a JWT or an opaque token is made of. A header value with a newline or a non-ASCII
 # character would be refused by the HTTP library with a message that quotes the value.
@@ -69,6 +76,8 @@ def check_base_url(url: str) -> str:
     localhost only, and no user name or password in the URL. The message never shows the URL.
     """
     text = url.strip()
+    if re.search(r"[\x00-\x20\x7f]", text):
+        raise ConnectorError("OpenMetadata base_url is not a URL")
     if not text.lower().startswith(("http://", "https://")):
         raise ConnectorError("OpenMetadata base_url must start with https:// (or http://localhost)")
     try:
@@ -128,7 +137,7 @@ class _Table(_Lenient):
     name: str
     fully_qualified_name: str | None = None
     description: str | None = None
-    updated_at: int | None = None
+    updated_at: StrictInt | None = None
     columns: list[_Column] = []
     table_constraints: list[_TableConstraint] = []
     owners: list[_Reference] = []
@@ -200,6 +209,9 @@ class OpenMetadataConnector:
         self._timeout = timeout
         self.skipped_services: dict[str, int] = {}
         """Service name to the number of tables skipped in the last `list_datasets` run."""
+        self.skipped_tables: list[str] = []
+        """`service.schema.table` of each table the common model cannot hold, skipped in the last
+        run. Names of catalog objects, not data."""
         # No redirects: a redirect would carry the token to the host the server names.
         self._client = httpx.Client(
             base_url=self._base_url, timeout=timeout, follow_redirects=False, transport=transport
@@ -222,15 +234,20 @@ class OpenMetadataConnector:
             "Authorization": f"Bearer {self._token.get_secret_value()}",
             "Accept": "application/json",
         }
+        deadline = time.monotonic() + DEADLINE_FACTOR * self._timeout
         try:
-            response = self._client.get(path, params=params, headers=headers)
+            with self._client.stream("GET", path, params=params, headers=headers) as response:
+                status = response.status_code
+                if status != 200:
+                    content = b""
+                else:
+                    content = self._read(response, path, deadline)
         except httpx.TimeoutException:
             raise ConnectorError(
                 f"OpenMetadata did not answer {path} within {self._timeout:g} seconds"
             ) from None
         except httpx.HTTPError:
             raise ConnectorError(f"OpenMetadata cannot be reached at {path}") from None
-        status = response.status_code
         if status in (401, 403):
             raise ConnectorError(
                 f"OpenMetadata refused the token at {path} (HTTP {status}); "
@@ -239,14 +256,32 @@ class OpenMetadataConnector:
         if status != 200:
             raise ConnectorError(f"OpenMetadata answered {path} with HTTP {status}")
         try:
-            body = response.json()
-        except ValueError:
+            body = json.loads(content)
+        except (ValueError, RecursionError):
             raise ConnectorError(
                 f"OpenMetadata answered {path} with a body that is not JSON"
             ) from None
         if not isinstance(body, dict):
             raise ConnectorError(f"OpenMetadata answered {path} in a shape Makna cannot read")
         return body
+
+    def _read(self, response: httpx.Response, path: str, deadline: float) -> bytes:
+        """The body, up to `MAX_BODY_BYTES` and the overall deadline."""
+        chunks: list[bytes] = []
+        size = 0
+        for chunk in response.iter_bytes():
+            size += len(chunk)
+            if size > MAX_BODY_BYTES:
+                raise ConnectorError(
+                    f"OpenMetadata answered {path} with more than {MAX_BODY_BYTES} bytes"
+                )
+            if time.monotonic() > deadline:
+                raise ConnectorError(
+                    f"OpenMetadata did not finish answering {path} within "
+                    f"{DEADLINE_FACTOR * self._timeout:g} seconds"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def _pages(self, path: str, fields: str) -> Iterator[list[dict[str, Any]]]:
         """The items of each page of a listing, following the `after` cursor."""
@@ -285,6 +320,7 @@ class OpenMetadataConnector:
 
     def list_datasets(self) -> Iterator[CatalogDataset]:
         self.skipped_services = {}
+        self.skipped_tables = []
         taken: dict[str, str] = {}
         for raw in self._items(TABLES_PATH, TABLE_FIELDS):
             try:
@@ -304,14 +340,15 @@ class OpenMetadataConnector:
                     f"two tables of OpenMetadata service {service!r} map to the same "
                     "engine_fqn (the same schema and table name in two databases)"
                 )
-            taken[engine_fqn] = table.id
             try:
-                yield self._dataset(table, engine_fqn)
+                dataset = self._dataset(table, engine_fqn)
             except ValidationError:
-                raise ConnectorError(
-                    f"a table of OpenMetadata service {service!r} cannot be mapped to the "
-                    "common catalog model (a name with a dot, or an empty name)"
-                ) from None
+                # A name the common model cannot hold (a dot, a space, an empty or repeated
+                # name): the table is skipped and reported by name, not guessed and not fatal.
+                self.skipped_tables.append(f"{service}.{schema}.{table.name}")
+                continue
+            taken[engine_fqn] = table.id
+            yield dataset
 
     def list_glossary_terms(self) -> Iterator[CatalogGlossaryTerm]:
         for raw in self._items(GLOSSARY_TERMS_PATH, GLOSSARY_TERM_FIELDS):
@@ -322,14 +359,21 @@ class OpenMetadataConnector:
                     f"OpenMetadata answered {GLOSSARY_TERMS_PATH} in a shape Makna cannot read"
                 ) from None
             related = [r.term.name or r.term.fully_qualified_name for r in term.related_terms]
-            yield CatalogGlossaryTerm(
-                catalog_id=term.id,
-                name=term.name,
-                definition=term.description or "",
-                synonyms=[s for s in term.synonyms if s],
-                related_terms=[name for name in related if name],
-                tags=_confirmed_tags(term.tags),
-            )
+            try:
+                mapped = CatalogGlossaryTerm(
+                    catalog_id=term.id,
+                    name=term.name,
+                    definition=term.description or "",
+                    synonyms=[s for s in term.synonyms if s],
+                    related_terms=[name for name in related if name],
+                    tags=_confirmed_tags(term.tags),
+                )
+            except ValidationError:
+                raise ConnectorError(
+                    f"OpenMetadata answered {GLOSSARY_TERMS_PATH} with a term that has no "
+                    "name or no id"
+                ) from None
+            yield mapped
 
     # --- mapping ---
 
@@ -377,11 +421,14 @@ class OpenMetadataConnector:
                 owners.append(CatalogOwner(name=name, type="user"))
             elif name and owner.type == "team":
                 owners.append(CatalogOwner(name=name, type="team"))
-        updated_at = (
-            datetime.fromtimestamp(table.updated_at / 1000, tz=UTC)
-            if table.updated_at is not None
-            else None
-        )
+        updated_at = None
+        if table.updated_at is not None:
+            try:
+                updated_at = datetime.fromtimestamp(table.updated_at / 1000, tz=UTC)
+            except (OverflowError, OSError, ValueError):
+                raise ConnectorError(
+                    f"OpenMetadata answered {TABLES_PATH} with a date Makna cannot read"
+                ) from None
         return CatalogDataset(
             engine_fqn=engine_fqn,
             catalog_id=table.id,

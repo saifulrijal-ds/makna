@@ -20,10 +20,23 @@ Release: OpenMetadata **2.0.7** (tag `2.0.7-release`). Sources, read at that tag
 | list answer `{data, paging}` and the `after` cursor | `.../type/paging.json`; query parameters from `TableResource.java` and `GlossaryTermResource.java` |
 | ids, cursors, `updatedAt` | invented here (deterministic UUIDs, base64 of a small JSON object, one fixed date) |
 
-Not verified against a server: that `service`, `database` and `databaseSchema` references are
-present in a list answer (the connector falls back to the four-part `fullyQualifiedName`), the
-exact way names with dots or spaces are quoted in a full name, and what the server returns for
-`fields=owners` of a user (the reference has no e-mail).
+Read in the server source at the tag (`TableRepository`, `FullyQualifiedName`, `DatabaseUtil`),
+not on a live server:
+
+- `service`, `database` and `databaseSchema` references are always set in a list answer
+  (`setFields` runs `setDefaultFields`), so the four-part-name fallback is rarely used.
+- `tableConstraints` is returned only when it is in `fields`; the connector asks for it and the
+  fake server of the tests drops it otherwise.
+- A name part is quoted in a full name only if it holds a `.` or a `"`; spaces are not quoted.
+- Create requests refuse a VARCHAR column without `dataLength`, and more than one column with
+  the `PRIMARY_KEY` constraint (a composite key goes in `tableConstraints`); the fixtures follow
+  both, so `contract_monthly_snapshots` carries a table-level key.
+
+Still unverified: that a real list answer has exactly these keys and values (for example the
+`dataTypeDisplay` text for a varchar, which a real server writes as `varchar(255)`), what
+`fields=owners` returns for a user (the reference has no e-mail), that a database service may be
+created without `connection`, and the seeder's handling of `relatedTerms` and term tags (it does not
+load them, so criterion 4's glossary comparison will differ on those two fields).
 
 ## Files
 
@@ -32,7 +45,7 @@ exact way names with dots or spaces are quoted in a full name, and what the serv
   A unit test fails if they differ from what the script writes.
 - `hand_*.json`: written by hand, not generated. `hand_tables_owners_and_tags.json` (user and team
   owners, duplicate, suggested and glossary tags, a composite key, an unknown type),
-  `hand_tables_unmapped_service.json`, `hand_glossary_term_with_synonyms.json`,
+  `hand_tables_unmapped_service.json`, `hand_tables_unmappable_names.json` (a space, a dot, a repeated column), `hand_glossary_term_with_synonyms.json`,
   `hand_error_401.json` and `hand_error_500.json` (bodies with a marker text that no error
   message may show). The timeout and the redirect are produced by the test's fake transport.
 
