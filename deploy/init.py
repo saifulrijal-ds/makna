@@ -25,13 +25,19 @@ from data.generator import DEFAULT_SEED, TABLES, generate, write_parquet
 from data.lending_loader import load_all
 from makna.catalog.file import FileConnector
 from makna.catalog.sync import sync_catalog
-from makna.config import load_governance_runtime, load_search_runtime, load_tag_map
+from makna.config import (
+    load_engine_runtime,
+    load_governance_runtime,
+    load_search_runtime,
+    load_tag_map,
+)
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
 from makna.definitions.repo import GitRepo, is_repository_root
+from makna.engine.postgres import PostgresConnector
 from makna.index import indexer, migrate
 from makna.index.db import make_engine
 from makna.search.embedding import make_provider
-from makna.services import accounts, store
+from makna.services import accounts, freshness, store
 from makna.services.derive import make_derive
 from makna.services.examples import validate_for_build
 from makna.services.lifecycle import seed_repository
@@ -60,6 +66,9 @@ class Context:
     """`MAKNA_DEFINITIONS_REPO`: the definitions git repository (ARCHITECTURE section 10). When it
     is a repository of its own, the reference check and the index read it, as the application
     committed it, and not `definitions_dir`."""
+    engine_url: str | None = field(default=None, repr=False)
+    """`MAKNA_ENGINE_URL`: the read-only account of the sample database, for the freshness check.
+    Without it the `refresh-freshness` step skips. Left out of `repr` (it holds a password)."""
     demo_password: str | None = field(default=None, repr=False)
     """`MAKNA_DEMO_PASSWORD`: the password of the demo users. Without it, no demo user is made.
     Left out of `repr` so that it cannot reach a log."""
@@ -237,6 +246,34 @@ def _sync_repository_step(context: Context, repository: GitRepo) -> str:
     )
 
 
+def refresh_freshness_step(context: Context) -> str:
+    """Store the newest date of every approved measure (`makna freshness refresh`, WEB-1).
+
+    Without `MAKNA_ENGINE_URL` it skips and succeeds. A measure the engine cannot answer for is a
+    warning in the outcome, not a failure of `init`: the page then says "freshness not
+    available". A run that finds the stored dates unchanged writes nothing.
+    """
+    if not context.engine_url:
+        return "skipped (MAKNA_ENGINE_URL is not set, so no freshness was checked)"
+    freshness.keep_engine_text_out_of_terminal()
+    engine = make_engine(context.database_url)
+    connector = PostgresConnector(
+        context.engine_url,
+        statement_timeout_seconds=load_engine_runtime().engine.statement_timeout_seconds,
+    )
+    try:
+        result = freshness.refresh(engine, connector, record_unchanged=False)
+    except SQLAlchemyError as error:
+        # Not the error text: it carries the SQL parameters.
+        raise InitError(f"database error ({type(error).__name__})") from None
+    finally:
+        engine.dispose()
+    warning = "".join(f" WARNING: {f.object_id} failed ({f.error_class})" for f in result.failures)
+    if result.stored == 0 and not warning:
+        return "unchanged"
+    return f"checked {result.checked} measures, stored {result.stored}" + warning
+
+
 @dataclass(frozen=True)
 class DemoUser:
     email: str
@@ -295,6 +332,7 @@ STEPS: list[Step] = [
     Step("definitions-repo", seed_definitions_step),
     Step("sync-catalog", sync_catalog_step),
     Step("build-index", build_index_step),
+    Step("refresh-freshness", refresh_freshness_step),
     Step("demo-users", create_demo_users),
 ]
 
@@ -331,6 +369,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             scale=args.scale,
             database_url=_required("MAKNA_DATABASE_URL"),
             lending_loader_url=_required("MAKNA_LENDING_LOADER_URL"),
+            engine_url=os.environ.get("MAKNA_ENGINE_URL") or None,
             demo_password=os.environ.get("MAKNA_DEMO_PASSWORD") or None,
             definitions_repo=Path(repo)
             if (repo := os.environ.get("MAKNA_DEFINITIONS_REPO"))

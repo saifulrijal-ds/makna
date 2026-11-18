@@ -47,6 +47,7 @@ from makna.services.caller import Caller
 from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
 from makna.services.derive import make_derive, personal_column_issue
+from makna.services.discovery import Discovery
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
 from makna.services.filter_types import check_filter_types
 from makna.services.lifecycle import Lifecycle
@@ -116,6 +117,7 @@ class Services:
         self._search = HybridSearch(engine, provider, search_settings)
         self._cache = SnapshotCache(engine)
         self._calls = CallLog(engine)
+        self._discovery = Discovery(engine, self._cache)
         self._warned: set[tuple[str, str]] = set()
         self._warn_lock = threading.Lock()
         self._reader = DefinitionReader(self, self._warn_stale_policy)
@@ -142,6 +144,11 @@ class Services:
         """The write path of the definition store (WP-18): the seven lifecycle actions and the
         index sync. Refuses every action when the definitions are a plain directory."""
         return self._lifecycle
+
+    @property
+    def discovery(self) -> Discovery:
+        """The reads the discovery pages need besides the four services (WP-17)."""
+        return self._discovery
 
     @property
     def snapshots(self) -> SnapshotCache:

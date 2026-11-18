@@ -110,6 +110,9 @@ def test_init_twice_changes_nothing(
         "stay read-only)",
         "init: sync-catalog: unchanged",
         "init: build-index: unchanged",
+        # No MAKNA_ENGINE_URL in this context: the freshness step skips and succeeds (WP-17).
+        "init: refresh-freshness: skipped (MAKNA_ENGINE_URL is not set, so no freshness was "
+        "checked)",
         # No MAKNA_DEMO_PASSWORD in this context: the step skips and succeeds (WP-12B).
         "init: demo-users: skipped (MAKNA_DEMO_PASSWORD is not set, so no demo user was created)",
     ]

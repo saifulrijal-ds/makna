@@ -20,6 +20,7 @@ from starlette.staticfiles import StaticFiles
 from makna.config import Settings
 from makna.services import Services
 from makna.services.accounts import AccountStoreError
+from makna.web.discovery import router as discovery
 from makna.web.gate import SECURITY_HEADERS, WebGate, is_mcp
 from makna.web.pages import Pages
 from makna.web.routes import WebState, admin, router
@@ -46,6 +47,7 @@ def install(app: FastAPI, settings: Settings, services: Services) -> None:
     )
     app.include_router(router)
     app.include_router(admin)
+    app.include_router(discovery)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     def answer(request: Request, status: int, kind: int | str | None = None) -> Response:
