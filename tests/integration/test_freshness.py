@@ -373,3 +373,40 @@ def test_the_init_step_checks_once_and_then_finds_nothing_to_write(
     line = init.refresh_freshness_step(broken)
     assert "WARNING: measure:" in line and "failed (EngineError)" in line
     assert "pw-" not in line and "127.0.0.1" not in line
+
+
+def test_without_a_log_handler_the_connector_text_reaches_the_terminal_unless_it_is_kept_off(
+    no_tables: URL,
+) -> None:
+    """Pytest installs a root log handler, so the last-resort handler of a plain process cannot be
+    seen in this process: run the connector in a fresh interpreter, as a command line does."""
+    import subprocess
+    import sys
+
+    program = (
+        "import os, sys\n"
+        "from sqlglot import exp\n"
+        "from makna.engine.postgres import PostgresConnector\n"
+        "from makna.services.freshness import keep_engine_text_out_of_terminal\n"
+        "if sys.argv[1] == 'quiet':\n"
+        "    keep_engine_text_out_of_terminal()\n"
+        "try:\n"
+        "    PostgresConnector(os.environ['ENGINE']).latest_value(\n"
+        "        'lending.core.contract_monthly_snapshots', exp.column('snapshot_date'))\n"
+        "except Exception as error:\n"
+        "    print(type(error).__name__)\n"
+    )
+
+    def run(mode: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-I", "-c", program, mode],
+            env={**os.environ, "ENGINE": plain(no_tables)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    loud, quiet = run("loud"), run("quiet")
+    assert loud.stdout.strip() == quiet.stdout.strip() == "EngineError"
+    assert "does not exist" in loud.stderr  # the premise: the engine's text is printed
+    assert "does not exist" not in quiet.stderr and "contract_monthly" not in quiet.stderr
