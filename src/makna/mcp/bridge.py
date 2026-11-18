@@ -154,6 +154,7 @@ class _Bridge:
 
 async def _bridge(url: str, token: str) -> int:
     state = _Bridge()
+    reader_done = anyio.Event()
 
     async def check_response(response: httpx2.Response) -> None:
         if response.status_code == 401:
@@ -191,21 +192,34 @@ async def _bridge(url: str, token: str) -> int:
                             continue
                         state.sent(item)
                         await http_write.send(item)
-                    # Input closed: let the answers still on their way arrive, then stop.
+                    # Input closed. First let the answers to pending requests arrive (their
+                    # posts run in their own tasks). Then close the send stream: the SDK posts
+                    # a notification or a client response inside its writer loop, one at a
+                    # time, and ends the loop, and so closes `http_read`, only after the last
+                    # of them has its HTTP status. Waiting for that end means nothing that was
+                    # read from standard input is dropped. The whole wait is bounded.
                     with anyio.move_on_after(DRAIN_SECONDS):
                         await state.idle.wait()
+                        await http_write.aclose()
+                        await reader_done.wait()
                     # Everything that arrived is handed to the writer: close the output so that
                     # it writes what it holds and ends, and stop only the forwarding tasks.
                     await stdout_write.aclose()
                     tasks.cancel_scope.cancel()
 
                 async def to_client() -> None:
-                    async for item in http_read:
-                        if isinstance(item, Exception):
-                            print("makna mcp: a message from the server was lost", file=sys.stderr)
-                            continue
-                        await stdout_write.send(item)
-                        state.answered(item)
+                    try:
+                        async for item in http_read:
+                            if isinstance(item, Exception):
+                                print(
+                                    "makna mcp: a message from the server was lost",
+                                    file=sys.stderr,
+                                )
+                                continue
+                            await stdout_write.send(item)
+                            state.answered(item)
+                    finally:
+                        reader_done.set()
 
                 tasks.start_soon(to_server)
                 tasks.start_soon(to_client)
