@@ -226,7 +226,7 @@ def combine(ids: Sequence[str], rows: Sequence[Any]) -> Freshness:
     """The freshness of a metric from the stored rows (`object_id`, `latest_value`, `checked_at`)
     of its measures `ids`."""
     stored = {row.object_id: row for row in rows}
-    if any(i not in stored or stored[i].latest_value is None for i in ids):
+    if not ids or any(i not in stored or stored[i].latest_value is None for i in ids):
         return Freshness(measures=len(ids))
     return Freshness(
         latest=min(stored[i].latest_value for i in ids),

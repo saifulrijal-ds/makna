@@ -23,10 +23,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import sqlglot
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlglot import exp
 
@@ -39,6 +39,14 @@ from makna.services.snapshot import SnapshotCache
 logger = logging.getLogger(__name__)
 
 MEASURE_PREFIX = "measure:"
+
+
+def keep_engine_text_out_of_terminal() -> None:
+    """For a command line or a job with no log handler of its own: the connector logs the text of
+    an engine error (it can hold a value of the data), and Python's last-resort handler would
+    print it. A handler on `makna.engine` stops that; only the measure and the error class are
+    reported, by `refresh`."""
+    logging.getLogger("makna.engine").addHandler(logging.NullHandler())
 
 
 def measure_id(entity: str, measure: str) -> str:
@@ -70,6 +78,8 @@ class RefreshResult:
     """Measures the engine was asked about."""
     stored: int = 0
     """Rows written, a row with no date (an empty table) included."""
+    unchanged: int = 0
+    """Measures whose stored date was the same and was left as it was (`record_unchanged` off)."""
     empty: tuple[str, ...] = ()
     """Measures whose table has no rows, or whose time dimension is NULL everywhere."""
     failures: tuple[Failure, ...] = ()
@@ -116,13 +126,16 @@ def refresh(
     *,
     cache: SnapshotCache | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    record_unchanged: bool = True,
     on_failure: Callable[[Failure], None] | None = None,
 ) -> RefreshResult:
     """Check every approved measure on the target engine and store what it answers.
 
     `database` is the application database (it holds `data_freshness` and the definitions);
     `connector` is the read-only engine connector. A measure that fails is reported to
-    `on_failure` and in the result, and the next one is checked.
+    `on_failure` and in the result, and the next one is checked. With `record_unchanged` off, a
+    measure whose date is the one already stored is not written again (`checked_at` stays), so a
+    run that finds nothing new writes nothing: what the stack's `init` needs to stay idempotent.
     """
     snapshot, _ = (cache or SnapshotCache(database)).current()
     checks, unreadable = measure_checks(snapshot.model)
@@ -130,8 +143,9 @@ def refresh(
     for failure in unreadable:
         if on_failure is not None:
             on_failure(failure)
+    known = {} if record_unchanged else _stored_dates(database)
     empty: list[str] = []
-    stored = 0
+    stored = unchanged = 0
     for check in checks:
         try:
             latest = connector.latest_value(check.table, check.time_expr)
@@ -148,11 +162,24 @@ def refresh(
             continue
         if latest is None:
             empty.append(check.object_id)
+        if check.object_id in known and known[check.object_id] == latest:
+            unchanged += 1
+            continue
         _store(database, check.object_id, latest, now())
         stored += 1
     return RefreshResult(
-        checked=len(checks), stored=stored, empty=tuple(empty), failures=tuple(failures)
+        checked=len(checks),
+        stored=stored,
+        unchanged=unchanged,
+        empty=tuple(empty),
+        failures=tuple(failures),
     )
+
+
+def _stored_dates(database: Engine) -> dict[str, date | None]:
+    with database.connect() as connection:
+        rows = connection.execute(select(data_freshness.c.object_id, data_freshness.c.latest_value))
+        return {row.object_id: row.latest_value for row in rows}
 
 
 def _store(database: Engine, object_id: str, latest: object, checked_at: datetime) -> None:

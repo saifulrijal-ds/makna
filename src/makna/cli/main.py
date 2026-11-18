@@ -34,7 +34,7 @@ from makna.search.hybrid import ROLES, HybridSearch, SearchError
 from makna.services.caller import ROLES as USER_ROLES
 from makna.services.derive import make_derive
 from makna.services.examples import validate_for_build
-from makna.services.freshness import Failure, refresh
+from makna.services.freshness import Failure, keep_engine_text_out_of_terminal, refresh
 
 DEFAULT_CATALOG_FILE = Path("data/catalog/lending.catalog.yaml")
 DEFAULT_DEFINITIONS = Path("semantic/definitions")
@@ -443,10 +443,9 @@ def _freshness_refresh() -> int:
     except (RuntimeError, ConfigError) as error:
         print(f"makna freshness refresh: {error}", file=sys.stderr)
         return 2
-    # The connector logs the engine's own message, which can hold a value of the data; only the
-    # lines of this command (the measure and the error class) may reach the terminal.
-    for name in ("makna.engine", "makna.services.freshness"):
-        logging.getLogger(name).addHandler(logging.NullHandler())
+    # Only the lines of this command (the measure and the error class) may reach the terminal.
+    keep_engine_text_out_of_terminal()
+    logging.getLogger("makna.services.freshness").addHandler(logging.NullHandler())
     connector = PostgresConnector(
         runtime.engine_url.get_secret_value(),
         statement_timeout_seconds=runtime.engine.statement_timeout_seconds,
