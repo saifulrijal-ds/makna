@@ -31,19 +31,25 @@ job, and here together. The Makna image installs `uv` 0.11.32 (the version CI us
 
 `deploy/docker-compose.openmetadata.yml` runs an OpenMetadata server apart from the main stack
 (its own project name, `makna-openmetadata`, and its own volumes; ports bind to `127.0.0.1`).
-It needs Docker and about 3 GB of memory.
+It needs Docker and about 3 GB of memory. Only the web interface (8585) and OpenSearch (9200) are published, so it does not clash with the main stack's PostgreSQL on 5432.
 
-| Service | Image |
-|---|---|
-| `mysql` | `docker.getcollate.io/openmetadata/db:2.0.7` |
-| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:9.3.0` |
-| `migrate` | `docker.getcollate.io/openmetadata/server:2.0.7` |
-| `server` | `docker.getcollate.io/openmetadata/server:2.0.7` |
+| Service | Image | Licence |
+|---|---|---|
+| `postgresql` | `docker.getcollate.io/openmetadata/postgresql:2.0.7` | PostgreSQL License (permissive). Built by the release from `postgres:15` (`docker/postgresql/Dockerfile_postgres`) plus an init script. |
+| `opensearch` | `opensearchproject/opensearch:3.4.0` | Apache-2.0. The search engine of the stack; the release's quickstart uses Elasticsearch, which is not permissive, so the release's own OpenSearch setup (`docker/development/docker-compose-postgres.yml`, `SEARCH_TYPE=opensearch`) is used. |
+| `migrate` | `docker.getcollate.io/openmetadata/server:2.0.7` | OpenMetadata server, Apache-2.0 (`LICENSE` of the repository at the tag). Alpine base and OpenJDK 21 runtime as in `docker/development/Dockerfile`. |
+| `server` | `docker.getcollate.io/openmetadata/server:2.0.7` | The same image. |
+
+Licences were read from the release's Dockerfiles and `LICENSE` and from general knowledge of the
+upstream images (PostgreSQL License, Apache-2.0); the image registry pages were not reachable
+from the session that wrote this, so check them before relying on the table. The release's
+default MySQL image (`mysql/mysql-server`) is GPL-2.0, which is why PostgreSQL is used.
 
 **Version pin.** OpenMetadata 2.0.7. It is the release whose published JSON schemas the
 connector's fixtures follow (`tests/unit/fixtures/openmetadata/README.md`). Change the tags in the
-compose file and in this table together; a unit test compares them. The compose file is the
-release's own quickstart without the ingestion (Airflow) service.
+compose file and in this table together; a unit test compares them. The compose file follows the
+release's PostgreSQL quickstart and its OpenSearch development compose, without the ingestion
+(Airflow) service.
 
 ```
 docker compose -f deploy/docker-compose.openmetadata.yml up -d --wait

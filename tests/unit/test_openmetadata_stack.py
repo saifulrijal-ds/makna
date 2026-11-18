@@ -27,7 +27,7 @@ CATALOG = yaml.safe_load(seed.DEFAULT_CATALOG.read_text(encoding="utf-8"))
 def test_every_image_is_pinned_to_an_exact_version_and_the_readme_records_them() -> None:
     readme = (DEPLOY / "README.md").read_text(encoding="utf-8")
     images = {name: s["image"] for name, s in COMPOSE["services"].items()}
-    assert set(images) == {"mysql", "elasticsearch", "migrate", "server"}
+    assert set(images) == {"postgresql", "opensearch", "migrate", "server"}
     for image in images.values():
         tag = image.rsplit(":", 1)[1]
         assert tag.count(".") == 2 and tag[0].isdigit(), image
@@ -37,6 +37,13 @@ def test_every_image_is_pinned_to_an_exact_version_and_the_readme_records_them()
     )
     for image in set(images.values()):
         assert image in readme, image
+    # Elasticsearch and MySQL are not permissive: OpenSearch (Apache-2.0) and PostgreSQL.
+    assert "elastic" not in "".join(images.values()) and "mysql" not in "".join(images.values())
+    assert images["opensearch"] == "opensearchproject/opensearch:3.4.0"
+    assert "Apache-2.0" in readme and "PostgreSQL License" in readme
+    environment = COMPOSE["x-server-environment"]
+    assert environment["SEARCH_TYPE"] == "opensearch"
+    assert environment["ELASTICSEARCH_HOST"] == "opensearch"
 
 
 def test_the_stack_binds_to_localhost_and_is_separate_from_the_main_stack() -> None:
