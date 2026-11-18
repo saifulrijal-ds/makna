@@ -64,7 +64,7 @@ def _is_number(value: object) -> bool:
     return isinstance(value, int | float | Decimal) and not isinstance(value, bool)
 
 
-def _decimal(value: object) -> Decimal | None:
+def decimal_of(value: object) -> Decimal | None:
     try:
         number = Decimal(str(value).strip())
     except InvalidOperation:
@@ -90,16 +90,16 @@ def _text(value: object) -> str:
 def _sort_text(value: object) -> str:
     """Ordering form: numbers are normalised so that 12 and 12.0 sort alike on both sides."""
     text = _text(value)
-    number = _decimal(text) if text else None
+    number = decimal_of(text) if text else None
     return format(number.normalize(), "f") if number is not None else text
 
 
-def _same_cell(expected: str, got: object, *, currency: bool) -> tuple[bool, str]:
+def same_cell(expected: str, got: object, *, currency: bool) -> tuple[bool, str]:
     """`(equal, kind)` of one expected text cell and one compiled value."""
     if got is None:
         return expected == "", "null"
     if _is_number(got):
-        wanted = _decimal(expected)
+        wanted = decimal_of(expected)
         if wanted is None:
             return False, "bad_expected_number"
         actual = Decimal(str(got))
@@ -151,7 +151,7 @@ def compare_results(
     for position, (e_row, g_row) in enumerate(zip(e_rows, g_rows, strict=True), start=1):
         for name in answer_columns:
             want, have = e_row[e_index[name]], g_row[g_index[name]]
-            equal, kind = _same_cell(str(want), have, currency=name in money)
+            equal, kind = same_cell(str(want), have, currency=name in money)
             if not equal:
                 return Difference(
                     kind, f"row {position} column {name}", f"expected {want!r}, got {have!r}"
