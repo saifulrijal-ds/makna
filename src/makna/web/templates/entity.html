@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, link, related_list, deprecation_notice, curator_notes %}
+{% block title %}{{ view.label }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/discovery.css">
+<h1 data-field="label">{{ view.label }}</h1>
+{{ deprecation_notice(deprecation) }}
+<p data-field="description">{{ view.description }}</p>
+<p data-field="owner"><strong>Owner:</strong> {{ view.owner }}</p>
+<p data-field="status"><strong>Status:</strong> {{ badge(status) }}{% if view.version is not none %} <small>version {{ view.version }}</small>{% endif %}</p>
+
+{% if view.dimensions %}
+<section data-field="dimensions">
+  <h2>Dimensions</h2>
+  <ul>
+    {% for dimension in view.dimensions %}
+    <li>
+      {{ dimension.label or dimension.ref }} <small>({{ dimension.ref }}, {{ dimension.type }}{% if dimension.masked %}, personal data shown as {{ dimension.masked }}{% endif %})</small>
+      {% if dimension.description %}<br><small>{{ dimension.description }}</small>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if view.unavailable_dimensions %}
+  <p><small>Not available to group by ({{ view.unavailable_dimensions[0].reason }}): {% for item in view.unavailable_dimensions %}{{ item.ref }}{% if not loop.last %}, {% endif %}{% endfor %}.</small></p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if view.rules %}
+<section data-field="rules">
+  <h2>Business rules</h2>
+  <ul>
+    {% for rule in view.rules %}
+    <li>{{ rule.label or rule.ref }} <small>({{ rule.ref }})</small><br><small>{{ rule.description }}</small></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if relationships %}
+<section data-field="relationships">
+  <h2>Joins to</h2>
+  <ul>
+    {% for item, href in relationships %}
+    <li>{{ link(item.to, href) }} <small>({{ item.name }})</small><br><small>{{ item.description }}</small></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if view.synonyms %}
+<p data-field="synonyms"><small>Also called: {{ view.synonyms | join(", ") }}</small></p>
+{% endif %}
+{{ related_list(related) }}
+{% if curator %}{{ curator_notes(view) }}{% endif %}
+{% endblock %}

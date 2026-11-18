@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "_macros.html" import object_list %}
+{% block title %}{{ domain.label }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/discovery.css">
+<h1>{{ domain.label }}</h1>
+{% if domain.description %}<p data-field="description">{{ domain.description }}</p>{% endif %}
+{% for title, rows in groups %}
+<section data-group="{{ title }}">
+  <h2>{{ title }}</h2>
+  {{ object_list(rows) }}
+</section>
+{% else %}
+<p>This domain has no objects yet.</p>
+{% endfor %}
+{% endblock %}

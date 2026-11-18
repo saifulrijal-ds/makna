@@ -1,0 +1,20 @@
+{% from "_macros.html" import badge, link %}
+{% if error %}
+<p role="alert"><mark>{{ error }}</mark></p>
+{% elif q and outcome %}
+{% if outcome.guidance %}<p data-field="guidance"><em>{{ outcome.guidance }}</em></p>{% endif %}
+{% if results %}
+<ol class="results">
+  {% for row in results %}
+  <li>
+    {{ link(row.hit.label, row.href) }}
+    <small>{{ row.kind }}</small>
+    {{ badge(row.status) }}
+    {% if row.hit.description %}<br><small>{{ row.hit.description }}</small>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p>Nothing matched. Try other words, in English or Indonesian.</p>
+{% endif %}
+{% endif %}

@@ -1,7 +1,38 @@
 {% extends "base.html" %}
+{% from "_macros.html" import link, object_list %}
 {% block title %}Home{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="/static/discovery.css">
 <h1>Makna</h1>
-<p>You are signed in as {{ caller.role }}.</p>
-<p>The discovery pages come in a later release. For now you can manage <a href="/account">your account and API tokens</a>.</p>
+<p>Find what a business word means, which metric answers a question, and how new the data is.</p>
+<form method="get" action="/search" role="search">
+  <input type="search" name="q" placeholder="Search metrics, entities, and glossary terms" aria-label="Search" required>
+  <button type="submit">Search</button>
+</form>
+
+<section data-field="domains">
+  <h2>Domains</h2>
+  {% if domains %}
+  <ul class="objects">
+    {% for row in domains %}
+    <li>
+      {{ link(row.domain.label, row.href) }}
+      {% if row.counts %}<small>({% for title, count in row.counts %}{{ count }} {{ title | lower }}{% if not loop.last %}, {% endif %}{% endfor %})</small>{% endif %}
+      {% if row.domain.description %}<br><small>{{ row.domain.description }}</small>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No domain has been defined yet.</p>
+  {% endif %}
+</section>
+
+<section data-field="recent">
+  <h2>Recently approved metrics</h2>
+  {% if recent %}
+  {{ object_list(recent) }}
+  {% else %}
+  <p>No metric has been approved yet.</p>
+  {% endif %}
+</section>
 {% endblock %}
