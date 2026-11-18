@@ -21,6 +21,7 @@ from makna.config import (
     load_tag_map,
 )
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
+from makna.definitions.repo import GitRepo, is_repository_root
 from makna.engine.base import EngineError
 from makna.engine.compare import catalog_schemas, compare
 from makna.engine.postgres import PostgresConnector
@@ -30,6 +31,7 @@ from makna.model.definitions import Entity, GlossaryTerm
 from makna.model.search import DOCUMENT_KINDS
 from makna.search.embedding import EmbeddingError, make_provider
 from makna.search.hybrid import ROLES, HybridSearch, SearchError
+from makna.services import store
 from makna.services.caller import ROLES as USER_ROLES
 from makna.services.derive import make_derive
 from makna.services.examples import validate_for_build
@@ -154,6 +156,26 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             f"definitions directory (default: MAKNA_DEFINITIONS_REPO, else {DEFAULT_DEFINITIONS})"
         ),
+    )
+    sync = index_commands.add_parser(
+        "sync",
+        help="bring the index up to date with the definitions repository",
+        description=(
+            "For a definitions repository (MAKNA_DEFINITIONS_REPO is a git repository of its "
+            "own): finish any action that was committed but not indexed, record commits made "
+            "outside Makna as external changes (they are indexed as proposals in review, never "
+            "as approved), and rebuild the index from the commits the application made. Running "
+            "it twice changes nothing. The application runs it at start. In a plain directory "
+            "there is nothing to sync and the command says so. Exits 0 on success, 1 if the "
+            "definitions have a problem or the index cannot be written, 2 on bad usage or "
+            "settings."
+        ),
+    )
+    sync.add_argument(
+        "--definitions",
+        type=Path,
+        default=None,
+        help="the definitions repository (default: MAKNA_DEFINITIONS_REPO)",
     )
     search = commands.add_parser(
         "search",
@@ -302,7 +324,11 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
             if not directory.is_dir():
                 print(f"makna catalog sync: {directory} is not a directory", file=sys.stderr)
                 return 2
-            found = official_objects(directory)
+            if is_repository_root(directory):
+                # A definitions repository: only what the application committed is official.
+                found = store.official_objects(GitRepo(directory), engine)
+            else:
+                found = official_objects(directory)
             entities, terms, unreadable = found.entities, found.terms, found.invalid
         else:
             print(
@@ -412,6 +438,10 @@ def _index_build(definitions: Path | None) -> int:
         if directory is None or not directory.is_dir():
             print(f"makna index build: no definitions directory ({directory})", file=sys.stderr)
             return 2
+        if is_repository_root(directory):
+            # A definitions repository: the index is built from the commits the application made,
+            # which is what `sync` does (ARCHITECTURE section 10).
+            return _index_sync(directory, "makna index build")
         runtime = load_search_runtime()
         governance = load_governance_runtime()
         derive = make_derive(governance.governance.policy(), governance.dialect)
@@ -470,6 +500,72 @@ def _index_build(definitions: Path | None) -> int:
         f"edges: added {result.edges_added}, removed {result.edges_removed}; "
         f"reference issues R05: opened {result.issues_opened}, closed {result.issues_closed}"
     )
+    return 0
+
+
+def _index_sync(definitions: Path | None, command: str = "makna index sync") -> int:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from makna.services import ServiceError
+
+    try:
+        directory = _definitions_directory(definitions)
+        if directory is None or not directory.is_dir():
+            print(f"{command}: no definitions directory ({directory})", file=sys.stderr)
+            return 2
+        if not is_repository_root(directory):
+            print(
+                f"{command}: {directory} is a plain directory, not a git repository of its own, "
+                "so there is nothing to sync; use `makna index build`",
+                file=sys.stderr,
+            )
+            return 2
+        runtime = load_search_runtime()
+        governance = load_governance_runtime()
+        derive = make_derive(governance.governance.policy(), governance.dialect)
+        key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
+        provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
+        engine = make_engine(database_url_from_env())
+    except (RuntimeError, ConfigError) as error:
+        print(f"{command}: {error}", file=sys.stderr)
+        return 2
+    try:
+        state, result = store.sync(engine, provider, GitRepo(directory), derive=derive)
+    except store.StoreError as error:
+        for issue in error.issues:
+            print(issue.format(f"{directory.as_posix().rstrip('/')}/"), file=sys.stderr)
+        print(f"{command}: {error}", file=sys.stderr)
+        return 1
+    except ServiceError as error:
+        print(f"{command}: {error.message}", file=sys.stderr)
+        return 1
+    except (EmbeddingError, indexer.IndexerError, SQLAlchemyError) as error:
+        print(f"{command}: {type(error).__name__}", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    print(f"embedding model: {provider.model_id}")
+    print(
+        "documents: "
+        f"added {result.documents_added}, changed {result.documents_changed}, "
+        f"removed {result.documents_removed}, unchanged {result.documents_unchanged}"
+    )
+    print(
+        "objects: "
+        f"added {result.objects_added}, changed {result.objects_changed}, "
+        f"removed {result.objects_removed}, unchanged {result.objects_unchanged}"
+    )
+    print(f"head: {state.head}")
+    print(
+        f"actions completed: {len(state.matched)}, interrupted actions dropped: {len(state.dead)}, "
+        f"external changes: {len({(c.sha, c.object_id) for c in state.externals})}"
+    )
+    for item in state.objects.values():
+        for issue in item.unreadable:
+            print(
+                f"{command}: warning: {issue.file}: {issue.code} {issue.message} (not indexed)",
+                file=sys.stderr,
+            )
     return 0
 
 
@@ -557,7 +653,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "index":
         if args.index_command == "build":
             return _index_build(args.definitions)
-        print("makna index: choose build", file=sys.stderr)
+        if args.index_command == "sync":
+            return _index_sync(args.definitions)
+        print("makna index: choose build or sync", file=sys.stderr)
         return 2
     if args.command == "user":
         if args.user_command == "create":

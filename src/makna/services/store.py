@@ -52,13 +52,14 @@ from makna.definitions.loader import (
     PROPOSAL_SUFFIX,
     DefinitionFile,
     DefinitionSet,
+    OfficialObjects,
     load_text,
 )
 from makna.definitions.render import sha256
 from makna.definitions.repo import COMMITTER_EMAIL, Commit, GitRepo, RepoError
 from makna.index import indexer
 from makna.index.tables import app_user, audit_event, index_state
-from makna.model.definitions import AnyDefinition, Metric
+from makna.model.definitions import AnyDefinition, Entity, GlossaryTerm, Metric
 from makna.model.objects import DefinitionObject
 from makna.model.search import EmbeddingProvider
 from makna.services.errors import LifecycleErrorCode, ServiceError
@@ -544,6 +545,26 @@ def _validate_proposals(state: RepoState) -> None:
         if item.proposal is not None:
             item.errors = tuple(found.get(key, ()))
         state.errors[key] = item.errors
+
+
+def official_objects(repo: GitRepo, engine: Engine) -> OfficialObjects:
+    """The entities and glossary terms that are official in the repository, for the catalog
+    reference check (`makna catalog sync`): what the application committed, never the working
+    tree or an outside commit. An official file that cannot be read is listed in `invalid`."""
+    with engine.connect() as connection:
+        audit = read_audit(connection)
+        emails = user_emails(connection)
+    state = read_state(repo, audit, emails)
+    found = OfficialObjects()
+    for item in state.objects.values():
+        if isinstance(item.official, Entity):
+            found.entities.append(item.official)
+        elif isinstance(item.official, GlossaryTerm):
+            found.terms.append(item.official)
+    for issue in state.official_load_issues:
+        info = layout.parse_path(issue.file)
+        found.invalid[info.ref.id if info is not None else issue.file] = issue.file
+    return found
 
 
 # --- the index -----------------------------------------------------------------------------

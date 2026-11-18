@@ -7,17 +7,32 @@ This is the only place that knows both interfaces. The web routes (WP-16) and th
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from makna.config import Settings, load_settings
 from makna.mcp.http import PATH as MCP_PATH
 from makna.mcp.http import build_mcp_endpoint
-from makna.services import build_services
+from makna.services import Services, build_services
 from makna.web import install as install_web
+
+logger = logging.getLogger(__name__)
+
+
+def _sync_definitions(services: Services) -> None:
+    """`makna index sync` before serving (ARCHITECTURE section 10): finish an action that was
+    committed but not indexed, and record commits made outside the application. In a plain
+    directory there is nothing to do. A failure is logged by its class only and does not stop the
+    server: the index stays as it was, and nothing new is served as approved."""
+    try:
+        services.lifecycle.sync()
+    except Exception as error:
+        logger.error("the definitions sync at start failed (%s)", type(error).__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -36,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
+            await run_in_threadpool(_sync_definitions, services)
             async with mcp.run():
                 yield
         finally:

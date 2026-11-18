@@ -9,6 +9,12 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH="/opt/venv/bin:$PATH"
 
+# The definitions repository (ARCHITECTURE section 10) is a git repository the application writes
+# with the `git` command line, so the image carries git (and nothing else new).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv is pinned to the version CI uses; installed with pip so no other registry is needed.
 RUN pip install --no-cache-dir uv==0.11.32
 
@@ -43,8 +49,8 @@ COPY evals ./evals
 
 # The app runs as a normal user; the generated sample data lives in a volume it can write.
 RUN useradd --create-home --uid 10001 makna \
-    && mkdir -p /app/data/generated \
-    && chown makna /app/data/generated \
+    && mkdir -p /app/data/generated /var/lib/makna/definitions \
+    && chown makna /app/data/generated /var/lib/makna/definitions \
     && chown -R makna /opt/makna/models
 USER makna
 
