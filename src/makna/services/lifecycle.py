@@ -6,45 +6,56 @@ and a reason, and does the same steps:
 
 1. take the advisory lock (`makna.services.store`); read the repository and the audit log, which
    is the state the permission is checked against, so a race cannot approve a proposal that
-   changed in between; check permission, validate, and (for approve and deprecate) check that the
+   changed in between; check permission (with the role and teams of the user row read now, not
+   those the caller was built with), validate, and (for approve and deprecate) check that the
    official files still pass the build gate with the change;
 2. write an `audit_event` **intent** row: action, object, actor, reason, and the SHA-256 of every
    file the action writes or deletes;
-3. write the files and commit them with the user as author;
+3. build the commit from the checked bytes with git plumbing and a private index
+   (`GitRepo.commit_files`), with the user as author, and move `HEAD` to it only if `HEAD` is still
+   where it was read. The working tree is not read; afterwards it is brought in line, best effort;
 4. in one database transaction: index the repository (so every object whose derived facts depend
    on the change is refreshed), set `commit_sha` on the intent, bump `definitions_version`,
    and set `last_indexed_commit`.
 
-Step 4 is the same code as `makna index sync`: the new commit is found by matching the open intent
-(same files, same hashes, same author), exactly as recovery finds a commit after a crash.
+The lock is checked before steps 2 and 3 and before step 4: a session-level lock is lost with its
+connection, and an action must not go on without it.
 
-If git fails in step 3, nothing was committed: the intent row is **deleted** (the action did not
-happen, so it has no audit event), the files are put back, and the call fails. If step 4 fails, the
-commit exists and the intent stays open; the caller is told so, and `makna index sync` (also run at
-application start) completes it.
+Step 4 is the same code as `makna index sync`, with the commit this action made as its own
+intent's commit (so a retry after a crash completes its own intent and not an older one).
+
+If git fails in step 3, nothing was committed: the intent row is kept and marked failed
+(`failed_at`), so the attempt leaves a trace, and the call fails. If step 4 fails the commit
+exists and the intent stays open; the call fails with a message that says to run
+`makna index sync`, which finds the commit by its files and their hashes.
 
 A refusal (permission, validation, state) happens before step 2: no file is written and no audit
 row exists. What the application writes is never the text a caller sent: the YAML is parsed,
 checked as a model, given its `status` and `version` by the application, and written in one
 canonical form (`makna.definitions.render`). The path of a file comes only from a checked object id
 and an existing domain (`makna.definitions.layout`). Errors never carry stored YAML, file content,
-or git's output.
+or git's output; anything unexpected is mapped to a fixed `INTERNAL` message.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import stat
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import Connection, Engine, delete, insert, select
+from sqlalchemy import Connection, Engine, func, insert, update
 from sqlalchemy.exc import SQLAlchemyError
 
+from makna.catalog import references
+from makna.compiler.compile import compile_request
+from makna.compiler.governance import GovernanceError
+from makna.compiler.snapshot import Model
 from makna.definitions import layout
 from makna.definitions.issues import Issue
 from makna.definitions.layout import ObjectRef
@@ -53,13 +64,19 @@ from makna.definitions.render import MAX_YAML_BYTES, parse_text, sha256, to_yaml
 from makna.definitions.repo import (
     COMMITTER_EMAIL,
     COMMITTER_NAME,
+    CommitResult,
     GitRepo,
     RepoError,
-    is_repository_root,
+    RepoMode,
+    RepoUnusable,
+    repository_mode,
 )
 from makna.index import indexer
-from makna.index.tables import audit_event, reference_issue
-from makna.model.definitions import AnyDefinition, Deprecation
+from makna.index.indexer import catalog_sensitivity
+from makna.index.tables import audit_event
+from makna.model.definitions import AnyDefinition, Deprecation, Entity, GlossaryTerm, Metric
+from makna.model.governance import GovernancePolicy
+from makna.model.request import QueryError, QueryRequest
 from makna.model.search import EmbeddingProvider
 from makna.services import accounts, approval, permissions, store
 from makna.services.approval import ApprovalSettings, Decision
@@ -98,8 +115,13 @@ GATE_MESSAGE = (
     "With this change the official definitions would not pass the checks of `makna validate`."
 )
 COMMITTED_NOT_INDEXED = (
-    "The change was committed but the index could not be updated. It is recorded and not lost: "
-    "an administrator can run `makna index sync` to finish it."
+    "The change was committed but the index could not be updated. The commit and the audit "
+    "record of the action are kept; an administrator can run `makna index sync` to finish it."
+)
+UNEXPECTED = "The change could not be made. Nothing was changed."
+REPOSITORY_MOVED = (
+    "The definitions repository changed while this change was being made, so nothing was saved. "
+    "Try again."
 )
 
 
@@ -229,22 +251,43 @@ class Lifecycle:
         derive: indexer.Derive | None,
         repo_path: str | None,
         settings: ApprovalSettings,
+        policy: GovernancePolicy | None = None,
+        dialect: str = "postgres",
     ) -> None:
         self._engine = engine
         self._provider = provider
         self._derive = derive
         self._path = Path(repo_path) if repo_path else None
         self._settings = settings
+        self._policy = policy
+        self._dialect: Literal["postgres", "duckdb"] = (
+            "duckdb" if dialect == "duckdb" else "postgres"
+        )
 
     # --- mode ----------------------------------------------------------------------------
 
+    def mode(self) -> RepoMode | None:
+        """How `MAKNA_DEFINITIONS_REPO` is treated: `REPOSITORY` (written by commits), `PLAIN` (a
+        directory inside another repository: read-only), or None when no path is configured.
+        Raises `ServiceError(CONFLICT)` when the configured path is a repository that is broken:
+        it is never read as a plain directory."""
+        if self._path is None:
+            return None
+        try:
+            return repository_mode(self._path, configured=True)
+        except RepoUnusable as error:
+            raise ServiceError(
+                LifecycleErrorCode.CONFLICT, error.message, {"unusable": error.reason}
+            ) from None
+
     def writable(self) -> bool:
-        """True when `MAKNA_DEFINITIONS_REPO` is a git repository of its own (its top level is
-        that path). A directory inside another repository is a plain directory: read-only."""
-        return self._path is not None and is_repository_root(self._path)
+        """True when the definitions are a git repository of its own that the application writes.
+        False for a plain directory (inside another repository) or no path; a broken repository
+        raises, see `mode`."""
+        return self.mode() is RepoMode.REPOSITORY
 
     def _repo(self) -> GitRepo:
-        if self._path is None or not is_repository_root(self._path):
+        if self.mode() is not RepoMode.REPOSITORY or self._path is None:
             raise ServiceError(LifecycleErrorCode.CONFLICT, READ_ONLY_MESSAGE, {"read_only": True})
         return GitRepo(self._path)
 
@@ -265,11 +308,29 @@ class Lifecycle:
     def submit(self, caller: Caller, object_id: str, reason: str) -> ActionResult:
         return self._act(caller, SUBMIT, object_id, reason)
 
-    def approve(self, caller: Caller, object_id: str, reason: str) -> ActionResult:
-        return self._act(caller, APPROVE, object_id, reason)
+    def approve(
+        self,
+        caller: Caller,
+        object_id: str,
+        reason: str,
+        expected_proposal_commit: str | None = None,
+    ) -> ActionResult:
+        """Approve the proposal. With `expected_proposal_commit` (the commit the reviewer saw),
+        the action is refused with `CONFLICT` if the proposal has changed since."""
+        return self._act(
+            caller, APPROVE, object_id, reason, expected_proposal_commit=expected_proposal_commit
+        )
 
-    def reject(self, caller: Caller, object_id: str, reason: str) -> ActionResult:
-        return self._act(caller, REJECT, object_id, reason)
+    def reject(
+        self,
+        caller: Caller,
+        object_id: str,
+        reason: str,
+        expected_proposal_commit: str | None = None,
+    ) -> ActionResult:
+        return self._act(
+            caller, REJECT, object_id, reason, expected_proposal_commit=expected_proposal_commit
+        )
 
     def withdraw(self, caller: Caller, object_id: str, reason: str) -> ActionResult:
         return self._act(caller, WITHDRAW, object_id, reason)
@@ -281,11 +342,25 @@ class Lifecycle:
 
     # --- sync ----------------------------------------------------------------------------
 
-    def sync(self) -> tuple[RepoState, indexer.IndexResult] | None:
-        """`makna index sync`: None in plain-directory mode (there is nothing to sync)."""
-        if not self.writable():
+    def sync(
+        self, *, accept_rewritten_history: bool = False
+    ) -> tuple[RepoState, indexer.IndexResult] | None:
+        """`makna index sync`: None in plain-directory mode (there is nothing to sync). Raises
+        `ServiceError(CONFLICT)` for a broken repository or a rewritten history."""
+        if self.mode() is not RepoMode.REPOSITORY:
             return None
-        return store.sync(self._engine, self._provider, self._repo(), derive=self._derive)
+        try:
+            return store.sync(
+                self._engine,
+                self._provider,
+                self._repo(),
+                derive=self._derive,
+                accept_rewritten_history=accept_rewritten_history,
+            )
+        except store.StoreError as error:
+            raise ServiceError(
+                LifecycleErrorCode.CONFLICT, str(error), {"fatal": error.fatal}
+            ) from None
 
     # --- the common flow -----------------------------------------------------------------
 
@@ -298,6 +373,7 @@ class Lifecycle:
         *,
         yaml_text: str | None = None,
         replaced_by: str | None = None,
+        expected_proposal_commit: str | None = None,
     ) -> ActionResult:
         text = check_reason(reason)
         ref = layout.parse_object_id(object_id) if isinstance(object_id, str) else None
@@ -305,16 +381,39 @@ class Lifecycle:
             raise invalid_input("id", "an id of the form kind:name, for example metric:npf_ratio")
         if yaml_text is not None:
             _check_size(yaml_text)
+        if expected_proposal_commit is not None and (
+            not isinstance(expected_proposal_commit, str)
+            or re.fullmatch(r"[0-9a-f]{40}", expected_proposal_commit) is None
+        ):
+            raise invalid_input("expected_proposal_commit", "a commit sha, as the review showed it")
         self._early_refusal(caller, action)
         repo = self._repo()
-        with store.advisory_lock(self._engine):
-            user = self._user(caller)
-            state = self._read(repo)
-            plan = self._plan(caller, user, action, ref, state, yaml_text, replaced_by, text)
-            intent_id = self._write_intent(user, action, ref.id, text, plan)
-            self._commit(repo, user, action, ref.id, text, plan, intent_id)
-            sha = self._finish(repo, intent_id)
-        return ActionResult(ref.id, plan.to_status, plan.version, sha, action)
+        try:
+            with store.advisory_lock(self._engine) as lock:
+                user = self._user(caller)
+                # The role and teams of the user row as they are now, not those of the session.
+                actor = Caller(
+                    user_id=user.id, role=user.role, channel=caller.channel, teams=user.teams
+                )
+                self._early_refusal(actor, action)
+                state = self._read(repo)
+                plan = self._plan(
+                    actor, user, action, ref, state, yaml_text, replaced_by, text,
+                    expected_proposal_commit,
+                )  # fmt: skip
+                lock.check()
+                intent_id = self._write_intent(user, action, ref.id, text, plan)
+                made = self._commit(repo, lock, user, action, ref.id, text, plan, intent_id, state)
+                self._finish(repo, lock, intent_id, made)
+        except ServiceError:
+            raise
+        except store.StoreError as error:
+            raise ServiceError(LifecycleErrorCode.CONFLICT, str(error)) from None
+        except Exception as error:
+            # Anything else (a database error, a deeply nested file): a fixed message, no text.
+            logger.error("lifecycle: unexpected %s in %s", type(error).__name__, action)
+            raise ServiceError(ServiceErrorCode.INTERNAL, UNEXPECTED) from None
+        return ActionResult(ref.id, plan.to_status, plan.version, made.sha, action)
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -354,19 +453,76 @@ class Lifecycle:
                 audit = store.read_audit(connection)
                 emails = store.user_emails(connection)
             return store.read_state(repo, audit, emails)
+        except store.StoreError:
+            raise
         except (RepoError, SQLAlchemyError) as error:
             logger.error("lifecycle: cannot read the repository (%s)", type(error).__name__)
             raise ServiceError(
                 ServiceErrorCode.INTERNAL, "The definitions repository cannot be read."
             ) from None
 
-    def _open_reference_issues(self, connection: Connection, object_id: str) -> list[str]:
-        rows = connection.execute(
-            select(reference_issue.c.code, reference_issue.c.part)
-            .where(reference_issue.c.closed_at.is_(None), reference_issue.c.object_id == object_id)
-            .order_by(reference_issue.c.id)
-        )
-        return [f"{code} {part}" for code, part in rows]
+    def _proposal_reference_issues(
+        self,
+        connection: Connection,
+        state: RepoState,
+        item: ObjectState,
+        proposal: AnyDefinition,
+    ) -> list[str]:
+        """The reference issues (R01 to R04, R06, R07, and R05 for a metric) the proposed
+        definition would have against the catalog as it is now, as `"CODE part"`. The open rows of
+        `reference_issue` belong to the official version and are not looked at: an issue that is
+        stale for the official version must not block a proposal that fixes it. Without a synced
+        catalog there is nothing to check against."""
+        view = references.load_view(connection)
+        if not view.tables:
+            return []
+        ref = item.ref
+        if isinstance(proposal, Entity | GlossaryTerm):
+            entities = [
+                o.official
+                for o in state.objects.values()
+                if isinstance(o.official, Entity) and o.ref != ref
+            ]
+            terms = [
+                o.official
+                for o in state.objects.values()
+                if isinstance(o.official, GlossaryTerm) and o.ref != ref
+            ]
+            if isinstance(proposal, Entity):
+                entities.append(proposal)
+            else:
+                terms.append(proposal)
+            found = references.find_issues(entities, terms, view)
+            return [f"{f.code} {f.part}" for f in found if f.object_id == ref.id]
+        if isinstance(proposal, Metric) and self._policy is not None:
+            return self._metric_reference_issues(connection, state, proposal)
+        return []
+
+    def _metric_reference_issues(
+        self, connection: Connection, state: RepoState, proposal: Metric
+    ) -> list[str]:
+        """R05: the metric reads a column the catalog marks personal where personal data is not
+        allowed. Found by compiling it once, as the indexer does."""
+        assert self._policy is not None
+        entities = [o.official for o in state.objects.values() if isinstance(o.official, Entity)]
+        metrics = [
+            o.official
+            for o in state.objects.values()
+            if isinstance(o.official, Metric) and o.ref.name != proposal.name
+        ]
+        approved = proposal.model_copy(update={"status": "approved"})
+        model = Model.build(entities, [*metrics, approved], {}, catalog_sensitivity(connection))
+        try:
+            compile_request(
+                model, QueryRequest(metric=proposal.name), self._dialect, governance=self._policy
+            )
+        except QueryError:
+            return []  # refused for another reason, with a code of its own
+        except GovernanceError as error:
+            if error.table is None or error.column is None:
+                return []
+            return [f"R05 column:{error.table}.{error.column}"]
+        return []
 
     # --- planning each action ------------------------------------------------------------
 
@@ -380,6 +536,7 @@ class Lifecycle:
         yaml_text: str | None,
         replaced_by: str | None,
         reason: str,
+        expected_commit: str | None = None,
     ) -> _Plan:
         item = state.objects.get(ref.id)
         if action == CREATE_PROPOSAL:
@@ -394,7 +551,7 @@ class Lifecycle:
             return self._plan_update(caller, user, ref, item, state, yaml_text)
         if action == DEPRECATE:
             return self._plan_deprecate(caller, user, ref, item, state, replaced_by, reason)
-        return self._plan_proposal_action(caller, user, action, ref, item, state)
+        return self._plan_proposal_action(caller, user, action, ref, item, state, expected_commit)
 
     def _parse(self, ref: ObjectRef, yaml_text: str) -> AnyDefinition:
         definition, problems = parse_text(yaml_text)
@@ -473,6 +630,10 @@ class Lifecycle:
         domain = self._domain_of(proposal, state)
         if domain != item.domain:
             raise invalid_input("domain", "a change cannot move the object to another domain")
+        if item.official is None:
+            created = approval.may_create_new(caller, proposal)
+            if not created:
+                raise _denied(created)  # the owner team of a new object holds on every edit
         version = item.official.version if item.official is not None else None
         text = to_yaml(_as_proposal(proposal, "draft", version)).encode("utf-8")
         assert item.proposal_path is not None
@@ -489,6 +650,7 @@ class Lifecycle:
         ref: ObjectRef,
         item: ObjectState,
         state: RepoState,
+        expected_commit: str | None = None,
     ) -> _Plan:
         if item.proposal_source is None:
             raise ServiceError(LifecycleErrorCode.CONFLICT, "This object has no proposal.")
@@ -532,6 +694,11 @@ class Lifecycle:
             raise ServiceError(
                 LifecycleErrorCode.CONFLICT, "Only a proposal that is in review can be decided."
             )
+        if expected_commit is not None and item.proposal_commit != expected_commit:
+            raise ServiceError(
+                LifecycleErrorCode.CONFLICT,
+                "The proposal changed after you looked at it. Review it again before deciding.",
+            )
         if action == REJECT:
             draft = to_yaml(_as_proposal(proposal, "draft", version)).encode("utf-8")
             reject_files: dict[str, bytes | None] = {item.proposal_path: draft}
@@ -553,12 +720,12 @@ class Lifecycle:
                 "The proposal has definition errors, so it cannot be approved.", list(item.errors)
             )
         with self._engine.connect() as connection:
-            open_issues = self._open_reference_issues(connection, ref.id)
+            open_issues = self._proposal_reference_issues(connection, state, item, proposal)
         if open_issues:
             raise ServiceError(
                 LifecycleErrorCode.OPEN_REFERENCE_ISSUE,
-                "The object has an open reference issue, so it cannot be approved until the "
-                "catalog and the definition agree.",
+                "With the catalog as it is now, the proposed definition would have a reference "
+                "issue, so it cannot be approved. Change the definition or the catalog.",
                 {"issues": open_issues[:MAX_ISSUES_SHOWN]},
             )
         version = (official.version or 1) + 1 if official is not None else 1
@@ -666,70 +833,97 @@ class Lifecycle:
                 ServiceErrorCode.INTERNAL, "The change could not be recorded."
             ) from None
 
-    def _drop_intent(self, intent_id: int) -> None:
+    def _fail_intent(self, intent_id: int) -> None:
+        """Mark an attempt that made no commit as failed. The row is kept: it is a trace."""
         try:
             with self._engine.begin() as connection:
                 connection.execute(
-                    delete(audit_event).where(
-                        audit_event.c.id == intent_id, audit_event.c.commit_sha.is_(None)
-                    )
+                    update(audit_event)
+                    .where(audit_event.c.id == intent_id, audit_event.c.commit_sha.is_(None))
+                    .values(failed_at=func.now())
                 )
         except SQLAlchemyError as error:
-            logger.error("lifecycle: cannot remove an intent (%s)", type(error).__name__)
+            logger.error("lifecycle: cannot mark an intent failed (%s)", type(error).__name__)
 
     def _commit(
         self,
         repo: GitRepo,
+        lock: store.HeldLock,
         user: accounts.User,
         action: str,
         object_id: str,
         reason: str,
         plan: _Plan,
         intent_id: int,
-    ) -> None:
-        paths = list(plan.files)
+        state: RepoState,
+    ) -> CommitResult:
+        """Step 3: the commit, built from the checked bytes with plumbing, on the `HEAD` that was
+        read. The lock is checked first; if it is lost, nothing is committed."""
         try:
-            for path, data in plan.files.items():
-                if data is None:
-                    _safe_path(repo.path, path, create=False)
-                    repo.rm([path])
-                else:
-                    _write_file(repo.path, path, data)
-                    repo.add([path])
-            repo.commit(
+            lock.check()
+        except ServiceError:
+            self._fail_intent(intent_id)
+            raise
+        try:
+            made = repo.commit_files(
                 _message(action, object_id, reason, user.id, plan.version),
                 user.display_name,
                 user.email,
-                paths,
+                plan.files,
+                state.head,
             )
-        except (RepoError, ValueError, OSError, ServiceError) as error:
-            repo.discard(paths)
-            self._drop_intent(intent_id)
-            if isinstance(error, ServiceError):
-                raise
+        except (RepoError, ValueError) as error:
+            self._fail_intent(intent_id)
             logger.error("lifecycle: git failed (%s)", type(error).__name__)
+            if isinstance(error, RepoError) and error.subcommand == "update-ref":
+                raise ServiceError(LifecycleErrorCode.CONFLICT, REPOSITORY_MOVED) from None
             raise ServiceError(
                 ServiceErrorCode.INTERNAL, "The change could not be saved, so nothing was changed."
             ) from None
+        self._mirror(repo, made, plan.files)
+        return made
 
-    def _finish(self, repo: GitRepo, intent_id: int) -> str:
-        """Step 4 under the lock the caller holds: the same code as `makna index sync`. Returns the
-        commit that completed the intent."""
+    @staticmethod
+    def _mirror(repo: GitRepo, made: CommitResult, files: Mapping[str, bytes | None]) -> None:
+        """Bring the working tree and the repository's own index in line with the commit, so that
+        `git status` is quiet. Best effort: the working tree is not authoritative, nothing reads
+        it, and a path with a link in it is skipped (never written through)."""
         try:
+            repo.index_set(made.blobs)
+        except (RepoError, ValueError):
+            logger.warning("lifecycle: the repository index could not be updated")
+        for path, data in files.items():
+            try:
+                if data is None:
+                    target = _safe_path(repo.path, path, create=False)
+                    if target.is_file() and not target.is_symlink():
+                        target.unlink()
+                else:
+                    _write_file(repo.path, path, data)
+            except (ServiceError, OSError):
+                logger.warning("lifecycle: a file of the working tree was not updated")
+
+    def _finish(
+        self, repo: GitRepo, lock: store.HeldLock, intent_id: int, made: CommitResult
+    ) -> None:
+        """Step 4 under the lock the caller holds: the same code as `makna index sync`, told which
+        commit is this action's own."""
+        try:
+            lock.check()
             state, _ = store.sync(
-                self._engine, self._provider, repo, derive=self._derive, locked=True
+                self._engine,
+                self._provider,
+                repo,
+                derive=self._derive,
+                locked=True,
+                claimed={intent_id: made.sha},
             )
-        except store.StoreError as error:
-            logger.error("lifecycle: committed but not indexed (%d issue(s))", len(error.issues))
-            raise ServiceError(ServiceErrorCode.INTERNAL, COMMITTED_NOT_INDEXED) from None
         except Exception as error:
             logger.error("lifecycle: committed but not indexed (%s)", type(error).__name__)
             raise ServiceError(ServiceErrorCode.INTERNAL, COMMITTED_NOT_INDEXED) from None
-        sha = state.matched.get(intent_id)
-        if sha is None:
+        if state.matched.get(intent_id) != made.sha:
             logger.error("lifecycle: the commit does not match its intent")
             raise ServiceError(ServiceErrorCode.INTERNAL, COMMITTED_NOT_INDEXED)
-        return sha
 
 
 def _check_size(yaml_text: object) -> None:
@@ -797,9 +991,16 @@ def seed_repository(engine: Engine, repo_path: Path, source: Path) -> SeedOutcom
     repo = GitRepo(repo_path)
     if repo_path.exists() and not repo_path.is_dir():
         return SeedOutcome(False, f"{repo_path} is not a directory; left alone")
+    dot_git = repo_path / ".git"
+    if os.path.lexists(dot_git) and (dot_git.is_symlink() or not dot_git.is_dir()):
+        # A planted `.git` file or link would send the commit into another repository.
+        raise store.StoreError("the definitions path has a .git that is not a directory of its own")
     if repo_path.is_dir():
         entries = [p for p in repo_path.iterdir() if p.name != ".git"]
-        has_commits = (repo_path / ".git").is_dir() and repo.rev_parse("HEAD") is not None
+        try:
+            has_commits = dot_git.is_dir() and repo.rev_parse("HEAD") is not None
+        except RepoError:
+            raise store.StoreError("the definitions repository cannot be read") from None
         if entries or has_commits:
             return SeedOutcome(False, "the definitions repository already has content; left alone")
     loaded = load_definitions(source)
@@ -815,9 +1016,15 @@ def seed_repository(engine: Engine, repo_path: Path, source: Path) -> SeedOutcom
             files[file.path] = (source / file.path).read_bytes()
     if not files:
         raise store.StoreError(f"{source} holds no definition files; nothing was seeded")
-    with store.advisory_lock(engine):
-        if not (repo_path / ".git").is_dir():
-            repo.init()
+    reason = "the first definitions of the repository"
+    with store.advisory_lock(engine) as lock:
+        try:
+            if not dot_git.is_dir():
+                repo.init()
+            if repository_mode(repo_path, configured=True) is not RepoMode.REPOSITORY:
+                raise store.StoreError("the definitions path is not a repository of its own")
+        except (RepoError, RepoUnusable):
+            raise store.StoreError("the definitions repository could not be created") from None
         with engine.begin() as connection:
             intent_id = connection.execute(
                 insert(audit_event)
@@ -826,33 +1033,30 @@ def seed_repository(engine: Engine, repo_path: Path, source: Path) -> SeedOutcom
                     action=store.SEED_ACTION,
                     object_id=store.SEED_OBJECT,
                     to_status="approved",
-                    reason="the first definitions of the repository",
+                    reason=reason,
                     commit_sha=None,
                     files={p: sha256(d) for p, d in files.items()},
                 )
                 .returning(audit_event.c.id)
             ).scalar_one()
         try:
-            for path, data in files.items():
-                _write_file(repo.path, path, data)
-            repo.add(list(files))
-            repo.commit(
-                _message(
-                    store.SEED_ACTION,
-                    store.SEED_OBJECT,
-                    "the first definitions of the repository",
-                    None,
-                    1,
-                ),
+            lock.check()
+            made = repo.commit_files(
+                _message(store.SEED_ACTION, store.SEED_OBJECT, reason, None, 1),
                 COMMITTER_NAME,
                 COMMITTER_EMAIL,
-                list(files),
+                files,
+                None,
             )
-        except (RepoError, ServiceError, OSError):
-            repo.discard(list(files))
+        except (RepoError, ServiceError, ValueError):
             with engine.begin() as connection:
-                connection.execute(delete(audit_event).where(audit_event.c.id == intent_id))
+                connection.execute(
+                    update(audit_event)
+                    .where(audit_event.c.id == intent_id)
+                    .values(failed_at=func.now())
+                )
             raise store.StoreError("the definitions could not be committed") from None
+        Lifecycle._mirror(repo, made, files)
     return SeedOutcome(True, f"committed {len(files)} definition file(s) as the action seed")
 
 

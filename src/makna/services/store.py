@@ -41,7 +41,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import Connection, Engine, delete, func, insert, select, update
+from sqlalchemy import Connection, Engine, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -55,8 +55,8 @@ from makna.definitions.loader import (
     OfficialObjects,
     load_text,
 )
-from makna.definitions.render import sha256
-from makna.definitions.repo import COMMITTER_EMAIL, Commit, GitRepo, RepoError
+from makna.definitions.render import MAX_YAML_BYTES, sha256
+from makna.definitions.repo import COMMITTER_EMAIL, Commit, GitRepo, RepoError, TooLarge
 from makna.index import indexer
 from makna.index.tables import app_user, audit_event, index_state
 from makna.model.definitions import AnyDefinition, Entity, GlossaryTerm, Metric
@@ -84,18 +84,55 @@ class StoreError(Exception):
     """The repository cannot be indexed. `issues` are the definition errors found; the message
     never holds git's output or file content."""
 
-    def __init__(self, message: str, issues: tuple[Issue, ...] = ()) -> None:
+    def __init__(
+        self, message: str, issues: tuple[Issue, ...] = (), *, fatal: bool = False
+    ) -> None:
         super().__init__(message)
         self.issues = issues
+        self.fatal = fatal
+        """True for a repository that must not be served at all until a person decides: a rewritten
+        history. The application then does not start."""
 
 
 # --- the lock ------------------------------------------------------------------------------
 
 
+LOCK_LOST_MESSAGE = (
+    "The lock that protects the definitions was lost, so the change was stopped. Nothing "
+    "was committed after that point."
+)
+_HELD_SQL = text(
+    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted "
+    "AND pid = pg_backend_pid() "
+    "AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+    "AND ((classid::bigint << 32) | objid::bigint) = :key"
+)
+
+
+class HeldLock:
+    """The advisory lock, held on one connection. `check()` says whether it is still held: a
+    session-level lock is lost when its connection is (a server restart, `pg_terminate_backend`,
+    `idle_session_timeout`, or a proxy that pools sessions), and nobody else is told."""
+
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+
+    def check(self) -> None:
+        """Raise `ServiceError(CONFLICT)` unless the lock is still held by this connection."""
+        try:
+            held = self._connection.execute(_HELD_SQL, {"key": ADVISORY_LOCK_KEY}).scalar_one()
+            self._connection.commit()
+        except Exception:
+            raise ServiceError(LifecycleErrorCode.CONFLICT, LOCK_LOST_MESSAGE) from None
+        if not held:
+            raise ServiceError(LifecycleErrorCode.CONFLICT, LOCK_LOST_MESSAGE)
+
+
 @contextmanager
-def advisory_lock(engine: Engine, *, wait_seconds: float = LOCK_WAIT_SECONDS) -> Iterator[None]:
+def advisory_lock(engine: Engine, *, wait_seconds: float = LOCK_WAIT_SECONDS) -> Iterator[HeldLock]:
     """Hold the one write lock for the body. Raises `ServiceError(CONFLICT)` after
-    `wait_seconds` without getting it."""
+    `wait_seconds` without getting it. The body gets a `HeldLock`; the write path calls its
+    `check()` before it touches git and before it writes the index."""
     deadline = time.monotonic() + wait_seconds
     while True:
         connection = engine.connect()
@@ -120,11 +157,15 @@ def advisory_lock(engine: Engine, *, wait_seconds: float = LOCK_WAIT_SECONDS) ->
             )
         time.sleep(LOCK_POLL_SECONDS)
     try:
-        yield
+        yield HeldLock(connection)
     finally:
         try:
-            connection.execute(select(func.pg_advisory_unlock(ADVISORY_LOCK_KEY)))
+            released = connection.execute(
+                select(func.pg_advisory_unlock(ADVISORY_LOCK_KEY))
+            ).scalar_one()
             connection.commit()
+            if not released:
+                logger.warning("the definitions lock was not held at release")
             connection.close()
         except Exception:
             # A connection that may still hold the lock must not go back to the pool: closing the
@@ -157,6 +198,8 @@ class AuditView:
     intents: tuple[Intent, ...]
     external_logged: frozenset[tuple[str, str]]
     """`(sha, object_id)` of the `external_change` rows."""
+    last_indexed: str | None = None
+    """`index_state.last_indexed_commit`: the `HEAD` the index was last written for."""
 
 
 def read_audit(connection: Connection) -> AuditView:
@@ -171,18 +214,27 @@ def read_audit(connection: Connection) -> AuditView:
             audit_event.c.actor_user_id,
             audit_event.c.commit_sha,
             audit_event.c.files,
+            audit_event.c.failed_at,
         ).order_by(audit_event.c.id)
     )
     for row in rows:
         if row.commit_sha is None or row.commit_sha == "":
+            if row.failed_at is not None:
+                continue  # an attempt that was given up: kept for the audit, never matched
             files = row.files if isinstance(row.files, dict) else {}
             intents.append(Intent(row.id, row.action, row.object_id, row.actor_user_id, files))
         elif row.action == EXTERNAL_ACTION:
             logged.add((row.commit_sha, row.object_id))
         else:
             applied[row.commit_sha].append((row.object_id, row.action))
+    last = connection.execute(
+        select(index_state.c.value).where(index_state.c.key == "last_indexed_commit")
+    ).scalar_one_or_none()
     return AuditView(
-        {sha: tuple(items) for sha, items in applied.items()}, tuple(intents), frozenset(logged)
+        {sha: tuple(items) for sha, items in applied.items()},
+        tuple(intents),
+        frozenset(logged),
+        last or None,
     )
 
 
@@ -290,7 +342,11 @@ class RepoState:
         return objects
 
 
-def _decode(path: str, data: bytes) -> tuple[DefinitionFile, list[Issue]]:
+def _decode(path: str, data: bytes | TooLarge) -> tuple[DefinitionFile, list[Issue]]:
+    if isinstance(data, TooLarge):
+        return DefinitionFile(path, path.endswith(PROPOSAL_SUFFIX), None), [
+            Issue(path, None, "V01", f"file is larger than {MAX_YAML_BYTES // 1024} KiB")
+        ]
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -327,7 +383,8 @@ def _match_intents(
     """Open intents completed by a commit: same files, same SHA-256 of each, same author."""
     free = [c for c in commits if c.sha not in trusted]
     matched: dict[int, str] = {}
-    for intent in intents:
+    # Newest first: after a crash and a retry, the retry's commit belongs to the newest intent.
+    for intent in sorted(intents, key=lambda i: i.id, reverse=True):
         if not intent.files:
             continue
         author = (
@@ -346,9 +403,10 @@ def _match_intents(
             ):
                 continue
             kept = [(commit.sha, p) for status, p in commit.changes if status != "D"]
-            blobs = repo.read_blobs(kept)
+            blobs = repo.read_blobs(kept, MAX_YAML_BYTES)
             if all(
-                (data := blobs[(commit.sha, p)]) is not None and sha256(data) == intent.files[p]
+                isinstance(data := blobs[(commit.sha, p)], bytes)
+                and sha256(data) == intent.files[p]
                 for _, p in kept
             ):
                 matched[intent.id] = commit.sha
@@ -356,16 +414,58 @@ def _match_intents(
     return matched
 
 
-def read_state(repo: GitRepo, audit: AuditView, emails: Mapping[int, str]) -> RepoState:
+HISTORY_REWRITTEN = (
+    "The history of the definitions repository was rewritten: the commit the index was last "
+    "written for is no longer in it (a reset, an amend, a forced move, or another repository). "
+    "Nothing was indexed or changed. If the new history is what you want, run "
+    "`makna index sync --accept-rewritten-history`; otherwise restore the repository."
+)
+
+
+def check_history(repo: GitRepo, audit: AuditView) -> None:
+    """Refuse a repository whose `HEAD` does not descend from the commit the index was last
+    written for. Reading official content from the first-parent history would otherwise roll back
+    approvals and deprecations without a word (review I-1). Raises `StoreError`."""
+    if audit.last_indexed is None:
+        return
+    try:
+        head = repo.rev_parse("HEAD")
+        ok = head is not None and repo.is_ancestor(audit.last_indexed, "HEAD")
+    except RepoError:
+        raise StoreError("the repository cannot be read") from None
+    if not ok:
+        raise StoreError(HISTORY_REWRITTEN, fatal=True)
+
+
+def read_state(
+    repo: GitRepo,
+    audit: AuditView,
+    emails: Mapping[int, str],
+    *,
+    claimed: Mapping[int, str] | None = None,
+    accept_rewritten_history: bool = False,
+) -> RepoState:
     """Read the whole repository and classify it. Reads only commits (`git log`, `cat-file`);
-    the working tree is never looked at."""
+    the working tree is never looked at.
+
+    `claimed` maps an open intent to the commit its own action just made, so a retry after a
+    crash completes its own intent and not an older one. Raises `StoreError` when the history
+    was rewritten, unless `accept_rewritten_history`."""
+    if not accept_rewritten_history:
+        check_history(repo, audit)
     commits = repo.log()
     if not commits:
         return RepoState(None, dead=[i.id for i in audit.intents])
     head = commits[-1].sha
     trusted = set(audit.applied)
     state = RepoState(head)
-    state.matched = _match_intents(repo, commits, trusted, audit.intents, emails)
+    known = {c.sha for c in commits}
+    own = {i: sha for i, sha in (claimed or {}).items() if sha in known and sha not in trusted}
+    rest = tuple(i for i in audit.intents if i.id not in own)
+    state.matched = {
+        **own,
+        **_match_intents(repo, commits, trusted | set(own.values()), rest, emails),
+    }
     state.dead = [i.id for i in audit.intents if i.id not in state.matched]
     trusted |= set(state.matched.values())
     actions: dict[str, set[str]] = defaultdict(set)  # sha -> actions of that application commit
@@ -421,7 +521,7 @@ def read_state(repo: GitRepo, audit: AuditView, emails: Mapping[int, str]) -> Re
     for path in at_head:  # for a revert check: the last application version of a changed proposal
         if path in last_app and last_app[path][2] != "D":
             wanted.append((last_app[path][1].sha, path))
-    blobs = repo.read_blobs(wanted)
+    blobs = repo.read_blobs(wanted, MAX_YAML_BYTES)
 
     refs = sorted(set(official_at) | set(candidates), key=lambda r: r.id)
     for ref in refs:
@@ -438,8 +538,13 @@ def read_state(repo: GitRepo, audit: AuditView, emails: Mapping[int, str]) -> Re
             assert data is not None
             item.official_path = official_path
             item.official_commit = commit.sha
-            item.official_bytes = data
+            item.official_bytes = data if isinstance(data, bytes) else None
             file, issues = _decode(official_path, data)
+            if file.definition is not None:
+                mismatch = _identity_issue(file.definition, ref, info.domain, official_path)
+                if mismatch is not None:
+                    issues = [mismatch]
+                    file = DefinitionFile(official_path, False, None)
             state.official_load_issues.extend(issues)
             if file.definition is not None:
                 state.official_files.append(file)
@@ -464,10 +569,27 @@ def read_state(repo: GitRepo, audit: AuditView, emails: Mapping[int, str]) -> Re
     return state
 
 
+def _identity_issue(
+    definition: AnyDefinition, ref: ObjectRef, domain: str, path: str
+) -> Issue | None:
+    """A file's identity is its path. Content that names another object (a copied or moved
+    file, or one made to look like another) is a definition error and never stands in for the
+    object it names (review I-5)."""
+    own_domain = definition.name if definition.kind == "domain" else getattr(definition, "domain")  # noqa: B009
+    if (definition.kind, definition.name) != (ref.kind, ref.name) or own_domain != domain:
+        return Issue(
+            path,
+            None,
+            "V02",
+            "the content names another object or domain than the path of the file does",
+        )
+    return None
+
+
 def _read_proposal(
     item: ObjectState,
     paths_here: list[str],
-    blobs: Mapping[tuple[str, str], bytes | None],
+    blobs: Mapping[tuple[str, str], bytes | None | TooLarge],
     head: str,
     last_any: Mapping[str, tuple[int, Commit, str]],
     last_app: Mapping[str, tuple[int, Commit, str]],
@@ -514,8 +636,12 @@ def _read_proposal(
     data = blobs[(head, source)]
     assert data is not None
     item.proposal_source = source
-    item.proposal_bytes = data
+    item.proposal_bytes = data if isinstance(data, bytes) else None
     file, issues = _decode(proposal_path, data)
+    if file.definition is not None:
+        mismatch = _identity_issue(file.definition, ref, item.domain, proposal_path)
+        if mismatch is not None:
+            issues, file = [mismatch], DefinitionFile(proposal_path, True, None)
     if file.definition is None:
         item.unreadable = tuple(issues)
         return
@@ -627,10 +753,16 @@ def reindex(
                 .values(commit_sha=sha)
             )
         if state.dead:
+            # An attempt that no commit completed is kept, marked failed: it is a trace, and it
+            # is never matched with a commit again.
             connection.execute(
-                delete(audit_event).where(
-                    audit_event.c.id.in_(state.dead), audit_event.c.commit_sha.is_(None)
+                update(audit_event)
+                .where(
+                    audit_event.c.id.in_(state.dead),
+                    audit_event.c.commit_sha.is_(None),
+                    audit_event.c.failed_at.is_(None),
                 )
+                .values(failed_at=func.now())
             )
         if external:
             connection.execute(
@@ -665,19 +797,28 @@ def sync(
     *,
     derive: indexer.Derive | None,
     locked: bool = False,
+    claimed: Mapping[int, str] | None = None,
+    accept_rewritten_history: bool = False,
 ) -> tuple[RepoState, indexer.IndexResult]:
     """Complete interrupted actions, log external changes, and rebuild the index from `HEAD`.
 
     Idempotent: a second run finds nothing to change and writes nothing. `locked` says the
     caller already holds the advisory lock. Raises `StoreError` (the repository or its official
-    definitions cannot be indexed) or `ServiceError(CONFLICT)` (the lock is busy)."""
+    definitions cannot be indexed, or its history was rewritten) or `ServiceError(CONFLICT)` (the
+    lock is busy). `claimed` maps an open intent to the commit its own action made."""
 
     def run() -> tuple[RepoState, indexer.IndexResult]:
         try:
             with engine.connect() as connection:
                 audit = read_audit(connection)
                 emails = user_emails(connection)
-            state = read_state(repo, audit, emails)
+            state = read_state(
+                repo,
+                audit,
+                emails,
+                claimed=claimed,
+                accept_rewritten_history=accept_rewritten_history,
+            )
             result = reindex(engine, provider, state, audit, derive=derive)
         except RepoError as error:
             raise StoreError(f"the repository cannot be read ({error})") from None

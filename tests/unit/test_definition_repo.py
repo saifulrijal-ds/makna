@@ -5,7 +5,10 @@ These need the `git` command line (no database): a temporary repository per test
 
 from __future__ import annotations
 
+import os
 import stat
+import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -15,8 +18,13 @@ from makna.definitions.loader import load_definitions
 from makna.definitions.repo import (
     GitRepo,
     RepoError,
+    RepoMode,
+    RepoUnusable,
+    TooLarge,
     clean_display_name,
+    clean_email,
     is_repository_root,
+    repository_mode,
 )
 from makna.model.definitions import Deprecation, dump_definition
 
@@ -29,12 +37,40 @@ def make_repo(path: Path) -> GitRepo:
     return repo
 
 
+def commit_files(
+    repo: GitRepo, changes: Mapping[str, bytes | None], *, who: str = "ann@example.com"
+) -> str:
+    return repo.commit_files("edit: test", "Ann", who, changes, repo.rev_parse("HEAD")).sha
+
+
 def commit_file(repo: GitRepo, name: str, text: str, *, who: str = "ann@example.com") -> str:
-    target = repo.path / name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text)
-    repo.add([name])
-    return repo.commit(f"edit({name}): test", "Ann", who, [name])
+    return commit_files(repo, {name: text.encode()}, who=who)
+
+
+def raw(repo: GitRepo, *args: str, **env: str) -> str:
+    """A git command as someone outside Makna runs it, on the working tree."""
+    full = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_AUTHOR_NAME": "Outside",
+        "GIT_AUTHOR_EMAIL": "outside@example.com",
+        "GIT_COMMITTER_NAME": "Outside",
+        "GIT_COMMITTER_EMAIL": "outside@example.com",
+        **env,
+    }
+    done = subprocess.run(
+        ["git", "-C", str(repo.path), *args], capture_output=True, text=True, check=True, env=full
+    )
+    return done.stdout
+
+
+def raw_commit(repo: GitRepo, files: Mapping[str, str], message: str = "outside") -> None:
+    for name, text in files.items():
+        target = repo.path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        raw(repo, "add", "--", name)
+    raw(repo, "commit", "-q", "-m", message)
 
 
 def test_a_commit_has_the_user_as_author_and_makna_as_committer(tmp_path: Path) -> None:
@@ -46,17 +82,51 @@ def test_a_commit_has_the_user_as_author_and_makna_as_committer(tmp_path: Path) 
     assert log[0].changes == (("A", "a/b.yaml"),)
     committer = repo._git(["log", "-1", "--format=%cn <%ce>"]).decode().strip()
     assert committer == "Makna <makna@localhost>"
+    assert repo.show(sha, "a/b.yaml") == b"x: 1\n"
 
 
-def test_commit_takes_only_the_named_paths_and_a_deletion_is_a_change(tmp_path: Path) -> None:
+def test_a_commit_is_built_from_the_bytes_given_and_touches_neither_tree_nor_index(
+    tmp_path: Path,
+) -> None:
     repo = make_repo(tmp_path / "r")
     commit_file(repo, "a.yaml", "1\n")
     (repo.path / "other.txt").write_text("staged by someone else\n")
-    repo._git(["add", "other.txt"])
-    repo.rm(["a.yaml"])
-    sha = repo.commit("remove", "Ann", "ann@example.com", ["a.yaml"])
+    (repo.path / "a.yaml").write_text("edited in the working tree\n")
+    raw(repo, "add", "other.txt")
+    sha = commit_files(repo, {"a.yaml": None})
     assert repo.diff_names(sha) == [("D", "a.yaml")]
-    assert repo.show(sha, "other.txt") is None  # still only staged
+    assert repo.show(sha, "other.txt") is None  # what someone else staged is not swept in
+    assert (
+        repo.path / "a.yaml"
+    ).read_text() == "edited in the working tree\n"  # not read, not written
+    assert "other.txt" in raw(
+        repo, "diff", "--cached", "--name-only"
+    )  # their index is as they left it
+
+
+def test_attributes_and_filters_of_the_working_tree_cannot_change_a_commit(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "r")
+    marker = tmp_path / "filter-ran"
+    (repo.path / ".gitattributes").write_text(
+        "*.yaml ident filter=evil text working-tree-encoding=UTF-16\n"
+    )
+    (repo.path / ".git" / "info").mkdir(exist_ok=True)
+    raw(repo, "config", "filter.evil.clean", f"touch {marker}; cat")
+    text = "id: $Id: keep this $\ncafe: caf\u00e9\r\n"
+    sha = commit_file(repo, "a.yaml", text)
+    assert repo.show(sha, "a.yaml") == text.encode()
+    assert not marker.exists()
+
+
+def test_a_stale_head_is_refused_and_nothing_moves(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "r")
+    first = commit_file(repo, "a.yaml", "1\n")
+    commit_file(repo, "b.yaml", "2\n")
+    head = repo.rev_parse("HEAD")
+    with pytest.raises(RepoError) as caught:
+        repo.commit_files("late", "Ann", "ann@example.com", {"c.yaml": b"3\n"}, first)
+    assert caught.value.subcommand == "update-ref"
+    assert repo.rev_parse("HEAD") == head
 
 
 def test_show_reads_the_commit_not_the_working_tree(tmp_path: Path) -> None:
@@ -71,23 +141,55 @@ def test_show_reads_the_commit_not_the_working_tree(tmp_path: Path) -> None:
     }
 
 
+def test_read_blobs_skips_what_is_not_a_blob_and_does_not_read_what_is_too_large(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path / "r")
+    sha = commit_files(repo, {"d/a.yaml": b"x" * 100, "d/b.yaml": b"short\n"})
+    got = repo.read_blobs(
+        [(sha, "d"), (sha, "d/a.yaml"), (sha, "d/b.yaml"), (sha, "nothing")], max_size=50
+    )
+    assert got[(sha, "d")] is None  # a tree: its content is never read as a file
+    assert got[(sha, "d/a.yaml")] == TooLarge(100)
+    assert got[(sha, "d/b.yaml")] == b"short\n"
+    assert got[(sha, "nothing")] is None
+    assert repo.show(sha, "d/b.yaml") == b"short\n"
+
+
 def test_an_author_name_is_cleaned_and_a_bad_email_is_refused(tmp_path: Path) -> None:
     assert (
         clean_display_name("Ann <ann@x>\nSigned-off-by: Eve\x00\x07")
         == "Ann ann@x Signed-off-by: Eve"
     )
     assert clean_display_name("<>\n") == "Makna user"
+    assert clean_email("evil\x1b[31mRED\u202e@example.com\n") == "evil[31mRED@example.com"
     repo = make_repo(tmp_path / "r")
-    (repo.path / "a.yaml").write_text("1\n")
-    repo.add(["a.yaml"])
     with pytest.raises(ValueError):
-        repo.commit("m", "Ann", "ann@x>\nGIT: yes", ["a.yaml"])
+        repo.commit_files("m", "Ann", "ann@x>\nGIT: yes", {"a.yaml": b"1"}, None)
+
+
+def test_outside_author_names_and_emails_are_cleaned_when_read(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "r")
+    commit_file(repo, "a.yaml", "1\n")
+    (repo.path / "b.yaml").write_text("2\n")
+    raw(repo, "add", "b.yaml")
+    raw(repo, "commit", "-q", "-m", "x", GIT_AUTHOR_EMAIL="evil\x1b[31mRED\u202e@example.com",
+        GIT_AUTHOR_NAME="Eve\x1b[0m")  # fmt: skip
+    last = repo.log()[-1]
+    assert "\x1b" not in last.author_email and "\u202e" not in last.author_email
+    assert "\x1b" not in last.author_name
 
 
 def test_a_hook_in_the_repository_does_not_run(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "r")
     marker = tmp_path / "hook-ran"
-    for name in ("pre-commit", "commit-msg", "post-commit", "prepare-commit-msg"):
+    for name in (
+        "pre-commit",
+        "commit-msg",
+        "post-commit",
+        "prepare-commit-msg",
+        "reference-transaction",
+    ):
         hook = repo.path / ".git" / "hooks" / name
         hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
         hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
@@ -124,23 +226,21 @@ def test_a_failed_command_carries_the_subcommand_and_code_and_not_git_output(
 ) -> None:
     repo = make_repo(tmp_path / "r")
     secret = "SECRET-FILE-CONTENT-token-123"
-    (repo.path / "a.yaml").write_text(secret)
+    commit_file(repo, "a.yaml", "1\n")
     with pytest.raises(RepoError) as caught:
-        repo.add(["does-not-exist.yaml"])
+        repo.commit_files("m", "Ann", "ann@example.com", {"b.yaml": secret.encode()}, None)
     error = caught.value
-    assert error.subcommand == "add" and error.returncode and error.returncode > 0
+    assert error.subcommand == "update-ref" and error.returncode and error.returncode > 0
     assert secret not in str(error) and secret not in repr(error)
-    assert "does-not-exist" not in str(error)
+    assert "b.yaml" not in str(error)
 
 
 def test_a_pathspec_cannot_be_an_option_or_leave_the_repository(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "r")
-    for bad in ("--all", "-A", "/etc/passwd", "../x", "a/../../x", ""):
+    for bad in ("--all", "-A", "/etc/passwd", "../x", "a/../../x", "", "a\nb"):
         with pytest.raises(ValueError):
-            repo.add([bad])
-    (repo.path / "-A").write_text("a file named like an option\n")
-    repo.add(["./-A"])  # a path that merely looks like one is fine after `--`
-    assert repo.commit("m", "Ann", "ann@example.com", ["./-A"])
+            repo.commit_files("m", "Ann", "ann@example.com", {bad: b"x"}, None)
+    assert repo.rev_parse("HEAD") is None
 
 
 def test_a_directory_inside_another_repository_is_not_a_repository_root(tmp_path: Path) -> None:
@@ -153,22 +253,80 @@ def test_a_directory_inside_another_repository_is_not_a_repository_root(tmp_path
     assert not is_repository_root(tmp_path)  # no repository there
 
 
+def test_the_mode_of_a_path_never_falls_back_from_a_broken_repository(tmp_path: Path) -> None:
+    outer = make_repo(tmp_path / "outer")
+    inner = outer.path / "semantic" / "definitions"
+    inner.mkdir(parents=True)
+    assert repository_mode(outer.path, configured=True) is RepoMode.REPOSITORY
+    assert repository_mode(inner, configured=True) is RepoMode.PLAIN  # inside another repository
+    assert repository_mode(inner, configured=False) is RepoMode.PLAIN
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert repository_mode(plain, configured=False) is RepoMode.PLAIN  # a directory given as is
+    with pytest.raises(RepoUnusable):  # configured, not a repository, not inside one
+        repository_mode(plain, configured=True)
+    with pytest.raises(RepoUnusable):
+        repository_mode(tmp_path / "missing", configured=True)
+
+    def broken(name: str) -> Path:
+        repo = make_repo(tmp_path / name)
+        commit_file(repo, "a.yaml", "1\n")
+        return repo.path
+
+    bare = broken("bare")
+    raw(GitRepo(bare), "config", "core.bare", "true")
+    worktree = broken("worktree")
+    raw(GitRepo(worktree), "config", "core.worktree", str(tmp_path))
+    nogit = broken("nogit")
+    import shutil
+
+    shutil.rmtree(nogit / ".git")
+    linked = broken("linked")
+    shutil.move(str(linked / ".git"), str(tmp_path / "moved-git"))
+    (linked / ".git").symlink_to(tmp_path / "moved-git")
+    gitfile = broken("gitfile")
+    shutil.rmtree(gitfile / ".git")
+    (gitfile / ".git").write_text(f"gitdir: {bare / '.git'}\n")
+    for path in (bare, worktree, nogit, linked, gitfile):
+        for configured in (True, False):
+            if path is nogit and not configured:
+                assert repository_mode(path, configured=False) is RepoMode.PLAIN
+                continue
+            with pytest.raises(RepoUnusable) as caught:
+                repository_mode(path, configured=configured)
+            assert str(path) not in caught.value.message  # fixed text, no path
+
+
+def test_is_ancestor_says_no_for_a_commit_that_is_gone(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "r")
+    first = commit_file(repo, "a.yaml", "1\n")
+    second = commit_file(repo, "b.yaml", "2\n")
+    assert (
+        repo.is_ancestor(first) and repo.is_ancestor(second) and repo.is_ancestor("0" * 40) is False
+    )
+    raw(repo, "reset", "-q", "--hard", first)
+    assert repo.is_ancestor(first) and not repo.is_ancestor(second)
+
+
+def test_a_bad_gitmodules_file_does_not_stop_the_history_from_being_read(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "r")
+    raw_commit(repo, {"a.yaml": "1\n"})
+    raw_commit(
+        repo, {".gitmodules": '[submodule "x"]\n\tpath = x\n\turl = ../x\n\tupdate = !echo hi\n'}
+    )
+    assert [c.changes for c in repo.log()][-1] == (("A", ".gitmodules"),)
+
+
 def test_the_log_follows_a_merge_and_reads_odd_names(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "r")
-    commit_file(repo, "a.yaml", "1\n")
-    odd = "d/we irdé name.yaml"
-    commit_file(repo, odd, "2\n", who="eve@example.com")
-    repo._git(["checkout", "-q", "-b", "side"])
-    commit_file(repo, "side.yaml", "s\n")
-    repo._git(["checkout", "-q", "main"])
-    commit_file(repo, "main.yaml", "m\n")
-    repo._git(
-        ["merge", "-q", "--no-ff", "side", "-m", "merge"],
-        extra_env={
-            "GIT_AUTHOR_NAME": "A", "GIT_AUTHOR_EMAIL": "a@x",
-            "GIT_COMMITTER_NAME": "A", "GIT_COMMITTER_EMAIL": "a@x",
-        },
-    )  # fmt: skip
+    odd = "d/we ird\u00e9 name.yaml"
+    raw_commit(repo, {"a.yaml": "1\n"})
+    raw_commit(repo, {odd: "2\n"})
+    raw(repo, "checkout", "-q", "-b", "side")
+    raw_commit(repo, {"side.yaml": "s\n"})
+    raw(repo, "checkout", "-q", "main")
+    raw_commit(repo, {"main.yaml": "m\n"})
+    raw(repo, "merge", "-q", "--no-ff", "side", "-m", "merge")
     log = repo.log()
     assert [c.changes for c in log][1] == (("A", odd),)
     assert log[-1].changes == (("A", "side.yaml"),)  # the merge brings in the side branch
@@ -177,23 +335,21 @@ def test_the_log_follows_a_merge_and_reads_odd_names(tmp_path: Path) -> None:
 
 def test_symbolic_links_are_not_regular_files(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "r")
-    commit_file(repo, "a.yaml", "1\n")
+    raw_commit(repo, {"a.yaml": "1\n"})
     (repo.path / "link.yaml").symlink_to("/etc/passwd")
-    repo.add(["link.yaml"])
-    sha = repo.commit("link", "Ann", "ann@example.com", ["link.yaml"])
+    raw(repo, "add", "link.yaml")
+    raw(repo, "commit", "-q", "-m", "link")
+    sha = repo.rev_parse("HEAD")
+    assert sha is not None
     assert repo.regular_files(sha) == ["a.yaml"]
 
 
-def test_discard_puts_the_committed_state_back(tmp_path: Path) -> None:
+def test_index_set_makes_git_status_quiet_after_a_plumbing_commit(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "r")
-    commit_file(repo, "a.yaml", "old\n")
-    (repo.path / "a.yaml").write_text("new\n")
-    (repo.path / "b.yaml").write_text("fresh\n")
-    repo.add(["a.yaml", "b.yaml"])
-    repo.discard(["a.yaml", "b.yaml"])
-    assert (repo.path / "a.yaml").read_text() == "old\n"
-    assert not (repo.path / "b.yaml").exists()
-    assert repo._git(["status", "--porcelain"]) == b""
+    made = repo.commit_files("m", "Ann", "ann@example.com", {"a.yaml": b"1\n"}, None)
+    (repo.path / "a.yaml").write_bytes(b"1\n")
+    repo.index_set(made.blobs)
+    assert raw(repo, "status", "--porcelain") == ""
 
 
 # --- layout and render ---------------------------------------------------------------------

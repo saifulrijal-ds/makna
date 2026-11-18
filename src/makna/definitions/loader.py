@@ -155,6 +155,9 @@ def load_text(path: str, text: str) -> tuple[DefinitionFile, list[Issue]]:
     is_proposal = path.endswith(PROPOSAL_SUFFIX)
     try:
         data, lines = parse_yaml(text)
+    except RecursionError:
+        message = "not readable as YAML: nested too deeply"
+        return DefinitionFile(path, is_proposal, None), [Issue(path, None, "V01", message)]
     except yaml.YAMLError as error:
         mark = getattr(error, "problem_mark", None)
         line = mark.line + 1 if mark is not None else None
@@ -165,6 +168,10 @@ def load_text(path: str, text: str) -> tuple[DefinitionFile, list[Issue]]:
         return DefinitionFile(path, is_proposal, None), [Issue(path, None, "V01", "file is empty")]
     try:
         definition = parse_definition(data)
+    except RecursionError:
+        return DefinitionFile(path, is_proposal, None, lines), [
+            Issue(path, None, "V01", "nested too deeply")
+        ]
     except ValidationError as error:
         issues = [
             Issue(path, lines.line_of_loose(tuple(e["loc"])), "V01", _describe(e))

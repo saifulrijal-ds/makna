@@ -18,7 +18,7 @@ from starlette.routing import Route
 from makna.config import Settings, load_settings
 from makna.mcp.http import PATH as MCP_PATH
 from makna.mcp.http import build_mcp_endpoint
-from makna.services import Services, build_services
+from makna.services import ServiceError, Services, build_services
 from makna.web import install as install_web
 
 logger = logging.getLogger(__name__)
@@ -27,10 +27,18 @@ logger = logging.getLogger(__name__)
 def _sync_definitions(services: Services) -> None:
     """`makna index sync` before serving (ARCHITECTURE section 10): finish an action that was
     committed but not indexed, and record commits made outside the application. In a plain
-    directory there is nothing to do. A failure is logged by its class only and does not stop the
-    server: the index stays as it was, and nothing new is served as approved."""
+    directory there is nothing to do. A repository that cannot be used (broken, or its history was
+    rewritten) stops the start with a clear message: it is never served around. Any other failure
+    is logged and does not stop the server: the index stays as it was, and nothing new is served
+    as approved."""
     try:
         services.lifecycle.sync()
+    except ServiceError as error:
+        # The message is fixed text (a broken repository, a rewritten history): it is safe to log.
+        logger.error("the definitions sync at start failed: %s", error.message)
+        if error.details.get("fatal") or error.details.get("unusable"):
+            # A broken repository or a rewritten history is never served around: stop here.
+            raise RuntimeError(error.message) from None
     except Exception as error:
         logger.error("the definitions sync at start failed (%s)", type(error).__name__)
 

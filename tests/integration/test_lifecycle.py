@@ -291,9 +291,9 @@ def test_submit_is_refused_with_the_rule_codes_when_the_proposal_has_a_definitio
     assert errors and errors[0]["code"].startswith("V")  # the index keeps them for a review page
 
 
-def test_approve_is_refused_for_a_proposal_with_errors_and_with_an_open_reference_issue(
-    world: World,
-) -> None:
+def test_a_stale_issue_on_the_official_version_does_not_block_a_proposal(world: World) -> None:
+    # The ruling: approve checks the proposal's own content against the catalog. An open row of
+    # `reference_issue` belongs to the version that is official now.
     propose_and_submit(world)
     with world.engine.begin() as connection:
         connection.execute(
@@ -301,15 +301,32 @@ def test_approve_is_refused_for_a_proposal_with_errors_and_with_an_open_referenc
                 object_id=NEW, part="measure", code="R02", message="a column is missing"
             )
         )
+    assert world.life.approve(world.caller("approver"), NEW, "this one fixes it").status == (
+        "approved"
+    )
+
+
+def test_a_proposal_that_would_have_a_reference_issue_is_refused(world: World) -> None:
+    # A change that points an entity at a table the catalog does not have (R01).
+    text = sup.edited(
+        sup.official_text(world, "entity:branch"),
+        lambda d: d.update(source={"table": "lending.core.no_such_table"}),
+    )
+    world.life.create_proposal(world.caller("curator"), "entity:branch", text, "a new table")
+    world.life.submit(world.caller("curator"), "entity:branch", "ready")
     head = sup.head(world)
     with pytest.raises(ServiceError) as raised:
-        world.life.approve(world.caller("approver"), NEW, "approve anyway")
+        world.life.approve(world.caller("approver"), "entity:branch", "approve anyway")
     assert raised.value.code == LifecycleErrorCode.OPEN_REFERENCE_ISSUE
-    assert raised.value.details["issues"] == ["R02 measure"]
+    assert any(i.startswith("R01") for i in raised.value.details["issues"])
     assert sup.head(world) == head
-    with world.engine.begin() as connection:
-        connection.execute(text("UPDATE reference_issue SET closed_at = now()"))
-    assert world.life.approve(world.caller("approver"), NEW, "now it is fine").status == "approved"
+
+
+def test_a_proposal_with_a_definition_error_is_not_approved_when_it_was_submitted_clean(
+    world: World,
+) -> None:
+    propose_and_submit(world)
+    assert world.life.approve(world.caller("approver"), NEW, "fine").status == "approved"
 
 
 def test_an_outside_proposal_with_errors_cannot_be_approved(world: World) -> None:
@@ -628,7 +645,7 @@ def test_recovery_completes_an_action_whose_index_transaction_failed(
     head = sup.head(world)
     assert world.repo.show(head, NEW_PATH) is not None  # git is ahead of the index
     assert sup.object_row(world, NEW)["status"] == "in_review"
-    open_rows = [r for r in sup.audit_rows(world.engine) if r["commit_sha"] is None]
+    open_rows = [r for r in sup.audit_rows(world.engine) if sup.is_open(r)]
     assert [(r["action"], r["object_id"]) for r in open_rows] == [("approve", NEW)]
     assert open_rows[0]["files"] == {
         NEW_PATH: sha256(world.repo.show(head, NEW_PATH) or b""),
@@ -639,7 +656,7 @@ def test_recovery_completes_an_action_whose_index_transaction_failed(
     assert sup.object_row(world, NEW)["status"] == "approved"
     rows = [r for r in sup.audit_rows(world.engine) if r["action"] == "approve"]
     assert [r["commit_sha"] for r in rows] == [head]  # the audit event matches HEAD
-    assert not [r for r in sup.audit_rows(world.engine) if r["commit_sha"] is None]
+    assert not [r for r in sup.audit_rows(world.engine) if sup.is_open(r)]
     with world.engine.connect() as connection:
         assert (
             connection.execute(
@@ -680,8 +697,10 @@ def test_recovery_does_not_trust_an_intent_whose_hashes_do_not_match_the_commit(
             )
         )
     world.life.sync()
-    assert not [r for r in sup.audit_rows(world.engine) if r["commit_sha"] is None]
-    approvals = [r for r in sup.audit_rows(world.engine) if r["action"] == "approve"]
+    assert not [r for r in sup.audit_rows(world.engine) if sup.is_open(r)]
+    approvals = [
+        r for r in sup.audit_rows(world.engine) if r["action"] == "approve" and r["commit_sha"]
+    ]
     assert approvals == []
     assert sup.object_row(world, NEW)["status"] != "approved"
     externals = [r for r in sup.audit_rows(world.engine) if r["action"] == "external_change"]
@@ -827,43 +846,40 @@ def test_a_path_inside_another_repository_is_a_plain_directory_and_read_only(
         world.services.dispose()
 
 
-def test_a_planted_symbolic_link_is_refused_and_nothing_is_written_through_it(
-    world: World, tmp_path: Path
-) -> None:
+def test_a_planted_symbolic_link_is_never_written_through(world: World, tmp_path: Path) -> None:
+    # The commit is built from the checked bytes, not from the working tree, so the link cannot
+    # redirect it; the working tree is brought in line afterwards without following the link.
     target = tmp_path / "outside.txt"
     target.write_text("do not touch")
     link = world.repo.path / NEW_DRAFT
     link.symlink_to(target)
-    head, audit = sup.head(world), sup.audit_rows(world.engine)
-    with pytest.raises(ServiceError) as raised:
-        world.life.create_proposal(
-            world.caller("curator"), NEW, sup.metric_text(), "write through it"
-        )
-    assert raised.value.code == LifecycleErrorCode.CONFLICT
-    assert "symbolic link" in raised.value.message
+    world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "write through it")
     assert target.read_text() == "do not touch"
-    assert sup.head(world) == head and sup.audit_rows(world.engine) == audit
     assert link.is_symlink()  # the planted link is left for a person to look at
+    assert b"contract_count_total" in (world.repo.show(sup.head(world), NEW_DRAFT) or b"")
+    assert sup.object_row(world, NEW)["status"] == "draft"
 
 
-def test_a_symbolic_link_in_the_folder_path_is_refused(world: World, tmp_path: Path) -> None:
+def test_a_symbolic_link_in_the_folder_path_is_never_written_through(
+    world: World, tmp_path: Path
+) -> None:
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     folder = world.repo.path / "lending" / "glossary"
     shutil.rmtree(folder)
     folder.symlink_to(outside)
-    with pytest.raises(ServiceError) as raised:
-        world.life.create_proposal(
-            world.caller("curator"),
-            "glossary_term:total_contracts",
-            sup.edited(
-                sup.official_text(world, "glossary_term:npf"),
-                lambda d: d.update(name="total_contracts", label="Total Contracts"),
-            ),
-            "write into the linked folder",
-        )
-    assert raised.value.code == LifecycleErrorCode.CONFLICT
+    world.life.create_proposal(
+        world.caller("curator"),
+        "glossary_term:total_contracts",
+        sup.edited(
+            sup.official_text(world, "glossary_term:npf"),
+            lambda d: d.update(name="total_contracts", label="Total Contracts"),
+        ),
+        "write into the linked folder",
+    )
     assert list(outside.iterdir()) == []
+    shown = world.repo.show(sup.head(world), "lending/glossary/total_contracts.draft.yaml")
+    assert shown is not None
 
 
 def test_a_hook_in_the_repository_does_not_run(world: World, tmp_path: Path) -> None:
@@ -877,23 +893,28 @@ def test_a_hook_in_the_repository_does_not_run(world: World, tmp_path: Path) -> 
     assert not marker.exists()
 
 
-def test_a_git_failure_leaves_nothing_behind_and_its_text_reaches_no_error_or_log(
+def test_a_git_failure_leaves_a_failed_intent_and_its_text_reaches_no_error_or_log(
     world: World, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO)
-    lock = world.repo.path / ".git" / "index.lock"
+    lock = world.repo.path / ".git" / "refs" / "heads" / "main.lock"
     lock.write_text("held by someone else")
     head, audit = sup.head(world), sup.audit_rows(world.engine)
     with pytest.raises(ServiceError) as raised:
         world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "will fail")
     error = raised.value
-    assert error.code == ServiceErrorCode.INTERNAL
+    assert error.code == LifecycleErrorCode.CONFLICT
     shown = str(error) + repr(error.details)
     logged = "\n".join(r.getMessage() for r in caplog.records)
-    for word in ("index.lock", "fatal", "Unable to create", str(world.repo.path), "contract_count"):
+    for word in ("main.lock", "fatal", "Unable to create", str(world.repo.path), "contract_count"):
         assert word not in shown and word not in logged
-    assert sup.head(world) == head and sup.audit_rows(world.engine) == audit  # intent removed
-    assert not (world.repo.path / NEW_DRAFT).exists()  # the file was put back
+    assert sup.head(world) == head
+    rows = sup.audit_rows(world.engine)
+    assert rows[: len(audit)] == audit and len(rows) == len(audit) + 1
+    attempt = rows[-1]  # the attempt is kept, marked failed (it is a trace)
+    assert (attempt["action"], attempt["commit_sha"]) == ("create_proposal", None)
+    assert attempt["failed_at"] is not None
+    assert not (world.repo.path / NEW_DRAFT).exists()  # nothing was written to the working tree
     assert world.repo._git(["status", "--porcelain"]) == b""
     lock.unlink()
     assert world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "again")

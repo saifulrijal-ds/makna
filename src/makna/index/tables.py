@@ -249,6 +249,7 @@ audit_event = Table(
     Column("reason", Text),
     Column("commit_sha", Text),
     Column("files", JSONB),
+    _ts("failed_at"),
     UniqueConstraint(
         "commit_sha", "object_id", "action", name="uq_audit_event_commit_object_action"
     ),

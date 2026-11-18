@@ -116,6 +116,11 @@ def git(repo: GitRepo, *args: str, env: Mapping[str, str] | None = None) -> str:
     return done.stdout
 
 
+def is_open(row: Mapping[str, Any]) -> bool:
+    """An intent that no commit completed and nobody gave up."""
+    return row["commit_sha"] is None and row["failed_at"] is None
+
+
 def audit_rows(engine: Engine) -> list[Mapping[str, Any]]:
     with engine.connect() as connection:
         rows = connection.execute(select(audit_event).order_by(audit_event.c.id)).all()

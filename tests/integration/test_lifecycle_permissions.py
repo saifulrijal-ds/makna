@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.engine import URL
 
 from makna.services import ServiceError, ServiceErrorCode
+from makna.services.errors import LifecycleErrorCode
 
 from . import lifecycle_support as sup
 from .lifecycle_support import World
@@ -296,7 +297,16 @@ def test_loosening_sensitivity_needs_a_member_of_the_governance_team(
             lambda name=name: world.life.approve(world.caller(name), CUSTOMER, "r"),  # type: ignore[misc]
             "governance_team_needed",
         )
-    assert world.life.approve(world.caller("governance"), CUSTOMER, "The governance team agrees")
+    governance = world.caller("governance")
+    if edit is _lower_level:
+        # The governance team may decide it, but a column the catalog tags personal declared
+        # lower is a reference issue (R03) of the proposal itself, and that blocks the approval.
+        with pytest.raises(ServiceError) as blocked:
+            world.life.approve(governance, CUSTOMER, "The governance team agrees")
+        assert blocked.value.code == LifecycleErrorCode.OPEN_REFERENCE_ISSUE
+        assert any(i.startswith("R03") for i in blocked.value.details["issues"])
+    else:
+        assert world.life.approve(governance, CUSTOMER, "The governance team agrees")
 
 
 def test_a_stricter_change_does_not_need_the_governance_team(world: World) -> None:

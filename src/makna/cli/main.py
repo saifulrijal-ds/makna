@@ -22,7 +22,7 @@ from makna.config import (
     load_tag_map,
 )
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
-from makna.definitions.repo import GitRepo, is_repository_root
+from makna.definitions.repo import GitRepo, RepoMode, RepoUnusable, repository_mode
 from makna.engine.base import EngineError
 from makna.engine.compare import catalog_schemas, compare
 from makna.engine.postgres import PostgresConnector
@@ -179,6 +179,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="the definitions repository (default: MAKNA_DEFINITIONS_REPO)",
     )
+    sync.add_argument(
+        "--accept-rewritten-history",
+        action="store_true",
+        help=(
+            "index a repository whose history was rewritten (the commit the index was last "
+            "written for is gone). Only after you have decided that the new history is the "
+            "right one: approvals and deprecations made in the commits that are gone are lost"
+        ),
+    )
     search = commands.add_parser(
         "search",
         help="search the index",
@@ -326,12 +335,30 @@ def _validate(directory: Path) -> int:
 
 
 def _definitions_directory(given: Path | None) -> Path | None:
+    return _definitions_source(given)[0]
+
+
+def _definitions_source(given: Path | None) -> tuple[Path | None, bool]:
+    """The definitions directory and whether it is the configured repository
+    (`MAKNA_DEFINITIONS_REPO`). A directory given on the command line, and the sample directory
+    of the source tree, are not "configured": they are read as plain directories unless they hold
+    a `.git` of their own."""
     if given is not None:
-        return given
+        return given, False
     from_env = os.environ.get("MAKNA_DEFINITIONS_REPO")
     if from_env:
-        return Path(from_env)
-    return DEFAULT_DEFINITIONS if DEFAULT_DEFINITIONS.is_dir() else None
+        return Path(from_env), True
+    return (DEFAULT_DEFINITIONS if DEFAULT_DEFINITIONS.is_dir() else None), False
+
+
+def _mode(directory: Path, configured: bool, command: str) -> RepoMode | None:
+    """The mode of `directory`, or None after printing why it cannot be used (never a fallback to
+    reading a broken repository as plain files)."""
+    try:
+        return repository_mode(directory, configured=configured)
+    except RepoUnusable as error:
+        print(f"{command}: {error.message}", file=sys.stderr)
+        return None
 
 
 def _catalog_sync(file: Path, definitions: Path | None) -> int:
@@ -340,7 +367,7 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
     try:
         engine = make_engine(database_url_from_env())
         tag_map = load_tag_map()
-        directory = _definitions_directory(definitions)
+        directory, configured = _definitions_source(definitions)
         entities: list[Entity] | None = None
         terms: list[GlossaryTerm] = []
         unreadable: dict[str, str] = {}
@@ -348,7 +375,10 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
             if not directory.is_dir():
                 print(f"makna catalog sync: {directory} is not a directory", file=sys.stderr)
                 return 2
-            if is_repository_root(directory):
+            mode = _mode(directory, configured, "makna catalog sync")
+            if mode is None:
+                return 2
+            if mode is RepoMode.REPOSITORY:
                 # A definitions repository: only what the application committed is official.
                 found = store.official_objects(GitRepo(directory), engine)
             else:
@@ -370,6 +400,9 @@ def _catalog_sync(file: Path, definitions: Path | None) -> int:
     except (RuntimeError, ConfigError) as error:
         print(f"makna catalog sync: {error}", file=sys.stderr)
         return 2
+    except store.StoreError as error:
+        print(f"makna catalog sync: {error}", file=sys.stderr)
+        return 1
     except (ConnectorError, SQLAlchemyError) as error:
         print(f"makna catalog sync: {error}", file=sys.stderr)
         return 1
@@ -509,14 +542,17 @@ def _index_build(definitions: Path | None) -> int:
     from sqlalchemy.exc import SQLAlchemyError
 
     try:
-        directory = _definitions_directory(definitions)
+        directory, configured = _definitions_source(definitions)
         if directory is None or not directory.is_dir():
             print(f"makna index build: no definitions directory ({directory})", file=sys.stderr)
             return 2
-        if is_repository_root(directory):
+        mode = _mode(directory, configured, "makna index build")
+        if mode is None:
+            return 2
+        if mode is RepoMode.REPOSITORY:
             # A definitions repository: the index is built from the commits the application made,
             # which is what `sync` does (ARCHITECTURE section 10).
-            return _index_sync(directory, "makna index build")
+            return _index_sync(directory, "makna index build", configured=configured)
         runtime = load_search_runtime()
         governance = load_governance_runtime()
         derive = make_derive(governance.governance.policy(), governance.dialect)
@@ -578,17 +614,29 @@ def _index_build(definitions: Path | None) -> int:
     return 0
 
 
-def _index_sync(definitions: Path | None, command: str = "makna index sync") -> int:
+def _index_sync(
+    definitions: Path | None,
+    command: str = "makna index sync",
+    *,
+    configured: bool | None = None,
+    accept_rewritten_history: bool = False,
+) -> int:
     from sqlalchemy.exc import SQLAlchemyError
 
     from makna.services import ServiceError
 
     try:
-        directory = _definitions_directory(definitions)
+        if configured is None:
+            directory, configured = _definitions_source(definitions)
+        else:
+            directory = definitions
         if directory is None or not directory.is_dir():
             print(f"{command}: no definitions directory ({directory})", file=sys.stderr)
             return 2
-        if not is_repository_root(directory):
+        mode = _mode(directory, configured, command)
+        if mode is None:
+            return 2
+        if mode is not RepoMode.REPOSITORY:
             print(
                 f"{command}: {directory} is a plain directory, not a git repository of its own, "
                 "so there is nothing to sync; use `makna index build`",
@@ -605,7 +653,13 @@ def _index_sync(definitions: Path | None, command: str = "makna index sync") -> 
         print(f"{command}: {error}", file=sys.stderr)
         return 2
     try:
-        state, result = store.sync(engine, provider, GitRepo(directory), derive=derive)
+        state, result = store.sync(
+            engine,
+            provider,
+            GitRepo(directory),
+            derive=derive,
+            accept_rewritten_history=accept_rewritten_history,
+        )
     except store.StoreError as error:
         for issue in error.issues:
             print(issue.format(f"{directory.as_posix().rstrip('/')}/"), file=sys.stderr)
@@ -734,7 +788,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.index_command == "build":
             return _index_build(args.definitions)
         if args.index_command == "sync":
-            return _index_sync(args.definitions)
+            return _index_sync(
+                args.definitions, accept_rewritten_history=args.accept_rewritten_history
+            )
         print("makna index: choose build or sync", file=sys.stderr)
         return 2
     if args.command == "user":

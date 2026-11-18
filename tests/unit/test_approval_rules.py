@@ -265,8 +265,58 @@ def _add_public(dims: list[dict[str, Any]]) -> None:
     )
 
 
+def _with_expr(dims: list[dict[str, Any]]) -> None:
+    dims[1]["expr"] = "birth_date_col"
+    dims[2]["expr"] = "income_col"
+
+
+def _rename(dims: list[dict[str, Any]], index: int, name: str, **fields: Any) -> None:
+    dims[index]["name"] = name
+    for key, value in fields.items():
+        if value is None:
+            dims[index].pop(key, None)
+        else:
+            dims[index][key] = value
+
+
+def _remove(dims: list[dict[str, Any]], index: int) -> None:
+    del dims[index]
+
+
+def _both(*edits: Any) -> Any:
+    def apply(dims: list[dict[str, Any]]) -> None:
+        for edit in edits:
+            edit(dims)
+
+    return apply
+
+
+EXPR_BASE = entity_doc(_with_expr)
+
 # label -> (official, proposal)
 LOOSENING = {
+    "a metric at a lower level": (
+        model(METRIC, status="approved", version=1),
+        model(METRIC, sensitivity="public"),
+    ),
+    "a removed personal dimension": (
+        EXPR_BASE,
+        entity_doc(_both(_with_expr, lambda d: _remove(d, 1))),
+    ),
+    "a removed masked dimension": (
+        EXPR_BASE,
+        entity_doc(_both(_with_expr, lambda d: _remove(d, 2))),
+    ),
+    "a personal dimension renamed with no level and no mask (same expr)": (
+        EXPR_BASE,
+        entity_doc(
+            _both(_with_expr, lambda d: _rename(d, 1, "birth_yr", sensitivity=None, masking=None))
+        ),
+    ),
+    "a masked dimension renamed without its mask (same expr)": (
+        EXPR_BASE,
+        entity_doc(_both(_with_expr, lambda d: _rename(d, 2, "earnings", masking=None))),
+    ),
     "an object at a lower level": (entity(), entity(sensitivity="internal")),
     "a dimension at a lower level": (
         entity(),
@@ -352,6 +402,31 @@ def test_stricter_masks_and_levels_are_not_loosenings() -> None:
     assert loosenings(entity(), wider) == []
     added = entity_with_dimension(0, masking={"method": "redact"})
     assert loosenings(entity(), added) == []
+
+
+def test_a_rename_that_keeps_or_raises_the_protection_is_not_a_loosening() -> None:
+    kept = entity_doc(_both(_with_expr, lambda d: _rename(d, 1, "born")))
+    assert loosenings(EXPR_BASE, kept) == []
+    stricter = entity_doc(
+        _both(_with_expr, lambda d: _rename(d, 1, "born", masking={"method": "redact"}))
+    )
+    assert loosenings(EXPR_BASE, stricter) == []
+    # Removing a dimension that was neither personal nor masked is not a governance matter.
+    plain = entity_doc(_both(_with_expr, lambda d: _remove(d, 0)))
+    assert loosenings(EXPR_BASE, plain) == []
+
+
+def test_a_rename_is_found_by_expression_not_by_name() -> None:
+    # A dimension that reads another expression is not the renamed one: the old one is removed.
+    other = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _rename(d, 1, "born", sensitivity=None, masking=None),
+            lambda d: d[1].update(expr="some_other_column"),
+        )
+    )
+    found = loosenings(EXPR_BASE, other)
+    assert any("removal of dimension birth_date" in line for line in found)
 
 
 def test_the_text_of_a_loosening_names_the_part_and_no_value() -> None:

@@ -14,23 +14,29 @@ starts from an empty environment (nothing is inherited) and sets only:
 - `GIT_ATTR_NOSYSTEM=1`: no system attributes file; `-c core.attributesFile=/dev/null`: no user one;
 - `GIT_TERMINAL_PROMPT=0` and `GIT_EDITOR=true`: git never waits for a person; `--no-pager`;
 - `GIT_OPTIONAL_LOCKS=0`: a read does not write the index;
-- `-c core.hooksPath=/dev/null`, and `--no-verify` on `commit`: no hook runs, so a script planted
-  in `.git/hooks` stays inert;
+- `-c core.hooksPath=/dev/null`: no hook runs, so a script planted in `.git/hooks` stays inert;
 - `-c commit.gpgsign=false`, `-c core.fsmonitor=false`, `-c gc.auto=0`, `-c core.autocrlf=false`,
   `-c core.quotePath=false`: no signing program, no monitor daemon, no background gc, bytes in
   and out are the same bytes.
 
-Every call names the repository with `--git-dir` and `--work-tree`, so git never searches parent
-directories for another repository. The repository's own `.git/config` is trusted: whoever can
-write it can already run code as the application. What a raw commit can carry, files, is only
-ever read as data (`cat-file`), never checked out or run through a filter.
+Every call names the repository with `--git-dir` and runs in its directory, so git never searches
+parent directories for another repository. No call names a work tree: **the working tree is not
+authoritative and git never reads it for Makna**. A commit is built from the bytes the caller
+checked, with plumbing and a private index file (`hash-object --no-filters`, `read-tree`,
+`update-index --index-info`, `write-tree`, `commit-tree`, then `update-ref` with the old value
+that was read), so no `.gitattributes` or `filter` setting can change what is committed, no file is
+read from or written to the working tree, and no `.gitmodules` of the working tree is read. The
+history reads use `--ignore-submodules=all`. The repository's own `.git/config` is trusted: whoever
+can write it can already run code as the application (and so can whoever can write the repository
+directory; see ARCHITECTURE section 10).
 
 The author of a commit is set with `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, the committer is
 `Makna` at a fixed address; `-c user.*` is not used.
 
 **Errors.** A failed command raises one `RepoError` that carries the subcommand and the exit code.
 Git's standard error is never kept on the exception, because it can hold file content and paths;
-it is written to the application log at debug level only.
+it is written to the application log at debug level only. A directory that cannot be used as a
+definitions repository is a `RepoUnusable` with a fixed reason text.
 """
 
 from __future__ import annotations
@@ -39,8 +45,11 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -73,11 +82,23 @@ class RepoError(Exception):
         self.returncode = returncode
 
 
+class RepoUnusable(Exception):
+    """A configured definitions path is neither a repository of its own nor a plain directory
+    inside another repository. `reason` is a short code; the message is fixed text that holds no
+    path and no git output."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+
+
 @dataclass(frozen=True)
 class Commit:
     """One commit of the first-parent history, and the files it changed against its first parent.
 
     `changes` holds `(status, path)` with the status letter git prints: `A`, `M`, `D`, `T`.
+    Names and emails of authors are cleaned of control and format characters when read.
     """
 
     sha: str
@@ -85,6 +106,22 @@ class Commit:
     author_email: str
     parents: tuple[str, ...]
     changes: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    """A commit made by `GitRepo.commit_files` and the blob of each path it wrote (None for a
+    deleted path)."""
+
+    sha: str
+    blobs: Mapping[str, str | None]
+
+
+@dataclass(frozen=True)
+class TooLarge:
+    """A blob that is larger than the limit asked for: it was not read."""
+
+    size: int
 
 
 def clean_display_name(name: str) -> str:
@@ -99,6 +136,14 @@ def clean_display_name(name: str) -> str:
     return kept or "Makna user"
 
 
+def clean_email(email: str) -> str:
+    """An email read from a commit that someone else made, made safe to store and show: control,
+    format (bidi), separator, and `<>` characters removed, at most 254 characters."""
+    return "".join(c for c in email if unicodedata.category(c)[0] not in "CZ" and c not in "<>")[
+        :254
+    ]
+
+
 def _check_email(email: str) -> str:
     if (
         not email
@@ -110,9 +155,16 @@ def _check_email(email: str) -> str:
     return email
 
 
+class RepoMode(StrEnum):
+    PLAIN = "plain"
+    """A directory that is read as it is and never written (no git repository of its own)."""
+    REPOSITORY = "repository"
+    """The top level of a git repository: the application writes it by committing."""
+
+
 def is_repository_root(path: Path) -> bool:
     """True when `path` is the top level of a git repository (its own `.git` directory), as git
-    itself reports it. A directory inside another repository is not: it is a plain directory."""
+    itself reports it. A directory inside another repository is not."""
     try:
         resolved = path.resolve(strict=True)
     except OSError:
@@ -127,8 +179,55 @@ def is_repository_root(path: Path) -> bool:
     return Path(out.decode("utf-8", "replace").strip()).resolve() == resolved
 
 
+def repository_mode(path: Path, *, configured: bool) -> RepoMode:
+    """How the definitions at `path` are to be treated. Raises `RepoUnusable` when a repository
+    that should be there is broken: a broken repository is never read as a plain directory.
+
+    - A `.git` entry at `path` means a repository. It must be a real directory and git must
+      report `path` as the top level; otherwise (a link, a file, a bare or re-rooted repository,
+      another owner, git missing) it is an error, whether `path` is configured or not.
+    - Without a `.git` entry, a path that was **not** configured (`makna ... --definitions DIR`)
+      is a plain directory, as it always was, and git is not asked.
+    - Without a `.git` entry, a **configured** path (`MAKNA_DEFINITIONS_REPO`) is a plain
+      directory only if it lies inside another git repository (the source tree's sample
+      definitions); anywhere else it is an error, because a repository that lost its `.git` must
+      not be served from its working tree.
+    """
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError:
+        raise RepoUnusable("missing", "the definitions directory does not exist") from None
+    dot_git = resolved / ".git"
+    if os.path.lexists(dot_git):
+        if dot_git.is_symlink() or not dot_git.is_dir():
+            raise RepoUnusable(
+                "git_entry_not_a_directory",
+                "the definitions directory has a .git that is not a directory of its own",
+            )
+        if is_repository_root(resolved):
+            return RepoMode.REPOSITORY
+        raise RepoUnusable(
+            "not_a_usable_repository",
+            "git does not accept the definitions repository (a bare or re-rooted repository, "
+            "another owner, or git is not available)",
+        )
+    if not configured:
+        return RepoMode.PLAIN
+    try:
+        out = GitRepo._run_in(resolved, ["rev-parse", "--show-toplevel"], discover=True)
+    except RepoError:
+        raise RepoUnusable(
+            "not_a_repository",
+            "MAKNA_DEFINITIONS_REPO is not a git repository and not inside one; if the "
+            "repository lost its .git, restore it",
+        ) from None
+    if Path(out.decode("utf-8", "replace").strip()).resolve() == resolved:
+        raise RepoUnusable("not_a_usable_repository", "git does not accept the repository")
+    return RepoMode.PLAIN
+
+
 class GitRepo:
-    """One definitions repository: a working tree with a `.git` directory at `path`."""
+    """One definitions repository: a directory with a `.git` directory at `path`."""
 
     def __init__(self, path: Path | str, *, timeout: int = TIMEOUT_SECONDS) -> None:
         self.path = Path(path).resolve()
@@ -167,7 +266,7 @@ class GitRepo:
         if discover:
             command += ["-C", str(directory)]
         else:
-            command += [f"--git-dir={directory / '.git'}", f"--work-tree={directory}"]
+            command += [f"--git-dir={directory / '.git'}"]
         command += args
         try:
             done = subprocess.run(  # noqa: S603 - an argument list, never a shell
@@ -176,6 +275,7 @@ class GitRepo:
                 capture_output=True,
                 timeout=timeout,
                 env=GitRepo._environment(extra_env),
+                cwd=directory,
                 check=False,
                 shell=False,
             )
@@ -237,6 +337,20 @@ class GitRepo:
         sha = out.decode("ascii", "replace").strip()
         return sha if _SHA.fullmatch(sha) else None
 
+    def is_ancestor(self, ancestor: str, descendant: str = "HEAD") -> bool:
+        """True when `ancestor` is `descendant` or one of its ancestors. A commit that does not
+        exist in the repository (history was rewritten or the repository replaced) is not."""
+        self._check_sha(ancestor)
+        if descendant != "HEAD":
+            self._check_sha(descendant)
+        try:
+            self._git(["merge-base", "--is-ancestor", ancestor, descendant])
+        except RepoError as error:
+            if error.returncode in (1, 128):
+                return False
+            raise
+        return True
+
     def log(self) -> list[Commit]:
         """Every commit of the first-parent history of `HEAD`, oldest first, with the files each
         changed against its first parent (a merge shows what it brought in). Empty when the
@@ -249,6 +363,7 @@ class GitRepo:
                 "--first-parent",
                 "--reverse",
                 "--no-renames",
+                "--ignore-submodules=all",
                 "--name-status",
                 "-z",
                 "--format=%x01%H%x00%an%x00%ae%x00%P",
@@ -262,16 +377,10 @@ class GitRepo:
         self._check_sha(sha)
         raw = self._git(
             [
-                "diff-tree",
-                "--root",
-                "--no-commit-id",
-                "--no-renames",
-                "-r",
-                "--name-status",
-                "-z",
-                sha,
+                "diff-tree", "--root", "--no-commit-id", "--no-renames", "--ignore-submodules=all",
+                "-r", "--name-status", "-z", sha,
             ]
-        )
+        )  # fmt: skip
         return _parse_name_status(raw.split(b"\0"))
 
     def regular_files(self, sha: str) -> list[str]:
@@ -291,12 +400,17 @@ class GitRepo:
 
     def show(self, sha: str, path: str) -> bytes | None:
         """The bytes of `path` as of commit `sha`, or None when the commit has no such file."""
-        return self.read_blobs([(sha, path)])[(sha, path)]
+        found = self.read_blobs([(sha, path)])[(sha, path)]
+        return None if isinstance(found, TooLarge) else found
 
-    def read_blobs(self, wanted: list[tuple[str, str]]) -> dict[tuple[str, str], bytes | None]:
-        """The bytes of many `(sha, path)` pairs with one `git cat-file --batch`. A pair that
-        names no file, or a path with a line break in it, maps to None."""
-        result: dict[tuple[str, str], bytes | None] = {}
+    def read_blobs(
+        self, wanted: list[tuple[str, str]], max_size: int | None = None
+    ) -> dict[tuple[str, str], bytes | None | TooLarge]:
+        """The bytes of many `(sha, path)` pairs, read with `git cat-file`. A pair that names no
+        file (or a path with a line break in it, or an object that is not a blob) maps to None. A
+        blob larger than `max_size` is not read and maps to `TooLarge`. Sizes are asked first
+        (`--batch-check`), so only blobs of an acceptable size are ever read into memory."""
+        result: dict[tuple[str, str], bytes | None | TooLarge] = {}
         asked: list[tuple[str, str]] = []
         for sha, path in dict.fromkeys(wanted):
             self._check_sha(sha)
@@ -309,76 +423,119 @@ class GitRepo:
         request = "".join(f"{sha}:{path}\n" for sha, path in asked).encode(
             "utf-8", "surrogateescape"
         )
-        out = self._git(["cat-file", "--batch"], stdin=request)
-        position = 0
-        for pair in asked:
-            end = out.index(b"\n", position)
-            header = out[position:end].split()
-            position = end + 1
-            if len(header) == 3 and header[1] == b"blob":
-                size = int(header[2])
-                result[pair] = out[position : position + size]
-                position += size + 1
+        checked = self._git(["cat-file", "--batch-check"], stdin=request).split(b"\n")
+        readable: list[tuple[str, str]] = []
+        for pair, line in zip(asked, checked, strict=False):
+            fields = line.split()
+            if len(fields) == 3 and fields[1] == b"blob":
+                size = int(fields[2])
+                if max_size is not None and size > max_size:
+                    result[pair] = TooLarge(size)
+                else:
+                    readable.append(pair)
             else:
                 result[pair] = None
+        if readable:
+            wanted_again = "".join(f"{sha}:{path}\n" for sha, path in readable).encode(
+                "utf-8", "surrogateescape"
+            )
+            out = self._git(["cat-file", "--batch"], stdin=wanted_again)
+            position = 0
+            for pair in readable:
+                end = out.index(b"\n", position)
+                header = out[position:end].split()
+                position = end + 1
+                if len(header) == 3 and header[1] == b"blob":
+                    size = int(header[2])
+                    result[pair] = out[position : position + size]
+                    position += size + 1
+                else:
+                    result[pair] = None
         return result
 
     # --- writing -------------------------------------------------------------------------
 
-    def add(self, paths: list[str]) -> None:
-        self._git(["add", "--force", *self._pathspecs(paths)])
+    def commit_files(
+        self,
+        message: str,
+        author_name: str,
+        author_email: str,
+        changes: Mapping[str, bytes | None],
+        parent: str | None,
+    ) -> CommitResult:
+        """Commit `changes` (path -> exact bytes, or None to delete) on top of `parent`, which
+        must be what `HEAD` is now, and move `HEAD` to the new commit.
 
-    def rm(self, paths: list[str]) -> None:
-        """Delete the files from the working tree and stage the deletion."""
-        self._git(["rm", "-q", "--force", *self._pathspecs(paths)])
-
-    def commit(self, message: str, author_name: str, author_email: str, paths: list[str]) -> str:
-        """Commit exactly `paths` (staged additions and deletions of those paths only; anything
-        else staged is left staged) and return the new sha."""
+        The tree is built in a private index file in a temporary directory from the bytes given:
+        `hash-object -w --no-filters --stdin` for each file, `read-tree` of the parent,
+        `update-index --index-info`, `write-tree`, `commit-tree`, and `update-ref HEAD new old`,
+        which fails if `HEAD` moved since `parent` was read. The working tree and the repository's
+        own index are not read or written, and no attribute or filter applies.
+        """
+        paths = list(changes)
+        self._pathspecs(paths)
+        if any("\n" in path for path in paths):
+            raise ValueError("not a path inside the repository")
         env = {
             "GIT_AUTHOR_NAME": clean_display_name(author_name),
             "GIT_AUTHOR_EMAIL": _check_email(author_email),
             "GIT_COMMITTER_NAME": COMMITTER_NAME,
             "GIT_COMMITTER_EMAIL": COMMITTER_EMAIL,
         }
-        self._git(
-            ["commit", "-q", "--only", "--no-verify", "--no-gpg-sign", "--cleanup=verbatim",
-             "-F", "-", *self._pathspecs(paths)],
-            stdin=message.encode("utf-8"),
-            extra_env=env,
-        )  # fmt: skip
-        sha = self.rev_parse("HEAD")
-        if sha is None:
-            raise RepoError("commit", None)
-        return sha
-
-    def discard(self, paths: list[str]) -> None:
-        """Undo an uncommitted write of `paths`: unstage them and put back what `HEAD` has (or
-        remove a file `HEAD` does not have). Best effort, used after a failed commit."""
-        head = self.rev_parse("HEAD")
-        for path in paths:
-            committed = self.show(head, path) if head is not None else None
-            try:
-                if committed is not None:
-                    self._git(["reset", "-q", "HEAD", *self._pathspecs([path])])
-                else:
-                    self._git(
-                        ["rm", "-q", "--force", "--cached", "--ignore-unmatch",
-                         *self._pathspecs([path])]
-                    )  # fmt: skip
-            except RepoError:
-                logger.warning("could not unstage a file (%s)", type(self).__name__)
-            # The working tree is fixed without git, so it is right even when git is locked.
-            target = self.path / path
-            try:
-                if target.is_symlink():
+        if parent is not None:
+            self._check_sha(parent)
+        with tempfile.TemporaryDirectory(prefix="makna-index-") as scratch:
+            private = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
+            if parent is not None:
+                self._git(["read-tree", parent], extra_env=private)
+            else:
+                self._git(["read-tree", "--empty"], extra_env=private)
+            blobs: dict[str, str | None] = {}
+            lines: list[str] = []
+            for path, data in changes.items():
+                if data is None:
+                    blobs[path] = None
+                    lines.append(f"0 {'0' * 40}\t{path}\n")
                     continue
-                if committed is None:
-                    target.unlink(missing_ok=True)
-                else:
-                    target.write_bytes(committed)
-            except OSError:
-                logger.warning("could not restore a file (%s)", type(self).__name__)
+                oid = (
+                    self._git(["hash-object", "-w", "--no-filters", "-t", "blob", "--stdin"],
+                              stdin=data, extra_env=private)
+                    .decode("ascii", "replace")
+                    .strip()
+                )  # fmt: skip
+                if not _SHA.fullmatch(oid):
+                    raise RepoError("hash-object", None)
+                blobs[path] = oid
+                lines.append(f"100644 {oid}\t{path}\n")
+            self._git(
+                ["update-index", "--index-info"],
+                stdin="".join(lines).encode("utf-8"),
+                extra_env=private,
+            )
+            tree = self._git(["write-tree"], extra_env=private).decode("ascii", "replace").strip()
+            command = ["commit-tree", tree]
+            if parent is not None:
+                command += ["-p", parent]
+            command += ["-F", "-"]
+            sha = (
+                self._git(command, stdin=message.encode("utf-8"), extra_env={**private, **env})
+                .decode("ascii", "replace")
+                .strip()
+            )
+        if not _SHA.fullmatch(sha) or not _SHA.fullmatch(tree):
+            raise RepoError("commit-tree", None)
+        self._git(["update-ref", "HEAD", sha, parent if parent is not None else "0" * 40])
+        return CommitResult(sha, blobs)
+
+    def index_set(self, blobs: Mapping[str, str | None]) -> None:
+        """Make the repository's own index (what `git status` compares with) say what the
+        commit just made says for these paths. Only `update-index --index-info`: no file is read."""
+        self._pathspecs(list(blobs))
+        lines = "".join(
+            f"0 {'0' * 40}\t{path}\n" if oid is None else f"100644 {oid}\t{path}\n"
+            for path, oid in blobs.items()
+        )
+        self._git(["update-index", "--index-info"], stdin=lines.encode("utf-8"))
 
     @staticmethod
     def _check_sha(sha: str) -> None:
@@ -419,8 +576,8 @@ def _parse_log(raw: bytes) -> list[Commit]:
             index += 1
             continue
         sha = token[1:].decode("ascii")
-        name = tokens[index + 1].decode("utf-8", "replace")
-        email = tokens[index + 2].decode("utf-8", "replace")
+        name = clean_display_name(tokens[index + 1].decode("utf-8", "replace"))
+        email = clean_email(tokens[index + 2].decode("utf-8", "replace"))
         parents = tuple(tokens[index + 3].decode("ascii", "replace").split())
         index += 4
         changes: list[tuple[str, str]] = []

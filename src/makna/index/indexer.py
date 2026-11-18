@@ -877,6 +877,11 @@ def build(
     uses it to set the commit of an intent row and `last_indexed_commit` together with the index
     (ARCHITECTURE section 10, step 4), so either all of it is stored or none.
     """
+    ids = [obj.id for obj in objects]
+    if len(ids) != len(set(ids)):
+        # Two files that name one object would write one row twice, and the later one would hide
+        # the other (review I-5): the caller must have settled which file is the object.
+        raise IndexerError("two definition objects have the same id")
     result = IndexResult()
     with engine.begin() as connection:
         # The marker first: a sync that commits after it is not claimed as covered by the facts.

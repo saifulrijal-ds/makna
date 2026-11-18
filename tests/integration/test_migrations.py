@@ -42,7 +42,7 @@ SECTION_6_4_COLUMNS = {
     ],
     "audit_event": [
         "id", "at", "actor_user_id", "actor_label", "action", "object_id", "from_status",
-        "to_status", "reason", "commit_sha", "files",
+        "to_status", "reason", "commit_sha", "files", "failed_at",
     ],
     "tool_call_log": [
         "id", "at", "channel", "user_id", "token_id", "tool", "request", "result", "status",

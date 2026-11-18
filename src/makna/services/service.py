@@ -127,6 +127,8 @@ class Services:
             derive=make_derive(policy, dialect),
             repo_path=definitions_repo,
             settings=approval or ApprovalSettings(governance_team="data-governance"),
+            policy=policy,
+            dialect=dialect,
         )
 
     @property

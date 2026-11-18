@@ -32,7 +32,7 @@ from makna.config import (
     load_tag_map,
 )
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
-from makna.definitions.repo import GitRepo, is_repository_root
+from makna.definitions.repo import GitRepo, RepoMode, RepoUnusable, repository_mode
 from makna.engine.postgres import PostgresConnector
 from makna.index import indexer, migrate
 from makna.index.db import make_engine
@@ -114,9 +114,23 @@ def run_migrations(context: Context) -> str:
 
 
 def _repository(context: Context) -> GitRepo | None:
-    """The definitions repository, when one is configured and is a repository of its own."""
+    """The definitions repository when `MAKNA_DEFINITIONS_REPO` is set and is one of its own; None
+    when it is not set or lies inside another repository (a plain directory). A configured path
+    whose repository is broken is an error and never a fallback to other files."""
     path = context.definitions_repo
-    return GitRepo(path) if path is not None and is_repository_root(path) else None
+    if path is None:
+        return None
+    try:
+        mode = repository_mode(path, configured=True)
+    except RepoUnusable as error:
+        raise InitError(error.message) from None
+    return GitRepo(path) if mode is RepoMode.REPOSITORY else None
+
+
+def _plain_directory(context: Context) -> Path:
+    """The plain directory the checks read when there is no repository: the configured path when
+    it lies inside another repository, else the sample definitions of the source tree."""
+    return context.definitions_repo or context.definitions_dir
 
 
 def seed_definitions_step(context: Context) -> str:
@@ -149,7 +163,7 @@ def sync_catalog_step(context: Context) -> str:
     found = (
         store.official_objects(repository, engine)
         if repository is not None
-        else official_objects(context.definitions_dir)
+        else official_objects(_plain_directory(context))
     )
     try:
         result = sync_catalog(
@@ -186,7 +200,7 @@ def build_index_step(context: Context) -> str:
     repository = _repository(context)
     if repository is not None:
         return _sync_repository_step(context, repository)
-    loaded = load_definitions(context.definitions_dir)
+    loaded = load_definitions(_plain_directory(context))
     problems = validate_for_build(loaded)
     if problems:
         # The same check as `makna validate`, V19 included (C-1): nothing is indexed, and the
@@ -200,7 +214,7 @@ def build_index_step(context: Context) -> str:
     objects = definition_objects(loaded)
     if not objects:
         raise InitError(
-            f"{context.definitions_dir} holds no definition objects; nothing was indexed"
+            f"{_plain_directory(context)} holds no definition objects; nothing was indexed"
         )
     runtime = load_search_runtime()
     governance = load_governance_runtime()

@@ -131,10 +131,29 @@ def _level(entity: Entity, dimension: Dimension) -> str:
     return dimension.sensitivity or entity.sensitivity
 
 
+def _expr_key(dimension: Dimension) -> str:
+    """What a dimension reads: its expression, or its own name when it has none (the column)."""
+    return (dimension.expr or dimension.name).strip().lower()
+
+
+def _weaker(entity_before: Entity, old: Dimension, entity_after: Entity, new: Dimension) -> bool:
+    """True when `new` is declared at a lower level than `old`, or masks less."""
+    return rank(_level(entity_after, new)) < rank(_level(entity_before, old)) or _mask_loosened(
+        old.masking, new.masking
+    )
+
+
 def loosenings(official: AnyDefinition | None, proposal: AnyDefinition) -> list[str]:
     """What in `proposal` the governance team must decide (D-20), as short sentences without any
-    value from the definition: a less strict level, a removed or finer masking rule, a new object
-    with a personal dimension. Empty when none."""
+    value from the definition: a less strict level, a removed or finer masking rule, a removed
+    personal or masked dimension, a rename that weakens one, a new object with a personal
+    dimension. Empty when none.
+
+    Dimensions are matched by name, and a dimension that is gone is matched with a new one that
+    reads the same expression (`expr`, or the column named like it): that is a rename, and it is
+    compared like an edit. A dimension that is gone with no such match is a removal. Levels the
+    catalog derives for columns are not part of a definition and are not compared here.
+    """
     found: list[str] = []
     if official is None:
         if isinstance(proposal, Entity) and any(
@@ -145,20 +164,39 @@ def loosenings(official: AnyDefinition | None, proposal: AnyDefinition) -> list[
     if rank(proposal.sensitivity) < rank(official.sensitivity):
         found.append("a lower sensitivity for the object")
     if isinstance(official, Entity) and isinstance(proposal, Entity):
-        before = {d.name: d for d in official.dimensions}
-        for dimension in proposal.dimensions:
-            old = before.get(dimension.name)
-            if old is None:
-                # New (or renamed): compared with what the entity was, so a rename cannot hide it.
-                if rank(_level(proposal, dimension)) < rank(official.sensitivity):
-                    found.append(
-                        f"a new dimension {dimension.name} at a lower level than the entity"
-                    )
+        after = {d.name: d for d in proposal.dimensions}
+        matched_new: set[str] = set()
+        gone: list[Dimension] = []
+        for old in official.dimensions:
+            new = after.get(old.name)
+            if new is None:
+                gone.append(old)
                 continue
-            if rank(_level(proposal, dimension)) < rank(_level(official, old)):
-                found.append(f"a lower sensitivity for dimension {dimension.name}")
-            if _mask_loosened(old.masking, dimension.masking):
-                found.append(f"a removed or finer masking rule for dimension {dimension.name}")
+            matched_new.add(new.name)
+            if rank(_level(proposal, new)) < rank(_level(official, old)):
+                found.append(f"a lower sensitivity for dimension {new.name}")
+            if _mask_loosened(old.masking, new.masking):
+                found.append(f"a removed or finer masking rule for dimension {new.name}")
+        added = [
+            d
+            for d in proposal.dimensions
+            if d.name not in matched_new and d.name not in {o.name for o in official.dimensions}
+        ]
+        for old in gone:
+            twin = next((d for d in added if _expr_key(d) == _expr_key(old)), None)
+            if twin is not None:
+                added.remove(twin)
+                if _weaker(official, old, proposal, twin):
+                    found.append(
+                        f"dimension {old.name} renamed to {twin.name} with a lower level "
+                        "or less masking"
+                    )
+            elif _level(official, old) == "personal" or old.masking is not None:
+                found.append(f"the removal of dimension {old.name}, which is personal or masked")
+        for new in added:
+            # New with no earlier version: compared with what the entity was.
+            if rank(_level(proposal, new)) < rank(official.sensitivity):
+                found.append(f"a new dimension {new.name} at a lower level than the entity")
     return found
 
 
