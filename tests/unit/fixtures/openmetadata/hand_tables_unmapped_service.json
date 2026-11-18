@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "id": "0b7f1c52-8a31-4a0e-9d52-3c1d5e7a9101",
+      "name": "web_sessions",
+      "fullyQualifiedName": "marketing_sample.web.public.web_sessions",
+      "columns": [{"name": "session_id", "dataType": "UUID", "dataTypeDisplay": "uuid"}],
+      "service": {"id": "6e0b2f3c-0000-4000-8000-0000000000b1", "type": "databaseService", "name": "marketing_sample"},
+      "database": {"id": "6e0b2f3c-0000-4000-8000-0000000000b2", "type": "database", "name": "web"},
+      "databaseSchema": {"id": "6e0b2f3c-0000-4000-8000-0000000000b3", "type": "databaseSchema", "name": "public"}
+    },
+    {
+      "id": "0b7f1c52-8a31-4a0e-9d52-3c1d5e7a9102",
+      "name": "campaigns",
+      "fullyQualifiedName": "marketing_sample.web.public.campaigns",
+      "columns": [{"name": "campaign_id", "dataType": "INT", "dataTypeDisplay": "integer"}],
+      "service": {"id": "6e0b2f3c-0000-4000-8000-0000000000b1", "type": "databaseService", "name": "marketing_sample"},
+      "database": {"id": "6e0b2f3c-0000-4000-8000-0000000000b2", "type": "database", "name": "web"},
+      "databaseSchema": {"id": "6e0b2f3c-0000-4000-8000-0000000000b3", "type": "databaseSchema", "name": "public"}
+    },
+    {
+      "id": "0b7f1c52-8a31-4a0e-9d52-3c1d5e7a9103",
+      "name": "branches_copy",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.branches_copy",
+      "columns": [{"name": "branch_id", "dataType": "INT", "dataTypeDisplay": "integer", "constraint": "PRIMARY_KEY"}],
+      "service": {"id": "6e0b2f3c-0000-4000-8000-0000000000a1", "type": "databaseService", "name": "lending_sample"},
+      "database": {"id": "6e0b2f3c-0000-4000-8000-0000000000a2", "type": "database", "name": "lending_prod"},
+      "databaseSchema": {"id": "6e0b2f3c-0000-4000-8000-0000000000a3", "type": "databaseSchema", "name": "core"}
+    }
+  ],
+  "paging": {"total": 3}
+}

@@ -1,0 +1,573 @@
+{
+  "data": [
+    {
+      "id": "ae52c3d9-2a4f-506a-8802-96e470906453",
+      "name": "branches",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.branches",
+      "description": "Branch offices, one row per branch.",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "branch_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Branch identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.branch_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "branch_code",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Short branch code.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.branch_code",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "branch_name",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Name of the branch.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.branch_name",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "area_name",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Area the branch belongs to.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.area_name",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "region_name",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Sales region the area belongs to.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.region_name",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "province",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Province of the office address.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.province",
+          "tags": [],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "opened_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date the branch opened.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.opened_date",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "is_active",
+          "dataType": "BOOLEAN",
+          "dataTypeDisplay": "boolean",
+          "description": "False for closed branches.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.branches.is_active",
+          "tags": [],
+          "ordinalPosition": 8
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    },
+    {
+      "id": "e75049e0-093f-5fa6-9dbd-43b5034a86c7",
+      "name": "products",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.products",
+      "description": "Loan products, one row per product.",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "product_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Product identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.products.product_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "product_code",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Short product code.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.products.product_code",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "product_name",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Commercial name of the product.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.products.product_name",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "product_category",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Product category.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.products.product_category",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "financing_scheme",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Conventional or sharia.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.products.financing_scheme",
+          "tags": [],
+          "ordinalPosition": 5
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    },
+    {
+      "id": "7494faa9-9f23-5ad3-93d6-d86932a1cc78",
+      "name": "customers",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.customers",
+      "description": "Customers, one row per customer.",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "customer_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Customer identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.customer_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "full_name",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Full name of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.full_name",
+          "tags": [
+            {
+              "tagFQN": "PII.Sensitive",
+              "source": "Classification",
+              "labelType": "Manual",
+              "state": "Confirmed"
+            }
+          ],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "national_id",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "National identity number of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.national_id",
+          "tags": [
+            {
+              "tagFQN": "PII.Sensitive",
+              "source": "Classification",
+              "labelType": "Manual",
+              "state": "Confirmed"
+            }
+          ],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "phone_number",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Mobile phone number of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.phone_number",
+          "tags": [
+            {
+              "tagFQN": "PII.Sensitive",
+              "source": "Classification",
+              "labelType": "Manual",
+              "state": "Confirmed"
+            }
+          ],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "email",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Email address of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.email",
+          "tags": [
+            {
+              "tagFQN": "PII.Sensitive",
+              "source": "Classification",
+              "labelType": "Manual",
+              "state": "Confirmed"
+            }
+          ],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "birth_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date of birth of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.birth_date",
+          "tags": [
+            {
+              "tagFQN": "PII.Sensitive",
+              "source": "Classification",
+              "labelType": "Manual",
+              "state": "Confirmed"
+            }
+          ],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "gender",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Gender of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.gender",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "occupation_group",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Occupation group of the customer.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.occupation_group",
+          "tags": [],
+          "ordinalPosition": 8
+        },
+        {
+          "name": "income_band",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Range penghasilan per bulan",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.income_band",
+          "tags": [],
+          "ordinalPosition": 9
+        },
+        {
+          "name": "city",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "City of the home address.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.city",
+          "tags": [],
+          "ordinalPosition": 10
+        },
+        {
+          "name": "province",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Province of the home address.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.province",
+          "tags": [],
+          "ordinalPosition": 11
+        },
+        {
+          "name": "customer_segment",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Customer segment.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.customer_segment",
+          "tags": [],
+          "ordinalPosition": 12
+        },
+        {
+          "name": "home_branch_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Branch where the customer first registered.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.home_branch_id",
+          "tags": [],
+          "ordinalPosition": 13
+        },
+        {
+          "name": "registered_at",
+          "dataType": "TIMESTAMP",
+          "dataTypeDisplay": "timestamp",
+          "description": "When the customer record was created.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.customers.registered_at",
+          "tags": [],
+          "ordinalPosition": 14
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    },
+    {
+      "id": "ee6e294b-5c4c-5f40-b278-c1415c4b375f",
+      "name": "loan_applications",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications",
+      "description": "LOS extract",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "appl_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Application identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.appl_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "cust_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Customer who applied.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.cust_id",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "prod_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Product applied for.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.prod_id",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "cab_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Branch that received the application.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.cab_id",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "saluran",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.saluran",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "tgl_pengajuan",
+          "dataType": "TIMESTAMP",
+          "dataTypeDisplay": "timestamp",
+          "description": "Tanggal",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.tgl_pengajuan",
+          "tags": [],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "tgl_putusan",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Tanggal",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.tgl_putusan",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "sts_putusan",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "description": "Status",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.sts_putusan",
+          "tags": [],
+          "ordinalPosition": 8
+        },
+        {
+          "name": "req_amt",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.req_amt",
+          "tags": [],
+          "ordinalPosition": 9
+        },
+        {
+          "name": "appr_amt",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.appr_amt",
+          "tags": [],
+          "ordinalPosition": 10
+        },
+        {
+          "name": "req_tenor",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.req_tenor",
+          "tags": [],
+          "ordinalPosition": 11
+        },
+        {
+          "name": "grade_risiko",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.loan_applications.grade_risiko",
+          "tags": [],
+          "ordinalPosition": 12
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    }
+  ],
+  "paging": {
+    "total": 9,
+    "after": "eyJuYW1lIjoibG9hbl9hcHBsaWNhdGlvbnMiLCJpZCI6ImVlNmUyOTRiLTVjNGMtNWY0MC1iMjc4LWMxNDE1YzRiMzc1ZiJ9"
+  }
+}
