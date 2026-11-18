@@ -159,7 +159,7 @@ def test_a_missing_or_bad_reason_is_refused_for_every_action(world: World, actio
         assert raised.value.details["field"] == "reason"
     assert sup.audit_rows(world.engine) == audit_before
     assert sup.head(world) == head_before
-    assert world.repo._git(["status", "--porcelain"]) == b""
+    assert sup.git(world.repo, "status", "--porcelain") == ""
 
 
 def test_a_reason_cannot_add_a_trailer_or_a_second_line(world: World) -> None:
@@ -915,7 +915,7 @@ def test_a_git_failure_leaves_a_failed_intent_and_its_text_reaches_no_error_or_l
     assert (attempt["action"], attempt["commit_sha"]) == ("create_proposal", None)
     assert attempt["failed_at"] is not None
     assert not (world.repo.path / NEW_DRAFT).exists()  # nothing was written to the working tree
-    assert world.repo._git(["status", "--porcelain"]) == b""
+    assert sup.git(world.repo, "status", "--porcelain") == ""
     lock.unlink()
     assert world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "again")
 

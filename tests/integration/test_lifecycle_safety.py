@@ -280,7 +280,7 @@ def test_the_working_tree_is_brought_in_line_after_a_commit(world: World) -> Non
         (world.repo.show(sup.head(world), NEW_PATH) or b"").decode()
     )
     assert not (world.repo.path / NEW_DRAFT).exists()
-    assert world.repo._git(["status", "--porcelain"]) == b""
+    assert sup.git(world.repo, "status", "--porcelain") == ""
 
 
 # --- I-4 -------------------------------------------------------------------------------------
@@ -689,3 +689,208 @@ def test_anything_unexpected_becomes_one_fixed_message_and_frees_the_lock(
     assert "SECRET" not in str(raised.value)
     with store.advisory_lock(world.engine, wait_seconds=1):  # the lock was released
         pass
+
+
+# --- C-2: git can show other content under a trusted sha ---------------------------------------
+
+
+def forged_seed_replacement(world: World, scratch: Path) -> str:
+    """`"<seed sha> <sha of a forged commit>"`: the forged commit exists as an object in the
+    repository (made on a branch that is then dropped)."""
+    seed = world.repo.log()[0].sha
+    forged = sup.edited(sup.official_text(world, NPF), lambda d: d.update(label="FORGED label"))
+    sup.git(world.repo, "checkout", "-q", "-b", "forge", seed)
+    (world.repo.path / NPF_PATH).write_text(forged)
+    (world.repo.path / "lending/metrics/zz_planted.yaml").write_text(
+        sup.metric_text(name="zz_planted", status="approved", version=1)
+    )
+    sup.git(world.repo, "add", "-A")
+    sup.git(world.repo, "commit", "-q", "-m", "forged seed")
+    replacement = sup.git(world.repo, "rev-parse", "HEAD").strip()
+    sup.git(world.repo, "checkout", "-q", "main")
+    sup.git(world.repo, "branch", "-q", "-D", "forge")
+    return f"{seed} {replacement}"
+
+
+def assert_nothing_forged_is_served(world: World) -> None:
+    token = world.token("admin")
+    shown = world.services.get_definition(token, NPF)
+    assert "FORGED" not in shown.label
+    assert not sup.has_object(world, "metric:zz_planted")
+
+
+def test_a_local_replace_ref_cannot_change_what_a_trusted_commit_contains(
+    world: World, tmp_path: Path
+) -> None:
+    seed, replacement = forged_seed_replacement(world, tmp_path).split()
+    sup.git(world.repo, "replace", seed, replacement)
+    world.life.sync()
+    assert_nothing_forged_is_served(world)
+    assert sup.object_row(world, NPF)["official"]["label"] != "FORGED label"
+
+
+def test_a_pushed_replace_ref_cannot_either(world: World, tmp_path: Path) -> None:
+    seed, replacement = forged_seed_replacement(world, tmp_path).split()
+    clone = tmp_path / "clone"
+    sup.git(world.repo, "clone", "-q", str(world.repo.path), str(clone))
+    clone_repo = GitRepo(clone)
+    # The clone has the forged object only if it is fetched; push it from the original instead.
+    sup.git(world.repo, "update-ref", f"refs/replace/{seed}", replacement)
+    sup.git(clone_repo, "fetch", "-q", "origin", f"refs/replace/{seed}:refs/replace/{seed}")
+    sup.git(world.repo, "update-ref", "-d", f"refs/replace/{seed}")
+    sup.git(clone_repo, "push", "-q", "origin", f"refs/replace/{seed}:refs/replace/{seed}")
+    assert f"refs/replace/{seed}" in sup.git(world.repo, "for-each-ref")
+    world.life.sync()
+    assert_nothing_forged_is_served(world)
+
+
+@pytest.mark.parametrize("how", ["shallow", "grafts"])
+def test_a_shallow_or_grafted_repository_is_refused(world: World, how: str) -> None:
+    approve_new(world)
+    head = sup.head(world)
+    seed = world.repo.log()[0].sha
+    before = sup.state_dump(world.engine)
+    if how == "shallow":
+        (world.repo.path / ".git" / "shallow").write_text(head + "\n")
+    else:
+        (world.repo.path / ".git" / "info").mkdir(exist_ok=True)
+        (world.repo.path / ".git" / "info" / "grafts").write_text(f"{head} {seed}\n")
+    with pytest.raises(ServiceError) as raised:
+        world.life.sync()
+    assert "shallow" in raised.value.message or "graft" in raised.value.message
+    with pytest.raises(ServiceError):
+        world.life.create_proposal(
+            world.caller("curator"), "metric:x_one", sup.metric_text(name="x_one"), "r"
+        )
+    assert sup.state_dump(world.engine) == before
+    assert world.services.get_definition(world.token("admin"), NPF).version == 1
+
+
+def test_an_official_blob_rewritten_in_place_is_refused_by_its_audit_hash(world: World) -> None:
+    import zlib
+
+    approve_new(world)
+    before = sup.state_dump(world.engine)
+    oid = sup.git(world.repo, "rev-parse", f"HEAD:{NEW_PATH}").strip()
+    loose = world.repo.path / ".git" / "objects" / oid[:2] / oid[2:]
+    assert loose.exists()
+    forged = b"label: forged\n"
+    loose.chmod(0o644)
+    loose.write_bytes(zlib.compress(b"blob %d\x00" % len(forged) + forged))
+    with pytest.raises(ServiceError) as raised:
+        world.life.sync()
+    assert "audit" in raised.value.message
+    assert sup.state_dump(world.engine) == before  # not served, not a fallback: the index stays
+    assert sup.object_row(world, NEW)["official"]["label"] != "forged"
+    with pytest.raises(ServiceError):
+        world.life.deprecate(world.caller("approver"), NEW, "r")
+
+
+def test_a_trusted_commit_whose_changes_differ_from_its_audit_record_is_refused(
+    world: World,
+) -> None:
+    approve_new(world)
+    head = sup.head(world)
+    # A commit that has the same sha but a different parent (the graft effect), simulated by
+    # asking the store to read with an audit record that names other files.
+    from makna.index.tables import audit_event
+
+    with world.engine.begin() as connection:
+        connection.execute(
+            update(audit_event)
+            .where(audit_event.c.commit_sha == head)
+            .values(files={"lending/metrics/other.yaml": "0" * 64})
+        )
+    with pytest.raises(ServiceError) as raised:
+        world.life.sync()
+    assert "audit" in raised.value.message
+
+
+# --- I-1b: a merge commit does not get around the history check -------------------------------
+
+
+def test_a_merge_with_the_indexed_head_as_second_parent_is_refused(world: World) -> None:
+    approve_new(world)
+    world.life.deprecate(world.caller("approver"), "metric:par30_ratio", "retired")
+    seed = world.repo.log()[0].sha
+    head = sup.head(world)
+    tree = sup.git(world.repo, "rev-parse", f"{seed}^{{tree}}").strip()
+    merge = sup.git(world.repo, "commit-tree", tree, "-p", seed, "-p", head, "-m", "merge").strip()
+    sup.git(world.repo, "update-ref", "refs/heads/main", merge)
+    before = sup.state_dump(world.engine)
+    with pytest.raises(ServiceError) as raised:
+        world.life.sync()
+    assert "rewritten" in raised.value.message
+    assert sup.state_dump(world.engine) == before
+    assert world.services.get_definition(world.token("admin"), "metric:par30_ratio").status == (
+        "deprecated"
+    )
+
+
+# --- minors ------------------------------------------------------------------------------------
+
+
+def test_index_sync_checks_that_it_still_holds_the_lock(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    original = store.HeldLock.check
+
+    def counting(self: store.HeldLock) -> None:
+        calls.append("check")
+        original(self)
+
+    monkeypatch.setattr(store.HeldLock, "check", counting)
+    world.life.sync()
+    assert calls
+
+
+def test_the_working_tree_is_never_written_through_a_link_that_appears_between_steps(
+    tmp_path: Path,
+) -> None:
+    from makna.services.lifecycle import _remove_file, _write_file
+
+    root = tmp_path / "root"
+    (root / "lending" / "metrics").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.yaml").write_text("keep")
+    shutil.rmtree(root / "lending" / "metrics")
+    (root / "lending" / "metrics").symlink_to(outside)
+    with pytest.raises(OSError):
+        _write_file(root, "lending/metrics/x.yaml", b"forged")
+    with pytest.raises(OSError):
+        _remove_file(root, "lending/metrics/x.yaml")
+    (root / "lending" / "y.yaml").symlink_to(outside / "x.yaml")
+    with pytest.raises(OSError):
+        _write_file(root, "lending/y.yaml", b"forged")
+    assert (outside / "x.yaml").read_text() == "keep"
+    _write_file(root, "new/dir/z.yaml", b"fine")
+    assert (root / "new/dir/z.yaml").read_bytes() == b"fine"
+    _remove_file(root, "new/dir/z.yaml")
+    assert not (root / "new/dir/z.yaml").exists()
+
+
+def test_a_sibling_dimension_on_a_masked_personal_column_needs_the_governance_team(
+    world: World,
+) -> None:
+    def add_month(data: dict[str, Any]) -> None:
+        data["dimensions"].append(
+            {
+                "name": "birth_month",
+                "type": "time",
+                "expr": "birth_date",
+                "description": "The month the customer was born.",
+                "sensitivity": "personal",
+                "masking": {"method": "truncate_date", "grain": "month"},
+            }
+        )
+
+    customer_change(world, add_month)
+    for name in ("approver", "approver2", "admin"):
+        with pytest.raises(ServiceError) as raised:
+            world.life.approve(world.caller(name), CUSTOMER, "approve")
+        assert raised.value.details["reason"] == "governance_team_needed"
+    assert (
+        world.life.approve(world.caller("governance"), CUSTOMER, "governance agrees").version == 2
+    )

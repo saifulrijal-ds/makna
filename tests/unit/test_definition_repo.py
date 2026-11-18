@@ -108,13 +108,22 @@ def test_attributes_and_filters_of_the_working_tree_cannot_change_a_commit(tmp_p
     repo = make_repo(tmp_path / "r")
     marker = tmp_path / "filter-ran"
     (repo.path / ".gitattributes").write_text(
-        "*.yaml ident filter=evil text working-tree-encoding=UTF-16\n"
+        "*.yaml ident filter=evil text diff=evil working-tree-encoding=UTF-16\n"
     )
-    (repo.path / ".git" / "info").mkdir(exist_ok=True)
     raw(repo, "config", "filter.evil.clean", f"touch {marker}; cat")
+    raw(repo, "config", "filter.evil.smudge", f"touch {marker}; cat")
+    raw(repo, "config", "diff.evil.textconv", f"sh -c 'touch {marker}; cat' --")
     text = "id: $Id: keep this $\ncafe: caf\u00e9\r\n"
-    sha = commit_file(repo, "a.yaml", text)
-    assert repo.show(sha, "a.yaml") == text.encode()
+    (repo.path / "a.yaml").write_text("a file in the working tree for a filter to find\n")
+    made = repo.commit_files("m", "Ann", "ann@example.com", {"a.yaml": text.encode()}, None)
+    assert repo.show(made.sha, "a.yaml") == text.encode()
+    # Every other command the application runs, with a file in the working tree to run it on:
+    repo.index_set(made.blobs)
+    assert repo.log() and repo.regular_files(made.sha) == ["a.yaml"]
+    assert repo.diff_names(made.sha) == [("A", "a.yaml")]
+    assert repo.is_ancestor(made.sha) and repo.rev_parse("HEAD") == made.sha
+    nxt = repo.commit_files("n", "Ann", "ann@example.com", {"b.yaml": b"b\n"}, made.sha)
+    repo.index_set(nxt.blobs)
     assert not marker.exists()
 
 
@@ -440,3 +449,34 @@ def test_the_text_is_checked_as_a_model_and_the_size_limit_is_stated() -> None:
     assert definition is None and problems and all(p.code == "V01" for p in problems)
     definition, problems = render.parse_text("a: &x 1\nb: *x\n")
     assert definition is None and problems
+
+
+def test_a_replace_ref_is_ignored_by_every_read(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "r")
+    first = commit_file(repo, "a.yaml", "real\n")
+    raw(repo, "checkout", "-q", "-b", "forge")
+    (repo.path / "a.yaml").write_text("forged\n")
+    raw(repo, "commit", "-q", "-am", "forged")
+    forged = raw(repo, "rev-parse", "HEAD").strip()
+    raw(repo, "checkout", "-q", "main")
+    raw(repo, "replace", first, forged)
+    assert raw(repo, "show", f"{first}:a.yaml") == "forged\n"  # git as a person runs it
+    assert repo.show(first, "a.yaml") == b"real\n"  # as Makna runs it
+
+
+@pytest.mark.parametrize("how", ["shallow", "grafts"])
+def test_a_shallow_or_grafted_repository_is_not_a_usable_repository(
+    tmp_path: Path, how: str
+) -> None:
+    repo = make_repo(tmp_path / "r")
+    first = commit_file(repo, "a.yaml", "1\n")
+    commit_file(repo, "b.yaml", "2\n")
+    assert repository_mode(repo.path, configured=True) is RepoMode.REPOSITORY
+    if how == "shallow":
+        (repo.path / ".git" / "shallow").write_text(first + "\n")
+    else:
+        (repo.path / ".git" / "info").mkdir(exist_ok=True)
+        (repo.path / ".git" / "info" / "grafts").write_text(f"{first}\n")
+    with pytest.raises(RepoUnusable) as caught:
+        repository_mode(repo.path, configured=True)
+    assert caught.value.reason == "altered_history"

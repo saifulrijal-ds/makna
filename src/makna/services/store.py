@@ -56,7 +56,14 @@ from makna.definitions.loader import (
     load_text,
 )
 from makna.definitions.render import MAX_YAML_BYTES, sha256
-from makna.definitions.repo import COMMITTER_EMAIL, Commit, GitRepo, RepoError, TooLarge
+from makna.definitions.repo import (
+    COMMITTER_EMAIL,
+    Commit,
+    GitRepo,
+    RepoError,
+    TooLarge,
+    altered_history,
+)
 from makna.index import indexer
 from makna.index.tables import app_user, audit_event, index_state
 from makna.model.definitions import AnyDefinition, Entity, GlossaryTerm, Metric
@@ -200,10 +207,15 @@ class AuditView:
     """`(sha, object_id)` of the `external_change` rows."""
     last_indexed: str | None = None
     """`index_state.last_indexed_commit`: the `HEAD` the index was last written for."""
+    recorded: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
+    """`sha -> {path: sha256 | None}`: the files each application commit was recorded with, from
+    the `files` of its audit rows (None for a deleted path). The audit log is the authority for
+    what such a commit contains."""
 
 
 def read_audit(connection: Connection) -> AuditView:
     applied: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    recorded: dict[str, dict[str, str | None]] = defaultdict(dict)
     intents: list[Intent] = []
     logged: set[tuple[str, str]] = set()
     rows = connection.execute(
@@ -227,6 +239,8 @@ def read_audit(connection: Connection) -> AuditView:
             logged.add((row.commit_sha, row.object_id))
         else:
             applied[row.commit_sha].append((row.object_id, row.action))
+            if isinstance(row.files, dict):
+                recorded[row.commit_sha].update(row.files)
     last = connection.execute(
         select(index_state.c.value).where(index_state.c.key == "last_indexed_commit")
     ).scalar_one_or_none()
@@ -235,6 +249,7 @@ def read_audit(connection: Connection) -> AuditView:
         tuple(intents),
         frozenset(logged),
         last or None,
+        {sha: dict(files) for sha, files in recorded.items()},
     )
 
 
@@ -422,19 +437,38 @@ HISTORY_REWRITTEN = (
 )
 
 
-def check_history(repo: GitRepo, audit: AuditView) -> None:
-    """Refuse a repository whose `HEAD` does not descend from the commit the index was last
-    written for. Reading official content from the first-parent history would otherwise roll back
-    approvals and deprecations without a word (review I-1). Raises `StoreError`."""
-    if audit.last_indexed is None:
-        return
-    try:
-        head = repo.rev_parse("HEAD")
-        ok = head is not None and repo.is_ancestor(audit.last_indexed, "HEAD")
-    except RepoError:
-        raise StoreError("the repository cannot be read") from None
-    if not ok:
+ALTERED = (
+    "The content of a commit the application made does not match what the audit log recorded for "
+    "it (the repository was altered: a replaced object, a rewritten object file, or changed "
+    "parentage). Nothing was indexed or changed, and nothing from that commit is served."
+)
+
+
+def check_history(audit: AuditView, first_parent: set[str]) -> None:
+    """Refuse a repository whose first-parent history does not contain the commit the index was
+    last written for (a reset, an amend, a forced move, another repository, or a merge that puts
+    the indexed commit on a second parent). Official content is read from that history, so it
+    would otherwise roll back approvals and deprecations without a word (reviews I-1, I-1b).
+    Raises `StoreError`."""
+    if audit.last_indexed is not None and audit.last_indexed not in first_parent:
         raise StoreError(HISTORY_REWRITTEN, fatal=True)
+
+
+def check_recorded(
+    commits: list[Commit], trusted: set[str], recorded: Mapping[str, Mapping[str, str | None]]
+) -> None:
+    """For every application commit with a recorded file list, its change set must be that list
+    (the same paths, a deletion where the record has none). Raises `StoreError`."""
+    for commit in commits:
+        files = recorded.get(commit.sha)
+        if commit.sha not in trusted or not files:
+            continue
+        changed = {path: status for status, path in commit.changes}
+        if set(changed) != set(files) or any(
+            (status == "D") != (files[path] is None) for path, status in changed.items()
+        ):
+            logger.error("definitions: an application commit differs from its audit record")
+            raise StoreError(ALTERED, fatal=True)
 
 
 def read_state(
@@ -451,9 +485,12 @@ def read_state(
     `claimed` maps an open intent to the commit its own action just made, so a retry after a
     crash completes its own intent and not an older one. Raises `StoreError` when the history
     was rewritten, unless `accept_rewritten_history`."""
-    if not accept_rewritten_history:
-        check_history(repo, audit)
+    why = altered_history(repo.path / ".git")
+    if why is not None:
+        raise StoreError(why, fatal=True)
     commits = repo.log()
+    if not accept_rewritten_history:
+        check_history(audit, {c.sha for c in commits})
     if not commits:
         return RepoState(None, dead=[i.id for i in audit.intents])
     head = commits[-1].sha
@@ -468,6 +505,26 @@ def read_state(
     }
     state.dead = [i.id for i in audit.intents if i.id not in state.matched]
     trusted |= set(state.matched.values())
+    recorded: dict[str, Mapping[str, str | None]] = dict(audit.recorded)
+    for intent in audit.intents:
+        if intent.id in state.matched:
+            recorded[state.matched[intent.id]] = intent.files
+    check_recorded(commits, trusted, recorded)
+
+    def verify(sha: str, path: str, data: bytes | None | TooLarge) -> None:
+        """What is read from an application commit must be what the audit log recorded for it
+        (a git object file rewritten in place keeps its name and changes its bytes)."""
+        files = recorded.get(sha)
+        if not files or path not in files:
+            return
+        wanted = files[path]
+        ok = (wanted is None and data is None) or (
+            isinstance(data, bytes) and wanted is not None and sha256(data) == wanted
+        )
+        if not ok:
+            logger.error("definitions: the content of %s differs from its audit record", path)
+            raise StoreError(ALTERED, fatal=True)
+
     actions: dict[str, set[str]] = defaultdict(set)  # sha -> actions of that application commit
     for sha, items in audit.applied.items():
         actions[sha].update(action for _, action in items)
@@ -536,6 +593,7 @@ def read_state(
             commit = last_app[official_path][1]
             data = blobs[(commit.sha, official_path)]
             assert data is not None
+            verify(commit.sha, official_path, data)
             item.official_path = official_path
             item.official_commit = commit.sha
             item.official_bytes = data if isinstance(data, bytes) else None
@@ -549,7 +607,7 @@ def read_state(
             if file.definition is not None:
                 state.official_files.append(file)
                 item.official = file.definition
-        _read_proposal(item, paths_here, blobs, head, last_any, last_app, trusted)
+        _read_proposal(item, paths_here, blobs, head, last_any, last_app, trusted, verify)
         # Authors: everyone who authored a commit on the object since it was last approved.
         boundary = -1
         for index in touches.get(ref, []):
@@ -594,6 +652,7 @@ def _read_proposal(
     last_any: Mapping[str, tuple[int, Commit, str]],
     last_app: Mapping[str, tuple[int, Commit, str]],
     trusted: set[str],
+    verify: Callable[[str, str, bytes | None | TooLarge], None],
 ) -> None:
     ref = item.ref
     proposal_path = layout.object_path(ref, item.domain, proposal=True)
@@ -605,7 +664,9 @@ def _read_proposal(
         source = drafts[0]
         _, commit, _ = last_any[source]
         data = blobs[(head, source)]
-        if commit.sha not in trusted:
+        if commit.sha in trusted:
+            verify(commit.sha, source, data)
+        else:
             before = last_app.get(source)
             same = (
                 before is not None
@@ -615,6 +676,7 @@ def _read_proposal(
             external = not same
             if same:
                 commit = before[1]  # type: ignore[index]
+                verify(commit.sha, source, blobs[(commit.sha, source)])
         item.proposal_commit = commit.sha
         item.external_author = commit.author_email if external else None
     else:
@@ -807,7 +869,7 @@ def sync(
     definitions cannot be indexed, or its history was rewritten) or `ServiceError(CONFLICT)` (the
     lock is busy). `claimed` maps an open intent to the commit its own action made."""
 
-    def run() -> tuple[RepoState, indexer.IndexResult]:
+    def run(check: Callable[[], None]) -> tuple[RepoState, indexer.IndexResult]:
         try:
             with engine.connect() as connection:
                 audit = read_audit(connection)
@@ -819,6 +881,7 @@ def sync(
                 claimed=claimed,
                 accept_rewritten_history=accept_rewritten_history,
             )
+            check()  # a lock lost since the start would let two writers index at once
             result = reindex(engine, provider, state, audit, derive=derive)
         except RepoError as error:
             raise StoreError(f"the repository cannot be read ({error})") from None
@@ -827,6 +890,7 @@ def sync(
         return state, result
 
     if locked:
-        return run()
-    with advisory_lock(engine):
-        return run()
+        return run(lambda: None)  # the caller holds the lock and checks it itself
+    with advisory_lock(engine) as lock:
+        lock.check()
+        return run(lock.check)

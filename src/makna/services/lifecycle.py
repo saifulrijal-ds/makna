@@ -42,7 +42,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import stat
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -185,46 +184,54 @@ def _denied(decision: Decision) -> PermissionDenied:
     return PermissionDenied(decision.message, details)
 
 
-def _safe_path(root: Path, relative: str, *, create: bool = True) -> Path:
-    """The absolute path of `relative`, after checking that no part of it is a symbolic link and
-    that the directories on the way are real directories, creating the missing ones. A path that
-    would lead out of the repository is refused. The check and the write are one process's work
-    under the lock; the final open also refuses a link (`O_NOFOLLOW`)."""
-    current = root
-    parts = relative.split("/")
-    for index, part in enumerate(parts):
-        current = current / part
-        try:
-            mode = os.lstat(current).st_mode
-        except FileNotFoundError:
-            if index < len(parts) - 1 and create:
-                os.mkdir(current, 0o755)
-            continue
-        if stat.S_ISLNK(mode):
-            raise ServiceError(
-                LifecycleErrorCode.CONFLICT,
-                "A part of the file's path is a symbolic link, so nothing was written.",
-            )
-        if index < len(parts) - 1 and not stat.S_ISDIR(mode):
-            raise ServiceError(
-                LifecycleErrorCode.CONFLICT, "A part of the file's path is not a directory."
-            )
-    resolved = current.resolve()
-    if not resolved.is_relative_to(root.resolve()):
-        raise ServiceError(LifecycleErrorCode.CONFLICT, "The file would be outside the repository.")
-    return current
+def _open_folder(root: Path, parts: list[str], *, create: bool) -> int:
+    """A directory descriptor for `parts` below `root`, opened one component at a time with
+    `O_NOFOLLOW`, so a link at any component (even one swapped in just now) is refused (`OSError`)
+    and nothing is followed out of the repository. Missing folders are made when `create`."""
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts:
+            try:
+                child = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                )
+            except FileNotFoundError:
+                if not create:
+                    raise
+                os.mkdir(part, 0o755, dir_fd=descriptor)
+                child = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                )
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 def _write_file(root: Path, relative: str, data: bytes) -> None:
-    target = _safe_path(root, relative)
+    """Write `data` to `relative` below `root`, never through a link (`OSError` if there is one)."""
+    *folders, name = relative.split("/")
+    folder = _open_folder(root, folders, create=True)
     try:
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
-    except OSError:
-        raise ServiceError(
-            LifecycleErrorCode.CONFLICT, "The file could not be written, so nothing was changed."
-        ) from None
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(data)
+        descriptor = os.open(
+            name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=folder
+        )
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+    finally:
+        os.close(folder)
+
+
+def _remove_file(root: Path, relative: str) -> None:
+    """Delete `relative` below `root`, never through a link (`OSError` if there is one)."""
+    *folders, name = relative.split("/")
+    folder = _open_folder(root, folders, create=False)
+    try:
+        os.unlink(name, dir_fd=folder)
+    finally:
+        os.close(folder)
 
 
 def _message(
@@ -895,12 +902,10 @@ class Lifecycle:
         for path, data in files.items():
             try:
                 if data is None:
-                    target = _safe_path(repo.path, path, create=False)
-                    if target.is_file() and not target.is_symlink():
-                        target.unlink()
+                    _remove_file(repo.path, path)
                 else:
                     _write_file(repo.path, path, data)
-            except (ServiceError, OSError):
+            except OSError:
                 logger.warning("lifecycle: a file of the working tree was not updated")
 
     def _finish(

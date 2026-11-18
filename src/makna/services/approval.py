@@ -11,9 +11,13 @@ a reason code for every refusal. `may_edit` is the one for the proposal actions.
 Notes on what is and is not compared:
 
 - **Sensitivity is compared on the parsed models**, never on text: an object's level, each
-  dimension's effective level (its own, else the entity's), and each dimension's masking rule. A
-  dimension that is new in the proposal counts as loosened when it is less strict than the level
-  the entity has in the official version, so renaming a personal dimension cannot avoid the rule.
+  dimension's effective level (its own, else the entity's), and each dimension's masking rule.
+  Dimensions are matched by name; one that is gone is matched with a new one that reads the same
+  parsed columns (a rename); and **every new or changed dimension is compared with the strictest
+  official dimension that reads the same parsed columns**, so a sibling (`birth_month` next to a
+  masked `birth_year`), a swap of names, and a dimension re-pointed at a protected column all need
+  the governance team when they show that column at a lower level or with less masking. A new
+  dimension on a column no official dimension reads is compared with the entity's official level.
   Levels the catalog derives for columns are not part of a definition and are not compared.
   A rule (`Rule`) carries no sensitivity of its own in the file format, so there is nothing to
   compare for rules.
@@ -38,6 +42,7 @@ from makna.model.definitions import (
     MaskRedact,
     MaskTruncateDate,
 )
+from makna.model.expressions import ExpressionError, dimension_columns
 from makna.model.sensitivity import rank
 from makna.services import permissions
 from makna.services.caller import Caller
@@ -143,6 +148,45 @@ def _weaker(entity_before: Entity, old: Dimension, entity_after: Entity, new: Di
     )
 
 
+def _columns(dimension: Dimension) -> frozenset[str]:
+    """The columns a dimension reads, parsed (not the text of its expression). A dimension whose
+    expression does not parse reads nothing anyone can name, so it matches no other."""
+    try:
+        return frozenset(c.lower() for c in dimension_columns(dimension))
+    except ExpressionError:
+        return frozenset({f"?{dimension.name}"})
+
+
+def _mask_of(dimension: Dimension) -> tuple[int, float]:
+    return _mask_strength(dimension.masking) if dimension.masking is not None else (0, 0.0)
+
+
+def _sibling_findings(official: Entity, proposal: Entity) -> list[str]:
+    """Each new or changed dimension, against the strictest official dimension that reads the same
+    parsed columns: it may not show those columns at a lower level or with less masking. This is
+    what a sibling (`birth_month` next to a masked `birth_year`), a swap of names, and a dimension
+    re-pointed at a protected column have in common."""
+    found: list[str] = []
+    before = {d.name: d for d in official.dimensions}
+    for new in proposal.dimensions:
+        columns = _columns(new)
+        old = before.get(new.name)
+        if old is not None and _columns(old) == columns:
+            continue  # same name, same columns: the comparison by name has judged it
+        same = [o for o in official.dimensions if _columns(o) == columns]
+        if not same:
+            continue
+        level = max((_level(official, o) for o in same), key=rank)
+        mask = max(_mask_of(o) for o in same)
+        if rank(_level(proposal, new)) < rank(level) or _mask_of(new) < mask:
+            strictest = max(same, key=lambda o: (rank(_level(official, o)), _mask_of(o)))
+            found.append(
+                f"dimension {new.name} shows {', '.join(sorted(columns))} less strictly than "
+                f"dimension {strictest.name} does"
+            )
+    return found
+
+
 def loosenings(official: AnyDefinition | None, proposal: AnyDefinition) -> list[str]:
     """What in `proposal` the governance team must decide (D-20), as short sentences without any
     value from the definition: a less strict level, a removed or finer masking rule, a removed
@@ -197,6 +241,9 @@ def loosenings(official: AnyDefinition | None, proposal: AnyDefinition) -> list[
             # New with no earlier version: compared with what the entity was.
             if rank(_level(proposal, new)) < rank(official.sensitivity):
                 found.append(f"a new dimension {new.name} at a lower level than the entity")
+        for line in _sibling_findings(official, proposal):
+            if line not in found:
+                found.append(line)
     return found
 
 

@@ -490,3 +490,88 @@ def test_a_good_reason_is_trimmed_and_kept() -> None:
     )
     assert check_reason("a" * 500) == "a" * 500
     assert check_reason("Alasan: definisi diperbaiki – sesuai kebijakan") != ""
+
+
+# --- I-4b: siblings, swaps, and extra dimensions on a column an official dimension protects ----
+
+
+def _sibling(dims: list[dict[str, Any]], name: str, expr: str, **fields: Any) -> None:
+    dims.append(
+        {"name": name, "type": "time", "description": "Another view of the column.", "expr": expr}
+        | fields
+    )
+
+
+def test_a_sibling_that_shows_a_protected_column_more_finely_needs_the_governance_team() -> None:
+    month = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(
+                d, "birth_month", "birth_date_col", sensitivity="personal",
+                masking={"method": "truncate_date", "grain": "month"},
+            ),
+        )
+    )  # fmt: skip
+    found = loosenings(EXPR_BASE, month)
+    assert any("birth_month" in line and "birth_date_col" in line for line in found), found
+    unmasked = entity_doc(
+        _both(
+            _with_expr, lambda d: _sibling(d, "birth_raw", "birth_date_col", sensitivity="personal")
+        )
+    )
+    assert loosenings(EXPR_BASE, unmasked)
+
+
+def test_a_sibling_at_a_lower_level_on_a_personal_column_needs_the_governance_team() -> None:
+    sibling = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(d, "birth_alias", "birth_date_col", sensitivity="internal"),
+        )
+    )
+    assert loosenings(EXPR_BASE, sibling)
+
+
+def test_swapped_names_are_found_by_what_each_dimension_reads() -> None:
+    def swap(dims: list[dict[str, Any]]) -> None:
+        # `city` (internal) now reads the column `birth_date_col` that the personal one reads.
+        dims[0]["expr"] = "birth_date_col"
+
+    swapped = entity_doc(_both(_with_expr, swap))
+    assert any("city" in line for line in loosenings(EXPR_BASE, swapped))
+
+
+def test_a_sibling_that_is_as_strict_as_the_official_one_is_not_a_loosening() -> None:
+    same = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(
+                d, "birth_year_again", "birth_date_col", sensitivity="personal",
+                masking={"method": "truncate_date", "grain": "year"},
+            ),
+        )
+    )  # fmt: skip
+    assert loosenings(EXPR_BASE, same) == []
+    redact = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(
+                d, "birth_hidden", "birth_date_col", sensitivity="personal",
+                masking={"method": "redact"},
+            ),
+        )
+    )  # fmt: skip
+    assert loosenings(EXPR_BASE, redact) == []
+
+
+def test_columns_are_compared_as_parsed_not_as_text() -> None:
+    spaced = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(
+                d, "birth_cast", "CAST( birth_date_col  AS DATE )", sensitivity="personal",
+                masking={"method": "truncate_date", "grain": "month"},
+            ),
+        )
+    )  # fmt: skip
+    assert loosenings(EXPR_BASE, spaced)

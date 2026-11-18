@@ -15,20 +15,34 @@ starts from an empty environment (nothing is inherited) and sets only:
 - `GIT_TERMINAL_PROMPT=0` and `GIT_EDITOR=true`: git never waits for a person; `--no-pager`;
 - `GIT_OPTIONAL_LOCKS=0`: a read does not write the index;
 - `-c core.hooksPath=/dev/null`: no hook runs, so a script planted in `.git/hooks` stays inert;
+- `GIT_NO_REPLACE_OBJECTS=1` and `-c core.commitGraph=false`: git shows an object as it is, never as
+  a `refs/replace/*` ref (which a push can add) or a commit-graph file says it should be;
+- `GIT_ATTR_SOURCE=<the empty tree>`: no attributes are read from any tree;
 - `-c commit.gpgsign=false`, `-c core.fsmonitor=false`, `-c gc.auto=0`, `-c core.autocrlf=false`,
   `-c core.quotePath=false`: no signing program, no monitor daemon, no background gc, bytes in
   and out are the same bytes.
 
-Every call names the repository with `--git-dir` and runs in its directory, so git never searches
-parent directories for another repository. No call names a work tree: **the working tree is not
-authoritative and git never reads it for Makna**. A commit is built from the bytes the caller
+Every call names the repository with `--git-dir` and names as its **work tree an empty directory
+of our own** (and runs there), so git never searches parent directories for another repository,
+never sees the real working tree, its `.gitattributes`, or its `.gitmodules`, and has no file to
+run a `clean`, `smudge`, or `textconv` filter on, whatever the git version and whatever the
+repository's attributes or configuration say. **The working tree is not authoritative and git
+never reads or writes it for Makna.** A commit is built from the bytes the caller
 checked, with plumbing and a private index file (`hash-object --no-filters`, `read-tree`,
 `update-index --index-info`, `write-tree`, `commit-tree`, then `update-ref` with the old value
 that was read), so no `.gitattributes` or `filter` setting can change what is committed, no file is
 read from or written to the working tree, and no `.gitmodules` of the working tree is read. The
-history reads use `--ignore-submodules=all`. The repository's own `.git/config` is trusted: whoever
-can write it can already run code as the application (and so can whoever can write the repository
-directory; see ARCHITECTURE section 10).
+history reads use `--ignore-submodules=all`.
+
+What this does **not** cover, and what covers it. Git can show other content under the sha of a
+commit the application made: a replace ref (`refs/replace/*`, which a push can add; ignored here),
+a graft or a shallow file (refused by `repository_mode`), a commit-graph file (ignored), or an
+object file rewritten in place (git does not check the hash on read). The last one, and any other,
+is caught by the audit log: `makna.services.store` compares what it reads from a trusted commit
+with the files and SHA-256 hashes recorded for that commit in `audit_event`, and refuses a
+mismatch. The repository's own `.git/config` is trusted: whoever can write it can already run code
+as the application (and so can whoever can write the repository directory; see ARCHITECTURE
+section 10).
 
 The author of a commit is set with `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, the committer is
 `Makna` at a fixed address; `-c user.*` is not used.
@@ -41,9 +55,11 @@ definitions repository is a `RepoUnusable` with a fixed reason text.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unicodedata
@@ -61,7 +77,10 @@ BRANCH = "main"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _REGULAR_MODES = ("100644", "100755")
 
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 _FIXED_CONFIG = (
+    "core.commitGraph=false",
     "core.hooksPath=/dev/null",
     "core.attributesFile=/dev/null",
     "core.fsmonitor=false",
@@ -70,6 +89,20 @@ _FIXED_CONFIG = (
     "core.autocrlf=false",
     "core.quotePath=false",
 )
+
+
+_EMPTY_TREE: Path | None = None
+
+
+def _empty_work_tree() -> Path:
+    """An empty directory of our own, the work tree every command is given (see the module
+    docstring). Made once per process and removed at exit."""
+    global _EMPTY_TREE
+    if _EMPTY_TREE is None or not _EMPTY_TREE.is_dir():
+        created = Path(tempfile.mkdtemp(prefix="makna-empty-tree-"))
+        atexit.register(shutil.rmtree, created, True)
+        _EMPTY_TREE = created
+    return _EMPTY_TREE
 
 
 class RepoError(Exception):
@@ -155,6 +188,19 @@ def _check_email(email: str) -> str:
     return email
 
 
+def altered_history(git_dir: Path) -> str | None:
+    """Why the history of the repository whose `.git` is `git_dir` cannot be believed, or None.
+    A shallow file or grafts file changes which parents a commit seems to have, so a commit the
+    application made can seem to contain other things; the application refuses such a repository."""
+    if os.path.lexists(git_dir / "shallow"):
+        return "the repository is shallow (a .git/shallow file changes what its commits contain)"
+    if os.path.lexists(git_dir / "info" / "grafts"):
+        return (
+            "the repository has grafts (a .git/info/grafts file changes what its commits contain)"
+        )
+    return None
+
+
 class RepoMode(StrEnum):
     PLAIN = "plain"
     """A directory that is read as it is and never written (no git repository of its own)."""
@@ -205,6 +251,9 @@ def repository_mode(path: Path, *, configured: bool) -> RepoMode:
                 "the definitions directory has a .git that is not a directory of its own",
             )
         if is_repository_root(resolved):
+            why = altered_history(dot_git)
+            if why is not None:
+                raise RepoUnusable("altered_history", why)
             return RepoMode.REPOSITORY
         raise RepoUnusable(
             "not_a_usable_repository",
@@ -246,6 +295,8 @@ class GitRepo:
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_EDITOR": "true",
             "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_ATTR_SOURCE": EMPTY_TREE,
         }
         env.update(extra or {})
         return env
@@ -263,10 +314,12 @@ class GitRepo:
         command = ["git", "--no-pager"]
         for item in _FIXED_CONFIG:
             command += ["-c", item]
+        work = directory
         if discover:
             command += ["-C", str(directory)]
         else:
-            command += [f"--git-dir={directory / '.git'}"]
+            work = _empty_work_tree()
+            command += [f"--git-dir={directory / '.git'}", f"--work-tree={work}"]
         command += args
         try:
             done = subprocess.run(  # noqa: S603 - an argument list, never a shell
@@ -275,7 +328,7 @@ class GitRepo:
                 capture_output=True,
                 timeout=timeout,
                 env=GitRepo._environment(extra_env),
-                cwd=directory,
+                cwd=work,
                 check=False,
                 shell=False,
             )
