@@ -185,3 +185,39 @@ def test_resolve_writes_exactly_one_row_and_runs_no_compile(
             select(tool_call_log.c.tool).order_by(tool_call_log.c.id.desc()).limit(1)
         ).scalars()
         assert list(tools) == ["resolve"]
+
+
+# --- D-38: the ratio is on the pre-fusion score -------------------------------------------------
+
+
+def test_a_hit_carries_the_weighted_pre_fusion_score(service_world: tuple[Engine, Users]) -> None:
+    from makna.model.search import SearchSettings
+    from makna.search.embedding import HashProvider
+    from makna.search.hybrid import HybridSearch
+
+    engine, _ = service_world
+    settings = SearchSettings()
+    found = HybridSearch(engine, HashProvider(), settings).search(
+        "average ticket size", role="viewer", limit=10
+    )
+    assert found.hits
+    for h in found.hits:
+        expected = settings.w_keyword * (h.keyword_score or 0.0) + settings.w_vector * (
+            h.vector_similarity or 0.0
+        )
+        assert h.pre_fusion_score == pytest.approx(expected)
+    assert any(h.pre_fusion_score > 0 for h in found.hits)
+
+
+def test_search_and_resolve_ask_the_same_question_of_the_same_pair(
+    service_world: tuple[Engine, Users],
+) -> None:
+    engine, users = service_world
+    svc = sup.services(engine)
+    for question in ("NPF", "average ticket size", "disbursement", "outstanding principal"):
+        searched = svc.search(users.caller("viewer"), question, kinds=["metric"], limit=10)
+        resolved = svc.resolve(users.caller("viewer", "web"), question, TODAY)
+        if resolved.status == "ambiguous":
+            assert list(resolved.ambiguous_between) == searched.ambiguous_between, question
+        else:
+            assert not searched.ambiguous_between or resolved.status == "no_match", question

@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine
 
-from makna.search.confidence import AMBIGUOUS_GUIDANCE
 from makna.services import Caller, ServiceError
 from makna.services.errors import ServiceErrorCode
 
@@ -67,11 +66,10 @@ def test_a_personal_column_is_hidden_from_viewers_and_tokens(
 def test_a_hit_has_the_fields_of_section_12(service_world: tuple[Engine, Users]) -> None:
     engine, users = service_world
     found = sup.services(engine).search(users.caller("viewer"), "kredit macet")
-    # "kredit macet" is a synonym of both NPF metrics (the ratio and the amount): the question
-    # does not tell them apart, so the guidance is the ambiguity one (WP-20, section 8.4).
-    assert found.confidence == "high"
-    assert found.ambiguous_between == ["metric:npf_ratio", "metric:npf_outstanding_principal"]
-    assert found.guidance == AMBIGUOUS_GUIDANCE
+    # With the ratio on the pre-fusion score (D-38) "kredit macet" is no longer ambiguous: the
+    # ratio's names hold both words and the amount's hold fewer, so the first hit stands alone.
+    assert found.confidence == "high" and found.guidance is None
+    assert found.ambiguous_between == []
     top = found.hits[0]
     assert (top.id, top.label, top.kind, top.type, top.unit) == (
         "metric:npf_ratio",

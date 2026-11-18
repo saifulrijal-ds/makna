@@ -123,6 +123,9 @@ class Hit:
     matched_terms: tuple[str, ...]
     coverage: float = 0.0
     """The share of the question's content words that this hit's own names hold (section 8.4)."""
+    pre_fusion_score: float = 0.0
+    """`w_keyword * keyword_score + w_vector * vector_similarity`, the two legs before the rank
+    fusion squeezes them (section 8.4, rule 3, D-38). A leg the hit is not in counts 0."""
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,12 @@ def visible_statuses(role: str, include_deprecated: bool) -> list[str]:
     return statuses
 
 
+def _pre_fusion(
+    w_keyword: float, w_vector: float, keyword: float | None, cosine: float | None
+) -> float:
+    return w_keyword * (keyword or 0.0) + w_vector * (cosine or 0.0)
+
+
 def ambiguous_pair(hits: tuple[Hit, ...], band: str) -> tuple[str, ...]:
     """The ids of the two best metric hits when the rule of section 8.4 holds for them.
 
@@ -161,7 +170,9 @@ def ambiguous_pair(hits: tuple[Hit, ...], band: str) -> tuple[str, ...]:
     if band == "low" or len(metrics) < 2:
         return ()
     first, second = metrics
-    if is_ambiguous(first.score, first.coverage, second.score, second.coverage):
+    if is_ambiguous(
+        first.pre_fusion_score, first.coverage, second.pre_fusion_score, second.coverage
+    ):
         return (first.object_id, second.object_id)
     return ()
 
@@ -257,6 +268,9 @@ class HybridSearch:
                 vector_rank=r.vector_rank,
                 matched_terms=tuple(matched_terms(processed.words, r.names)),
                 coverage=confidence_module.hit_coverage(content, r.names, vocabulary),
+                pre_fusion_score=_pre_fusion(
+                    settings.w_keyword, settings.w_vector, r.keyword_score, r.vector_cosine
+                ),
             )
             for r in rows
         )

@@ -102,7 +102,9 @@ AMBIGUOUS_GUIDANCE = (
 
 AMBIGUITY_SCORE_RATIO = 0.85
 """Two metric candidates are close when the second one's score is at least this share of the
-first one's (section 8.4, rule 3). The search service and the resolver read it from here."""
+first one's (section 8.4, rule 3). The score is the one before the rank fusion
+(`Hit.pre_fusion_score`, D-38): fused scores of neighbouring ranks differ by 1 to 3 percent, so a
+ratio on them is almost always met. The search service and the resolver read it from here."""
 
 AMBIGUITY_COVERAGE_GAP = 0.15
 """...and they are ambiguous when, besides, their coverage differs by less than this."""
@@ -113,8 +115,9 @@ def is_ambiguous(
 ) -> bool:
     """The rule of section 8.4: the question does not tell the first candidate from the second.
 
-    The scores are the fused scores of the two hits, the coverages the share of the question's
-    content words (`hit_coverage`) that each hit's own names hold. The first is the better ranked.
+    The scores are the pre-fusion scores of the two hits (`Hit.pre_fusion_score`); the coverages
+    are the share of the question's content words (`hit_coverage`) that each hit's own names
+    hold. The first is the better ranked.
     """
     return (
         first_score > 0

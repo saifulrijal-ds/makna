@@ -68,6 +68,8 @@ class Candidate:
     score: float
     coverage: float
     matched_terms: tuple[str, ...]
+    pre_fusion_score: float = 0.0
+    """The score the ambiguity rule compares (`Hit.pre_fusion_score`)."""
     via: str | None = None
     """The glossary term that brought the metric in, if it was not a metric hit itself."""
 
@@ -146,6 +148,7 @@ def _candidates(
                 hit.score,
                 hit.coverage,
                 hit.matched_terms,
+                hit.pre_fusion_score,
             )
         )
     best = max((c.coverage for c in chosen), default=0.0)
@@ -166,6 +169,7 @@ def _candidates(
                     hit.score,
                     hit.coverage,
                     hit.matched_terms,
+                    hit.pre_fusion_score,
                     via=hit.object_id,
                 )
             )
@@ -489,7 +493,10 @@ def resolve(
         return result("no_match")
     first = candidates[0]
     if len(candidates) > 1 and is_ambiguous(
-        first.score, first.coverage, candidates[1].score, candidates[1].coverage
+        first.pre_fusion_score,
+        first.coverage,
+        candidates[1].pre_fusion_score,
+        candidates[1].coverage,
     ):
         _read_time_and_grain(reading, today, None)
         explained = frozenset(first.matched_terms) | frozenset(candidates[1].matched_terms)

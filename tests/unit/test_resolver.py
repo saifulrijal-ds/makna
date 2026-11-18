@@ -30,6 +30,7 @@ def hit(
     matched: tuple[str, ...] = (),
     *,
     names: str | None = None,
+    pre: float | None = None,
 ) -> Hit:
     kind = object_id.partition(":")[0]
     return Hit(
@@ -46,6 +47,7 @@ def hit(
         vector_rank=None,
         matched_terms=matched,
         coverage=coverage,
+        pre_fusion_score=score if pre is None else pre,
     )
 
 
@@ -105,6 +107,37 @@ def test_ambiguous_needs_a_close_score_and_a_close_coverage(
     assert is_ambiguous(0.0184, 1.0, second_score, second_coverage) is expected
 
 
+def test_the_ratio_is_taken_on_the_pre_fusion_score_not_the_fused_one() -> None:
+    # D-38: the fused scores of neighbouring ranks are within 3 percent whatever the question
+    # says, so the test would always be met. The two legs before fusion tell the metrics apart.
+    far = run(
+        "disbursement",
+        hit("metric:disbursement_amount", 0.01844, 1.0, ("disbursement",), pre=0.50),
+        hit("metric:disbursed_contract_count", 0.01815, 1.0, ("disbursement",), pre=0.40),
+    )
+    assert far.status == "resolved" and far.ambiguous_between == ()
+    assert far.request is not None and far.request.metric == "disbursement_amount"
+    near = run(
+        "disbursement",
+        hit("metric:disbursement_amount", 0.01844, 1.0, ("disbursement",), pre=0.50),
+        hit("metric:disbursed_contract_count", 0.01815, 1.0, ("disbursement",), pre=0.45),
+    )
+    assert near.status == "ambiguous"
+    assert near.ambiguous_between == (
+        "metric:disbursement_amount",
+        "metric:disbursed_contract_count",
+    )
+
+
+def test_a_fused_score_far_apart_does_not_decide_when_the_legs_are_close() -> None:
+    result = run(
+        "disbursement",
+        hit("metric:disbursement_amount", 0.0300, 1.0, ("disbursement",), pre=0.50),
+        hit("metric:disbursed_contract_count", 0.0100, 1.0, ("disbursement",), pre=0.49),
+    )
+    assert result.status == "ambiguous"
+
+
 def test_two_close_candidates_are_ambiguous_and_nothing_is_chosen() -> None:
     result = run(
         "Berapa NPF kita?",
@@ -137,8 +170,8 @@ def test_a_wide_coverage_gap_picks_the_first_metric() -> None:
 def test_a_second_candidate_far_behind_in_score_is_not_ambiguous() -> None:
     result = run(
         "Berapa NPF kita?",
-        hit("metric:npf_ratio", 0.0300, 1.0, ("npf",)),
-        hit("metric:npf_outstanding_principal", 0.0200, 1.0, ("npf",)),
+        hit("metric:npf_ratio", 0.0300, 1.0, ("npf",), pre=0.30),
+        hit("metric:npf_outstanding_principal", 0.0200, 1.0, ("npf",), pre=0.20),
     )
     assert result.status == "resolved"
 
@@ -391,3 +424,24 @@ def test_a_datetime_for_today_is_read_as_its_date() -> None:
     )
     assert result.today == TODAY
     assert result.request is not None and result.request.time_end == "2026-07-01"
+
+
+def test_ambiguous_pair_reads_the_pre_fusion_score_of_the_hits() -> None:
+    from makna.search.hybrid import ambiguous_pair
+
+    def pair(second_pre: float) -> tuple[str, ...]:
+        hits = (
+            hit("metric:a", 0.0184, 1.0, pre=0.50),
+            hit("metric:b", 0.0182, 1.0, pre=second_pre),
+        )
+        return ambiguous_pair(hits, "high")
+
+    assert pair(0.45) == ("metric:a", "metric:b")
+    assert pair(0.40) == ()  # fused scores 1% apart, legs 20% apart
+    assert ambiguous_pair((hit("metric:a", 0.0184, 1.0, pre=0.5),), "high") == ()
+    assert (
+        ambiguous_pair(
+            (hit("metric:a", 0.02, 1.0, pre=0.5), hit("metric:b", 0.02, 1.0, pre=0.5)), "low"
+        )
+        == ()
+    )
