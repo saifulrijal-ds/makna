@@ -59,8 +59,8 @@ def test_a_six_digit_fragment_of_a_national_id_is_found(
     national_id = customers["national_id"][11]
     fragment = national_id[4:10]
     assert len(fragment) == 6
-    assert Hit("national_id", "fragment") in sample_scan.scan(f"id ends {fragment}")
-    assert Hit("national_id", "fragment") in sample_scan.scan(f"99********{national_id[-6:]}")
+    assert Hit("national_id", "short_fragment") in sample_scan.scan(f"id ends {fragment}")
+    assert Hit("national_id", "short_fragment") in sample_scan.scan(f"99********{national_id[-6:]}")
     assert Hit("national_id", "fragment") in sample_scan.scan(f"{national_id[:8]}******")
 
 
@@ -68,8 +68,8 @@ def test_five_digits_are_not_a_fragment_and_the_shared_phone_prefix_is_not_eithe
     scan = small_scan()
     assert scan.scan("99123 and 12345") == set()
     assert scan.scan("000001") == {
-        Hit("phone_number", "fragment"),
-        Hit("national_id", "fragment"),
+        Hit("phone_number", "short_fragment"),
+        Hit("national_id", "short_fragment"),
     }
     assert scan.scan("0899000") == set()  # every phone number starts so
 
@@ -80,7 +80,7 @@ def test_a_masked_phone_number_keeps_its_distinctive_digits() -> None:
     )
     assert scan.scan("0899000*****") == set()
     assert Hit("phone_number", "fragment") in scan.scan("0899000000123")  # exact too
-    assert Hit("phone_number", "fragment") in scan.scan("+*********000123")
+    assert Hit("phone_number", "short_fragment") in scan.scan("+*********000123")
 
 
 def test_digits_of_a_decimal_number_are_not_a_fragment() -> None:
@@ -89,8 +89,8 @@ def test_digits_of_a_decimal_number_are_not_a_fragment() -> None:
     assert scan.scan("912345.50") == set()
     assert scan.scan("1234567.912345 and 912345.5") == set()
     # the same digits as their own token are
-    assert Hit("national_id", "fragment") in scan.scan("value 912345 here")
-    assert Hit("national_id", "fragment") in scan.scan("value 912345.")
+    assert Hit("national_id", "short_fragment") in scan.scan("value 912345 here")
+    assert Hit("national_id", "short_fragment") in scan.scan("value 912345.")
 
 
 def test_a_number_written_in_the_question_is_not_an_exposure(sample_scan: PersonalScan) -> None:
@@ -222,3 +222,19 @@ def test_what_the_scan_does_not_match() -> None:
     assert scan.scan("Alpha") == set() and scan.scan("alpha.beta") == set()  # a name part alone
     assert scan.scan("************0001") == set()  # 4 digits shown
     assert scan.scan("9.912345678e+15") == set()  # scientific notation
+
+
+def test_a_plain_6_or_7_digit_run_is_a_short_fragment_and_longer_ones_are_fragments() -> None:
+    scan = small_scan()
+    assert scan.scan("990000") == set() and scan.scan("9912345") == {
+        Hit("national_id", "short_fragment")
+    }
+    assert scan.scan("99123456") == {Hit("national_id", "fragment")}
+    assert scan.scan("9912 3456") == {Hit("national_id", "fragment")}  # joined: 8 digits
+
+
+def test_an_iso_date_is_not_a_joined_number_but_the_same_digits_spaced_are() -> None:
+    scan = PersonalScan({"national_id": ["9920260601000001"], "phone_number": ["0899000000001"]})
+    assert scan.scan("from 2026-06-01 to 2026-06-30") == set()
+    assert scan.scan("2026 06 01") == {Hit("national_id", "fragment")}
+    assert scan.scan("2026.06.01") == {Hit("national_id", "fragment")}

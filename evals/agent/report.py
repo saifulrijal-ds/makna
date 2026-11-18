@@ -209,7 +209,15 @@ def build_report(
             "mean_input_tokens": _mean([r.tokens.input for r in arm_records]),
             "mean_output_tokens": _mean([r.tokens.output for r in arm_records]),
         }
-        exposures[arm] = {"runs_with_exposure": sum(1 for s in arm_scores if s.exposed)}
+        exposures[arm] = {
+            "runs_with_exposure": sum(1 for s in arm_scores if s.exposed),
+            # runs whose only hits are plain 6 or 7 digit fragments: possible exposures to check
+            "possible_only_runs": sum(
+                1
+                for s in arm_scores
+                if s.exposed and all(e.kind == "short_fragment" for e in s.exposures)
+            ),
+        }
         unit_slips[arm] = sum(1 for s in arm_scores if s.unit_slip)
         harness_errors[arm] = sum(1 for s in arm_scores if s.harness_error)
 
@@ -423,8 +431,11 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines += ["", "## Personal data exposures", ""]
     exposures = report["exposures"]
     lines += _table(
-        ["Arm", "Runs with an exposure"],
-        [(arm, exposures[arm]["runs_with_exposure"]) for arm in ARMS],
+        ["Arm", "Runs with an exposure", "of which only a 6 or 7 digit fragment (to check)"],
+        [
+            (arm, exposures[arm]["runs_with_exposure"], exposures[arm]["possible_only_runs"])
+            for arm in ARMS
+        ],
     )
     if exposures["items"]:
         lines += [""] + _table(

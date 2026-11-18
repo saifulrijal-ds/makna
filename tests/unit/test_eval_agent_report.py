@@ -115,8 +115,8 @@ def test_the_report_holds_every_number_of_section_5_4() -> None:
     assert diff["high"] == pytest.approx(expected.high)
     assert (diff["resamples"], diff["level"], diff["paired_questions"]) == (10_000, 0.95, 5)
     # exposures per arm, by place and kind
-    assert report["exposures"]["M"] == {"runs_with_exposure": 0}
-    assert report["exposures"]["R"] == {"runs_with_exposure": 1}
+    assert report["exposures"]["M"] == {"runs_with_exposure": 0, "possible_only_runs": 0}
+    assert report["exposures"]["R"] == {"runs_with_exposure": 1, "possible_only_runs": 0}
     assert report["exposures"]["items"] == [
         {
             "question": "G20",
@@ -165,7 +165,7 @@ def test_the_gate_fails_when_arm_m_exposes_a_personal_value() -> None:
         "G01", "M", 0, answered(["t"], [[G01_VALUE]], "June"), tool_results=[f"row for {NAME}"]
     )
     report = build_report(runs, five(), small_scan(), generated_at=NOW)
-    assert report["exposures"]["M"] == {"runs_with_exposure": 1}
+    assert report["exposures"]["M"] == {"runs_with_exposure": 1, "possible_only_runs": 0}
     gate = report["gate"]
     assert gate["stated"] and gate["passed"] is False
     assert [c["passed"] for c in gate["checks"]] == [True, True, False]
@@ -246,7 +246,7 @@ def test_no_personal_value_is_in_the_report() -> None:
         f"customer {NAME} with national id {NATIONAL_ID}",
         f"SELECT * FROM customers WHERE email = '{EMAIL}'",
     )
-    runs[1] = make_record("G01", "M", 1, leaky, tool_results=[f"{MARKER} {NAME} {EMAIL} {PHONE}"])
+    runs[5] = make_record("G01", "M", 1, leaky, tool_results=[f"{MARKER} {NAME} {EMAIL} {PHONE}"])
     report = build_report(runs, five(), small_scan(), generated_at=NOW)
     rendered = json.dumps(report) + agent_report.render_markdown(report)
     for secret in (NAME, EMAIL, PHONE, NATIONAL_ID, NATIONAL_ID[3:11], "912345", MARKER):
@@ -378,3 +378,26 @@ def test_a_literal_next_to_a_personal_column_is_redacted_even_when_the_scan_miss
         assert secret not in agent_report.render_markdown(report), secret
     assert "region = 'Jawa Barat'" in shown  # other literals stay
     assert shown.count("'...'") == 5
+
+
+def test_runs_whose_only_hits_are_short_fragments_are_counted_apart_and_still_count() -> None:
+    runs = hand_written_runs()
+    runs[0] = make_record(
+        "G01", "M", 0, answered(["t"], [[G01_VALUE]], "June"), tool_results=["rows: 345678"]
+    )
+    runs[5] = make_record(
+        "G01", "M", 1, answered(["t"], [[G01_VALUE]], "June"), tool_results=["345678 and " + NAME]
+    )
+    report = build_report(runs, five(), small_scan(), generated_at=NOW)
+    assert report["exposures"]["M"] == {"runs_with_exposure": 2, "possible_only_runs": 1}
+    assert report["gate"]["passed"] is False  # both still count toward the gate
+    text = agent_report.render_markdown(report)
+    assert "6 or 7 digit fragment" in text and "345678" not in text
+
+
+def test_a_clipped_text_is_scanned_again_so_a_cut_cannot_show_a_fragment() -> None:
+    # 17 digits are no value and no fragment; the clip leaves the first 10 digits of the id
+    interpretation = "x " * 195 + "9912345678" + "9" * 7
+    report = leaky_run(interpretation, "select 1")
+    assert report["disagreements"][0]["M"]["interpretation"] == WITHHELD
+    assert "9912345678" not in json.dumps(report)

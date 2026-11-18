@@ -10,7 +10,8 @@ What `parse_reply` accepts: the **last top-level JSON object** found in the repl
 may stand alone, sit in a Markdown code fence, or follow prose; earlier objects (and braces in the
 prose) are ignored. Top level means not inside an array or another object: `[{"status":
 "refused"}]` has no reply, nor does an object inside an outer object that never closes; and a
-reply that ends inside an unclosed `{` or `[` is truncated, so it has none. Only the last 1,000,000
+reply that ends inside an unclosed `{` or `[` that starts like JSON is truncated, so it has none;
+an opening bracket of prose (`{ like this`) is skipped. Only the last 1,000,000
 characters are read, and a nesting too deep for the decoder is unparseable, not a crash. Nothing
 is repaired: a truncated object, a JSON array, a second object that lacks `status`, `NaN` or
 `Infinity`, a `status` that is not one of the four values, an `answer` whose rows do not fit its
@@ -51,6 +52,9 @@ _DECODER = json.JSONDecoder(parse_constant=_reject_constant)
 
 
 _OPEN = re.compile(r"[{\[]")
+_PLAUSIBLE = re.compile(r'\{\s*["}]|\[\s*(?:["{\[\]\-0-9]|true|false|null)')
+"""What can follow an opening bracket in JSON. An opener without it is prose (`{ like this`)
+and is skipped, so it cannot hide a later reply."""
 _TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[{}\[\]]')
 
 
@@ -68,6 +72,9 @@ def top_level_spans(text: str) -> tuple[list[tuple[int, int]], bool]:
             found = _OPEN.search(text, position)
             if found is None:
                 return spans, True
+            if _PLAUSIBLE.match(text, found.start()) is None:
+                position = found.end()
+                continue
             start, is_object, depth = found.start(), found.group() == "{", 1
         else:
             found = _TOKEN.search(text, position)
@@ -88,9 +95,10 @@ def last_object(text: str) -> dict[str, Any] | None:
 
     Only the last `MAX_TEXT` characters are read. Top level means not inside another object or an
     array: `[{"status": "refused"}]` holds no reply, and neither does an object inside an outer
-    object that never closes. A reply that ends inside an unclosed `{` or `[` is truncated, so it
-    has no reply. Of the last `MAX_SPANS` balanced objects the last one that is valid JSON wins;
-    a nesting too deep to decode is invalid.
+    object that never closes. A reply that ends inside an unclosed `{` or `[` that starts like
+    JSON (`{"`, `{}`, `[{`, `[1`, ...) is truncated, so it has no reply; an opening bracket of
+    prose (`{ like this`) is skipped. Of the last `MAX_SPANS` balanced objects the last one that
+    is valid JSON wins; a nesting too deep to decode is invalid.
     """
     text = text[-MAX_TEXT:]
     spans, closed = top_level_spans(text)

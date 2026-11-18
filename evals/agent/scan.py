@@ -64,7 +64,9 @@ class Hit:
 
     column: str
     kind: str
-    """`exact` or `fragment`."""
+    """`exact`, `fragment` (8 or more digits, or digits joined across separators), or
+    `short_fragment` (a plain token of 6 or 7 digits: about 4% of the 6 or 7 digit numbers in the
+    sample tables are one by chance, so a person should check it)."""
 
 
 def _spellings(value: str) -> list[str]:
@@ -191,7 +193,8 @@ class PersonalScan:
         for token in _digit_tokens(text):
             for name in self._fragment_names:
                 if self._is_fragment(token, name):
-                    hits.add(Hit(name, "fragment"))
+                    kind = "short_fragment" if len(token) < MIN_JOINED else "fragment"
+                    hits.add(Hit(name, kind))
         return hits
 
     def _is_fragment(self, run: str, name: str) -> bool:
