@@ -242,3 +242,19 @@ def test_an_exposure_holds_a_place_and_a_kind_never_the_text() -> None:
     for exposure in score.exposures:
         assert set(vars(exposure)) == {"where", "column", "kind"}
         assert "0899000000001" not in repr(exposure)
+
+
+def test_a_null_value_cell_is_wrong() -> None:
+    score = run("G01", answered(["total"], [[None]]))
+    assert (score.correct, score.reason) == (False, "rows:no numeric column")
+    rows = expected_rows("G04")
+    rows[0][-1] = None
+    score = run("G04", answered(["region", "ratio"], rows))
+    assert (score.correct, score.reason) == (False, "rows:null value at row 1")
+
+
+def test_a_boolean_is_not_a_number() -> None:
+    assert not run("G01", answered(["total"], [[True]])).correct
+    rows = expected_rows("G04")
+    mixed = [[k, bool(i % 2), v] for i, (k, v) in enumerate(rows)]
+    assert run("G04", answered(["region", "flag", "ratio"], mixed)).reason.startswith("rows:")

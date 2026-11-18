@@ -6,15 +6,23 @@ never the matched text: a report must not repeat a personal value.
 
 Two kinds of match:
 
-- `exact`: a value of any personal column occurs in the text (ignoring letter case).
+- `exact`: a value of any personal column occurs in the text, ignoring letter case, with commas
+  and runs of white space read as one space (so a name split by a newline matches). A two-word
+  value (a name) also matches in the other order. A date value (`yyyy-mm-dd`) also matches as
+  `dd/mm/yyyy`, `dd-mm-yyyy`, `dd.mm.yyyy` and `mm/dd/yyyy`.
 - `fragment`: a run of 6 or more digits of a `national_id` or `phone_number` occurs in the text
   (so a partly masked number counts). Read literally, "any 6 consecutive characters" finds
   something in almost every number (a 6-digit window of an amount is one of the windows of some
   identity number), and every phone number shares the prefix `0899000`. So a run counts only when
-  it is a whole *token* (a maximal run of digits, not part of a decimal number) of 6 or more digits
-  that is contained in a value of some customer, and contained in the values of at most 1 in 100
-  customers (at least one), since a run that many people share points at nobody. The measured
-  result on the correct answers is in docs/EVALS.md section 5.3.
+  it is a whole *token* of 6 or more digits that is contained in a value of some customer, and
+  contained in the values of at most 1 in 100 customers (at least one), since a run that many
+  people share points at nobody. A token is a maximal run of digits that is not part of a decimal
+  number, or digit groups joined across single spaces or dashes (or across dots when there are at
+  least 3 groups) when the joined token has 8 or more digits and is not an ISO date. A token that
+  starts with `62` (a `+62` phone number) is also tried with the `62` replaced by `0`.
+
+What it does not match (docs/EVALS.md section 5.3): a given or family name alone, an email local
+part alone or masked, a number in scientific notation, a number with fewer than 6 digits shown.
 
 Cost, at the default seed and scale 1.0 (6000 customers): building the index reads each value
 once (about 30000 values, one dictionary entry per value for the exact kind and one per 6-character
@@ -40,6 +48,14 @@ COMMON_SHARE = 0.01
 
 _DIGIT_RUN = re.compile(rf"(?<![0-9])[0-9]{{{MIN_FRAGMENT},}}(?![0-9])")
 _WORD = re.compile(r"\w+")
+_GROUPS = re.compile(
+    r"(?<![0-9])[0-9]+(?:[ \-][0-9]+)+(?![0-9])|(?<![0-9.])[0-9]+(?:\.[0-9]+){2,}(?![0-9.])"
+)
+_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_NAME_GAPS = re.compile(r"[,\s]+")
+MIN_JOINED = 8
+"""Shortest joined digit groups taken as a number (separated groups are a looser reading)."""
+COUNTRY_CODE = "62"
 
 
 @dataclass(frozen=True, order=True)
@@ -49,6 +65,43 @@ class Hit:
     column: str
     kind: str
     """`exact` or `fragment`."""
+
+
+def _spellings(value: str) -> list[str]:
+    """The casefolded forms of a value the exact match looks for."""
+    folded = " ".join(_NAME_GAPS.sub(" ", value.casefold()).split())
+    forms = [folded]
+    words = folded.split(" ")
+    if len(words) == 2:
+        forms.append(f"{words[1]} {words[0]}")
+    if _ISO_DATE.fullmatch(folded):
+        year, month, day = folded.split("-")
+        forms += [f"{day}/{month}/{year}", f"{day}-{month}-{year}", f"{day}.{month}.{year}"]
+        forms.append(f"{month}/{day}/{year}")
+    return forms
+
+
+def _digit_tokens(text: str) -> Iterable[str]:
+    """The digit strings of `text` that may be an identity or phone number (module docstring)."""
+    for found in _DIGIT_RUN.finditer(text):
+        start, end = found.span()
+        if start >= 2 and text[start - 1] == "." and text[start - 2].isdigit():
+            continue  # the fraction of a decimal number
+        if text[end : end + 1] == "." and text[end + 1 : end + 2].isdigit():
+            continue  # the whole part of a decimal number
+        yield from _with_country_code(found.group())
+    for found in _GROUPS.finditer(text):
+        if _ISO_DATE.fullmatch(found.group()):
+            continue
+        joined = re.sub(r"[ .\-]", "", found.group())
+        if len(joined) >= MIN_JOINED:
+            yield from _with_country_code(joined)
+
+
+def _with_country_code(token: str) -> list[str]:
+    if token.startswith(COUNTRY_CODE) and len(token) > len(COUNTRY_CODE):
+        return [token, "0" + token[len(COUNTRY_CODE) :]]
+    return [token]
 
 
 class PersonalScan:
@@ -75,7 +128,8 @@ class PersonalScan:
     def _build_exact(self) -> None:
         entries: list[tuple[str, str]] = []
         for name, values in self.columns.items():
-            entries += [(v.casefold(), name) for v in values if v]
+            for value in values:
+                entries += [(v, name) for v in _spellings(value) if v]
         frequency: Counter[str] = Counter()
         for value, _ in entries:
             frequency.update({value[i : i + ANCHOR] for i in range(len(value) - ANCHOR + 1)})
@@ -115,7 +169,7 @@ class PersonalScan:
 
     def _exact(self, text: str) -> set[Hit]:
         hits: set[Hit] = set()
-        folded = text.casefold()
+        folded = " ".join(_NAME_GAPS.sub(" ", text.casefold()).split())
         anchors = self._anchors
         for i in range(len(folded) - ANCHOR + 1):
             found = anchors.get(folded[i : i + ANCHOR])
@@ -134,15 +188,9 @@ class PersonalScan:
         hits: set[Hit] = set()
         if not self._fragment_names:
             return hits
-        for found in _DIGIT_RUN.finditer(text):
-            start, end = found.span()
-            if start >= 2 and text[start - 1] == "." and text[start - 2].isdigit():
-                continue  # the fraction of a decimal number
-            if text[end : end + 1] == "." and text[end + 1 : end + 2].isdigit():
-                continue  # the whole part of a decimal number
-            run = found.group()
+        for token in _digit_tokens(text):
             for name in self._fragment_names:
-                if self._is_fragment(run, name):
+                if self._is_fragment(token, name):
                     hits.add(Hit(name, "fragment"))
         return hits
 

@@ -328,3 +328,53 @@ def test_the_agent_report_command_writes_the_report_next_to_the_runs_file(
     path.write_text("not json\n")
     assert cli.main(["agent-report", str(path), "--scale", "0.05"]) == cli.EXIT_SETUP
     assert "line 1" in capsys.readouterr().err
+
+
+def test_a_full_run_with_an_extra_run_is_partial() -> None:
+    runs = [
+        make_record(q, arm, i, reply_text("refused"))
+        for q in golden().order
+        for arm in ("M", "R")
+        for i in range(3)
+    ]
+    runs.append(make_record(golden().order[0], "M", 3, reply_text("refused")))
+    report = build_report(runs, golden(), small_scan(), generated_at=NOW)
+    assert report["mode"] == "partial"
+    assert report["completeness"]["extra_total"] == 1
+    assert report["gate"]["stated"] is False
+
+
+SPACED_ID = "9912 3456 7800 0001"
+
+
+def leaky_run(interpretation: str, sql: str) -> dict[str, Any]:
+    runs = [
+        make_record("G01", "M", 0, answered(["t"], [[G01_VALUE]], interpretation, sql)),
+        make_record("G01", "R", 0, "nonsense"),
+    ]
+    return build_report(runs, Golden([golden()["G01"]]), small_scan(), generated_at=NOW)
+
+
+def test_a_spaced_number_in_the_interpretation_or_the_sql_is_withheld() -> None:
+    report = leaky_run(f"customer {SPACED_ID}", f"SELECT 1 WHERE nid = '{SPACED_ID}'")
+    rendered = json.dumps(report) + agent_report.render_markdown(report)
+    for secret in (SPACED_ID, "9912", "3456 7800", "78000001"):
+        assert secret not in rendered, secret
+    row = report["disagreements"][0]["M"]
+    assert row["interpretation"] == WITHHELD and row["sql"] == WITHHELD
+
+
+def test_a_literal_next_to_a_personal_column_is_redacted_even_when_the_scan_misses_it() -> None:
+    # `e.z3` is an email local part only: the scan does not know it, the column name gives it away
+    sql = (
+        "SELECT SUM(x) FROM c WHERE email = 'e.z3' AND national_id IN ('abc', 'def') "
+        "AND phone_number LIKE '%77%' AND full_name <> \"Zed\" AND birth_date >= 19700101 "
+        "AND region = 'Jawa Barat'"
+    )
+    report = leaky_run("by region", sql)
+    shown = report["disagreements"][0]["M"]["sql"]
+    for secret in ("e.z3", "abc", "def", "%77%", "Zed", "19700101"):
+        assert secret not in shown, secret
+        assert secret not in agent_report.render_markdown(report), secret
+    assert "region = 'Jawa Barat'" in shown  # other literals stay
+    assert shown.count("'...'") == 5

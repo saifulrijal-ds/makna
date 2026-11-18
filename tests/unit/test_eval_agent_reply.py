@@ -89,3 +89,51 @@ def test_other_statuses_need_no_answer_and_null_fields_are_empty() -> None:
     reply = parse_reply('{"status": "needs_clarification", "answer": null, "interpretation": null}')
     assert reply is not None
     assert (reply.interpretation, reply.sql, reply.has_answer) == ("", "", False)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[{"status": "refused"}]',
+        'See: [{"status": "refused"}] done',
+        '{"status": "answered", "answer": {"columns": ["a"], "rows": [[1]]}, "x": [',
+        '{"outer": [1, {"status": "refused"}',
+        '{"status": "refused"} then {"status": "answered", "answer": {"columns": ["a"], "rows"',
+        '{"status": "refused"} and then an open [ bracket',
+    ],
+)
+def test_an_object_in_an_array_or_in_a_truncated_object_is_not_the_reply(text: str) -> None:
+    assert parse_reply(text) is None
+
+
+def test_a_balanced_object_after_balanced_prose_brackets_is_found() -> None:
+    reply = parse_reply('Note [1] and {braces} first. {"status": "refused"} Fin (see [1]).')
+    assert reply is not None and reply.status == "refused"
+    quoted = parse_reply('He said "use { here and {"status": "refused"}')
+    assert quoted is None  # the stray { opens an object that never closes
+
+
+def test_a_deeply_nested_reply_is_unparseable_not_a_crash() -> None:
+    assert parse_reply('{"a":' * 100_000) is None
+    assert parse_reply('{"a":[1,2,3,' * 30_000) is None
+    assert parse_reply('{"a":' * 50_000 + "1" + "}" * 50_000) is None  # balanced, too deep
+    deep = '{"status": "refused", "x": ' + "[" * 100_000 + "]" * 100_000 + "}"
+    assert parse_reply(deep) is None
+    assert parse_reply("[" * 100_000 + OBJECT) is None
+
+
+def test_a_flood_of_open_braces_is_fast() -> None:
+    import time
+
+    start = time.perf_counter()
+    assert parse_reply("{" * 200_000) is None
+    assert parse_reply("{ " * 100_000 + OBJECT) is None
+    assert parse_reply("{x}" * 100_000 + OBJECT) is not None
+    assert time.perf_counter() - start < 3.0
+
+
+def test_only_the_end_of_a_huge_reply_is_read() -> None:
+    from evals.agent.reply import MAX_TEXT
+
+    assert parse_reply("x" * (2 * MAX_TEXT) + OBJECT) is not None
+    assert parse_reply(OBJECT + "x" * (2 * MAX_TEXT)) is None

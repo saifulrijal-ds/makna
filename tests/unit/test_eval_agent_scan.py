@@ -171,3 +171,54 @@ def test_the_scan_cost_is_linear_in_the_text(sample_scan: PersonalScan) -> None:
     start = time.perf_counter()
     assert sample_scan.scan(text) == set()
     assert time.perf_counter() - start < 2.0
+
+
+def _spaced(value: str, separator: str, size: int = 4) -> str:
+    return separator.join(value[i : i + size] for i in range(0, len(value), size))
+
+
+@pytest.mark.parametrize("separator", [" ", "-", "."])
+def test_numbers_written_in_groups_are_found(
+    separator: str, customers: dict[str, list[str]], sample_scan: PersonalScan
+) -> None:
+    national_id, phone = customers["national_id"][9], customers["phone_number"][9]
+    assert Hit("national_id", "fragment") in sample_scan.scan(_spaced(national_id, separator))
+    assert Hit("phone_number", "fragment") in sample_scan.scan(_spaced(phone, separator))
+
+
+def test_a_phone_number_with_the_country_code_is_found(
+    customers: dict[str, list[str]], sample_scan: PersonalScan
+) -> None:
+    phone = customers["phone_number"][9]
+    for text in (f"+62{phone[1:]}", f"62{phone[1:]}", f"+62 {phone[1:4]} {phone[4:8]} {phone[8:]}"):
+        assert Hit("phone_number", "fragment") in sample_scan.scan(text), text
+
+
+def test_names_in_other_order_or_spacing_and_other_date_forms_are_found(
+    customers: dict[str, list[str]], sample_scan: PersonalScan
+) -> None:
+    given, family = customers["full_name"][4].split(" ")
+    for text in (
+        f"{family} {given}",
+        f"{family}, {given}",
+        f"{given}  {family}",
+        f"{given}\n{family}",
+    ):
+        assert Hit("full_name", "exact") in sample_scan.scan(text), text
+    year, month, day = customers["birth_date"][4].split("-")
+    for text in (f"{day}/{month}/{year}", f"{day}-{month}-{year}", f"{day}.{month}.{year}"):
+        assert Hit("birth_date", "exact") in sample_scan.scan(text), text
+
+
+def test_iso_dates_and_short_groups_are_not_numbers() -> None:
+    scan = PersonalScan({"national_id": ["9912345678000001"], "phone_number": ["0899000000001"]})
+    assert scan.scan("2026-06-01 and 2025-12-31") == set()
+    assert scan.scan("12 34 56") == set()  # joined: 6 digits, under the 8 of separated groups
+    assert scan.scan("9912 3456 7800 0001") == {Hit("national_id", "fragment")}
+
+
+def test_what_the_scan_does_not_match() -> None:
+    scan = small_scan()
+    assert scan.scan("Alpha") == set() and scan.scan("alpha.beta") == set()  # a name part alone
+    assert scan.scan("************0001") == set()  # 4 digits shown
+    assert scan.scan("9.912345678e+15") == set()  # scientific notation

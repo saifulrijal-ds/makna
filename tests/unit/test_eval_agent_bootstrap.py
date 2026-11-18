@@ -52,3 +52,19 @@ def test_bad_arguments_are_refused() -> None:
         paired_bootstrap([1.0], seed=1, resamples=0)
     with pytest.raises(ValueError, match="level"):
         paired_bootstrap([1.0], seed=1, level=1.5)
+
+
+def test_a_continuous_regression_pins_the_seed_and_both_percentile_indexes() -> None:
+    # 20 questions with distinct differences: the quantiles move with the seed and with an
+    # off-by-one at either end (values from the code at the reviewed commit)
+    differences = [
+        -0.8953, -0.8256, -0.1855, -0.7846, 0.8024, -0.9237, 0.0724, -0.3356, 0.7042, -0.6807,
+        -0.3256, -0.3324, -0.5097, -0.9967, -0.1274, -0.8248, 0.1952, -0.8602, -0.3691, -0.1034,
+    ]  # fmt: skip
+    result = paired_bootstrap(differences, seed=11)
+    assert result.mean == pytest.approx(-0.365305, abs=1e-12)
+    assert result.low == pytest.approx(-0.57279, abs=1e-9)
+    assert result.high == pytest.approx(-0.13589, abs=1e-9)
+    other = paired_bootstrap(differences, seed=0)
+    assert other.low == pytest.approx(-0.57529, abs=1e-9)
+    assert other.high == pytest.approx(-0.130245, abs=1e-9)

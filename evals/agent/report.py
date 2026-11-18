@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -97,8 +98,35 @@ def _clip(text: str) -> str:
     return text if len(text) <= MAX_TEXT else text[: MAX_TEXT - 3] + "..."
 
 
-def _shown(text: str, scan: PersonalScan) -> str:
-    return WITHHELD if text and scan.scan(text) else _clip(text)
+LITERAL = r"(?:\([^)]*\)|'(?:[^']|'')*'|\"[^\"]*\"|-?[0-9][0-9A-Za-z_.+:/-]*)"
+REDACTED = "'...'"
+
+
+def redact_literals(text: str, columns: Iterable[str]) -> str:
+    """`text` with every string or number literal that follows a personal column name and a
+    comparison (`=`, `<`, `like`, `in`, ...) replaced by `'...'`. SQL only; the columns are the
+    personal columns of the scan (read from the data spec)."""
+    names = "|".join(re.escape(c) for c in columns)
+    if not names:
+        return text
+    pattern = re.compile(
+        rf"(?i)(\b(?:{names})\b\s*(?:=|<>|!=|<=|>=|<|>|(?:not\s+)?(?:i?like|in)\b)\s*){LITERAL}"
+    )
+    return pattern.sub(lambda m: m.group(1) + REDACTED, text)
+
+
+def _shown(text: str, scan: PersonalScan, *, sql: bool = False) -> str:
+    """A text of the agent as the report shows it. Whatever the scan finds withholds the whole
+    text; in SQL, a literal compared with a personal column is replaced as well, because the scan
+    cannot know every spelling of a value."""
+    if not text:
+        return ""
+    if scan.scan(text):
+        return WITHHELD
+    if sql:
+        text = redact_literals(text, scan.columns)
+    clipped = _clip(text)
+    return WITHHELD if scan.scan(clipped) else clipped
 
 
 def _disagreements(
@@ -128,7 +156,7 @@ def _disagreements(
                 "reason": shown.reason,
                 "status": shown.status,
                 "interpretation": _shown(reply.interpretation, scan) if reply else "",
-                "sql": _shown(reply.sql, scan) if reply else "",
+                "sql": _shown(reply.sql, scan, sql=True) if reply else "",
             }
         rows.append(row)
     return rows
