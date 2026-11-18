@@ -10,10 +10,11 @@ from evals import cli
 
 
 def test_the_commands_exist_and_agent_is_not_there_yet() -> None:
-    assert set(cli.COMMANDS) == {"all", "retrieval", "compile", "tune", "freeze"}
+    assert set(cli.COMMANDS) == {"all", "retrieval", "compile", "tune", "freeze", "agent-report"}
     parser = cli.build_parser()
     for command in cli.COMMANDS:
-        assert parser.parse_args([command]).command == command
+        arguments = [command, "runs.jsonl"] if command == "agent-report" else [command]
+        assert parser.parse_args(arguments).command == command
     with pytest.raises(SystemExit):
         parser.parse_args(["agent"])
 
