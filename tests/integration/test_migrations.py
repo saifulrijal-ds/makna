@@ -24,7 +24,7 @@ SECTION_6_4_COLUMNS = {
     "semantic_object": [
         "id", "kind", "name", "domain", "label", "status", "has_proposal", "proposal_status",
         "official", "proposal", "official_path", "official_commit", "proposal_commit", "version",
-        "owner_team", "sensitivity", "derived", "updated_at",
+        "owner_team", "sensitivity", "derived", "updated_at", "proposal_origin", "proposal_errors",
     ],
     "object_edge": ["src_id", "dst_id", "type"],
     "reference_issue": ["id", "object_id", "part", "code", "message", "opened_at", "closed_at"],
@@ -42,7 +42,7 @@ SECTION_6_4_COLUMNS = {
     ],
     "audit_event": [
         "id", "at", "actor_user_id", "actor_label", "action", "object_id", "from_status",
-        "to_status", "reason", "commit_sha",
+        "to_status", "reason", "commit_sha", "files",
     ],
     "tool_call_log": [
         "id", "at", "channel", "user_id", "token_id", "tool", "request", "result", "status",

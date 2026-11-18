@@ -134,13 +134,13 @@ semantic_object = Table(
     Column("official_path", Text),
     Column("official_commit", Text),
     Column("proposal_commit", Text),
-    Column("proposal_origin", Text),
-    Column("proposal_errors", JSONB),
     Column("version", Integer),
     Column("owner_team", Text),
     Column("sensitivity", Text),
     Column("derived", JSONB),
     _ts("updated_at", nullable=False, default_now=True),
+    Column("proposal_origin", Text),
+    Column("proposal_errors", JSONB),
 )
 
 object_edge = Table(

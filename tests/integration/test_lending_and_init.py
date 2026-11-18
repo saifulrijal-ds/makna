@@ -106,6 +106,8 @@ def test_init_twice_changes_nothing(
         "init: generate-sample-data: unchanged (all nine files present)",
         "init: load-lending: unchanged",
         "init: migrate: unchanged",
+        "init: definitions-repo: skipped (MAKNA_DEFINITIONS_REPO is not set, so the definitions "
+        "stay read-only)",
         "init: sync-catalog: unchanged",
         "init: build-index: unchanged",
         # No MAKNA_DEMO_PASSWORD in this context: the step skips and succeeds (WP-12B).
