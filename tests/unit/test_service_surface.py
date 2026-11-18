@@ -75,6 +75,7 @@ def test_the_four_services_are_the_public_surface_of_services() -> None:
         "get_definition",
         "list_related",
         "compile_query",
+        "resolve",  # the test bench's resolver (WP-20)
         "refuse_input",  # the log row of a call the interface refused (section 14)
         "dispose",
     }
