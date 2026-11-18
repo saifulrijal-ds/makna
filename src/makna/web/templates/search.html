@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/discovery.css">
+<h1>Search</h1>
+<form method="get" action="/search" role="search">
+  <input type="search" name="q" value="{{ q }}" autofocus
+         placeholder="Search metrics, entities, and glossary terms" aria-label="Search"
+         hx-get="/search" hx-trigger="input changed delay:300ms, search"
+         hx-target="#search-results" hx-swap="innerHTML" hx-sync="this:replace">
+  <button type="submit">Search</button>
+</form>
+<div id="search-results" aria-live="polite">
+{% include "_search_results.html" %}
+</div>
+{% endblock %}

@@ -251,9 +251,10 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
     assert services.policy == STRICT
     response = TestClient(app).get("/healthz")  # no database runs at localhost: still ok
     assert response.status_code == 200 and response.json() == {"status": "ok"}
-    # /healthz, the MCP endpoint (WP-13), and the web pages (WP-16). FastAPI lists an included
-    # router as one entry without a path, so `iter_routes` looks inside it. Exactly these
-    # routes exist: a new one has to be added here, and then be seen by the tests of its access.
+    # /healthz, the MCP endpoint (WP-13), and the web pages (WP-16, WP-17). FastAPI lists an
+    # included router as one entry without a path, so `iter_routes` looks inside it. Exactly
+    # these routes exist: a new one has to be added here, and then be seen by the tests of its
+    # access.
     assert {path for path, _ in iter_routes(app)} == {
         "/healthz",
         "/mcp",
@@ -271,6 +272,11 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
         "/admin/users/{user_id}/deactivate",
         "/admin/tokens",
         "/admin/tokens/{token_id}/revoke",
+        "/search",
+        "/domains/{name}",
+        "/metrics/{name}",
+        "/entities/{name}",
+        "/glossary/{name}",
     }
 
 

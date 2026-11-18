@@ -69,6 +69,7 @@ def test_login_healthz_and_static_files_need_no_sign_in(app: Any) -> None:
     assert client.get("/static/vendor/htmx/htmx.min.js").status_code == 200
     assert client.get("/static/vendor/pico/pico.classless.min.css").status_code == 200
     assert client.get("/static/makna.css").status_code == 200
+    assert client.get("/static/discovery.css").status_code == 200
     # Nothing outside the static folder is served.
     assert client.get("/static/../routes.py").status_code in (303, 404)
     assert client.get("/static/%2e%2e/routes.py").status_code == 404
