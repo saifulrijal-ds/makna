@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from collections.abc import Sequence
@@ -33,6 +34,7 @@ from makna.search.hybrid import ROLES, HybridSearch, SearchError
 from makna.services.caller import ROLES as USER_ROLES
 from makna.services.derive import make_derive
 from makna.services.examples import validate_for_build
+from makna.services.freshness import Failure, refresh
 
 DEFAULT_CATALOG_FILE = Path("data/catalog/lending.catalog.yaml")
 DEFAULT_DEFINITIONS = Path("semantic/definitions")
@@ -178,6 +180,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-deprecated", action="store_true", help="also return deprecated objects"
     )
     search.add_argument("--limit", type=int, default=5, help="number of hits (default: 5)")
+    freshness = commands.add_parser(
+        "freshness",
+        help="check how new the data behind the measures is",
+        description=(
+            "Freshness commands. They need MAKNA_DATABASE_URL and MAKNA_ENGINE_URL (the "
+            "read-only service account of the target database)."
+        ),
+    )
+    freshness_commands = freshness.add_subparsers(dest="freshness_command", metavar="<command>")
+    freshness_commands.add_parser(
+        "refresh",
+        help="store the newest date of every approved measure's time dimension",
+        description=(
+            "For each approved measure, ask the target database for the newest value of the "
+            "measure's time dimension (the read-only account of MAKNA_ENGINE_URL) and store "
+            "it in the application database, where the metric pages show it as 'data up to'. "
+            "A measure that fails is reported by its id and the error class (never the "
+            "engine's message, which can hold a value of the data) and the next one is "
+            "checked. Exits 0 when every measure was checked, 1 when any failed or the "
+            "application database cannot be used, 2 when a setting is missing."
+        ),
+    )
     user = commands.add_parser(
         "user",
         help="create, list, and deactivate users (the administrator's path)",
@@ -404,6 +428,58 @@ def _catalog_compare() -> int:
     return 1 if differences else 0
 
 
+def _freshness_refresh() -> int:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        runtime = load_engine_runtime()
+        if runtime.engine_url is None:
+            print(
+                "makna freshness refresh: Missing environment variable: MAKNA_ENGINE_URL",
+                file=sys.stderr,
+            )
+            return 2
+        engine = make_engine(database_url_from_env())
+    except (RuntimeError, ConfigError) as error:
+        print(f"makna freshness refresh: {error}", file=sys.stderr)
+        return 2
+    # The connector logs the engine's own message, which can hold a value of the data; only the
+    # lines of this command (the measure and the error class) may reach the terminal.
+    for name in ("makna.engine", "makna.services.freshness"):
+        logging.getLogger(name).addHandler(logging.NullHandler())
+    connector = PostgresConnector(
+        runtime.engine_url.get_secret_value(),
+        statement_timeout_seconds=runtime.engine.statement_timeout_seconds,
+    )
+
+    def report(failure: Failure) -> None:
+        print(
+            f"makna freshness refresh: {failure.object_id}: failed ({failure.error_class})",
+            file=sys.stderr,
+        )
+
+    try:
+        result = refresh(engine, connector, on_failure=report)
+    except SQLAlchemyError as error:
+        # Not the error text: it carries the SQL parameters.
+        print(
+            f"makna freshness refresh: the application database cannot be used "
+            f"({type(error).__name__})",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        engine.dispose()
+    print(f"engine: {connector.target}")
+    print(
+        f"measures checked: {result.checked}, stored: {result.stored}, "
+        f"without a date: {len(result.empty)}, failed: {len(result.failures)}"
+    )
+    for object_id in result.empty:
+        print(f"no date for {object_id}: the table is empty")
+    return 1 if result.failures else 0
+
+
 def _index_build(definitions: Path | None) -> int:
     from sqlalchemy.exc import SQLAlchemyError
 
@@ -553,6 +629,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.catalog_command == "compare":
             return _catalog_compare()
         print("makna catalog: choose sync, issues or compare", file=sys.stderr)
+        return 2
+    if args.command == "freshness":
+        if args.freshness_command == "refresh":
+            return _freshness_refresh()
+        print("makna freshness: choose refresh", file=sys.stderr)
         return 2
     if args.command == "index":
         if args.index_command == "build":

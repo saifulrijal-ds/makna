@@ -1,5 +1,5 @@
-"""The routes of WP-16: sign-in and sign-out, the home page, the user's own account, and the
-administration of users and tokens.
+"""The routes of WP-16: sign-in and sign-out, the user's own account, and the administration of
+users and tokens. The start page and the discovery pages are in `makna.web.discovery` (WP-17).
 
 Handlers hold form handling only. Who is signed in, and the CSRF check, are the gate's
 (`makna.web.gate`), which runs before any of these. Everything that reads or changes users and
@@ -181,15 +181,6 @@ async def logout(request: Request) -> Response:
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(state.names.session, **session_cookie_options(state.development))
     return response
-
-
-# --- home -------------------------------------------------------------------------------------
-
-
-@router.get("/")
-async def home(request: Request) -> Response:
-    _signed_in(request)
-    return _state(request).pages.render(request.scope, "home.html")
 
 
 # --- the user's own account -------------------------------------------------------------------

@@ -1,0 +1,33 @@
+/* The discovery pages of WP-17: badges and lists, on top of the classless stylesheet. */
+.badge {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border-radius: 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  vertical-align: middle;
+  border: 1px solid currentColor;
+}
+
+.badge-approved {
+  color: #1b7f3b;
+}
+
+.badge-draft,
+.badge-in-review {
+  color: #9a6700;
+}
+
+.badge-deprecated {
+  color: #b42318;
+}
+
+ul.objects,
+ol.results {
+  padding-left: 1.25rem;
+}
+
+ul.objects li,
+ol.results li {
+  margin-bottom: 0.75rem;
+}

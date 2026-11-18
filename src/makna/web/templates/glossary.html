@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, link, related_list, deprecation_notice, curator_notes %}
+{% block title %}{{ view.label }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/discovery.css">
+<h1 data-field="label">{{ view.label }}</h1>
+{{ deprecation_notice(deprecation) }}
+<p data-field="description">{{ view.description }}</p>
+<p data-field="owner"><strong>Owner:</strong> {{ view.owner }}</p>
+<p data-field="status"><strong>Status:</strong> {{ badge(status) }}{% if view.version is not none %} <small>version {{ view.version }}</small>{% endif %}</p>
+{% if view.synonyms %}
+<p data-field="synonyms"><small>Also called: {{ view.synonyms | join(", ") }}</small></p>
+{% endif %}
+{% if terms %}
+<section data-field="explains">
+  <h2>This term explains</h2>
+  <ul>
+    {% for item, href in terms %}
+    <li>{{ link(item.label, href) }} <small>({{ item.kind | replace("_", " ") }})</small></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{{ related_list(related) }}
+{% if curator %}{{ curator_notes(view) }}{% endif %}
+{% endblock %}
