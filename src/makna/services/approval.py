@@ -148,7 +148,7 @@ def _weaker(entity_before: Entity, old: Dimension, entity_after: Entity, new: Di
     )
 
 
-def _columns(dimension: Dimension) -> frozenset[str]:
+def _parsed_columns(dimension: Dimension) -> frozenset[str]:
     """The columns a dimension reads, parsed (not the text of its expression). A dimension whose
     expression does not parse reads nothing anyone can name, so it matches no other."""
     try:
@@ -169,11 +169,11 @@ def _sibling_findings(official: Entity, proposal: Entity) -> list[str]:
     found: list[str] = []
     before = {d.name: d for d in official.dimensions}
     for new in proposal.dimensions:
-        columns = _columns(new)
+        columns = _parsed_columns(new)
         old = before.get(new.name)
-        if old is not None and _columns(old) == columns:
+        if old is not None and _parsed_columns(old) == columns:
             continue  # same name, same columns: the comparison by name has judged it
-        same = [o for o in official.dimensions if _columns(o) == columns]
+        same = [o for o in official.dimensions if _parsed_columns(o) == columns]
         if not same:
             continue
         level = max((_level(official, o) for o in same), key=rank)
