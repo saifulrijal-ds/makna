@@ -23,7 +23,13 @@ from sqlalchemy import Connection, Engine, text
 
 from makna.model.search import DOCUMENT_KINDS, EmbeddingProvider, SearchSettings
 from makna.search import confidence as confidence_module
-from makna.search.confidence import Confidence, Vocabulary, build_vocabulary, matched_terms
+from makna.search.confidence import (
+    Confidence,
+    Vocabulary,
+    build_vocabulary,
+    is_ambiguous,
+    matched_terms,
+)
 from makna.search.query import process
 
 ROLES: tuple[str, ...] = ("viewer", "agent", "curator", "approver", "admin")
@@ -124,6 +130,9 @@ class SearchResult:
     query: str
     hits: tuple[Hit, ...]
     confidence: Confidence
+    ambiguous_between: tuple[str, ...] = ()
+    """The ids of the two best metric hits when the question does not tell them apart (section
+    8.4, rule 3); empty otherwise, and always when the confidence is low."""
 
     @property
     def ids(self) -> list[str]:
@@ -139,6 +148,22 @@ def visible_statuses(role: str, include_deprecated: bool) -> list[str]:
     if include_deprecated:
         statuses.append("deprecated")
     return statuses
+
+
+def ambiguous_pair(hits: tuple[Hit, ...], band: str) -> tuple[str, ...]:
+    """The ids of the two best metric hits when the rule of section 8.4 holds for them.
+
+    It looks at every hit the statement returned (at least three, whatever `limit` is), so the
+    answer does not depend on how many hits the caller asked to see. A `low` band names none: the
+    guidance then says that nothing may match.
+    """
+    metrics = [hit for hit in hits if hit.kind == "metric"][:2]
+    if band == "low" or len(metrics) < 2:
+        return ()
+    first, second = metrics
+    if is_ambiguous(first.score, first.coverage, second.score, second.coverage):
+        return (first.object_id, second.object_id)
+    return ()
 
 
 def vector_literal(vector: list[float]) -> str:
@@ -242,4 +267,4 @@ class HybridSearch:
             vocabulary,
             settings.confidence,
         )
-        return SearchResult(query, hits[:limit], band)
+        return SearchResult(query, hits[:limit], band, ambiguous_pair(hits, band.band))

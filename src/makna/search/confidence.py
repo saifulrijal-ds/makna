@@ -95,6 +95,11 @@ def split_words(query_words: Sequence[str], vocabulary: Vocabulary) -> tuple[lis
     return content, qualifiers
 
 
+AMBIGUOUS_GUIDANCE = (
+    "Two metrics fit the question equally well. Ask the user which one they mean; do not choose "
+    "for them."
+)
+
 AMBIGUITY_SCORE_RATIO = 0.85
 """Two metric candidates are close when the second one's score is at least this share of the
 first one's (section 8.4, rule 3). The search service and the resolver read it from here."""

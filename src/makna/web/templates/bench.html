@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Test bench{% endblock %}
+{% block content %}
+<h1>Test bench</h1>
+<p>
+  Type a question to see how Makna reads it: the search hits, the rule-based resolution, the request
+  it builds (you can edit it), and the SQL the compiler returns. The bench only compiles: it never
+  runs the SQL.
+</p>
+
+{# Block 1: the question #}
+<form method="get" action="/bench">
+  <label>Question
+    <input type="text" name="q" value="{{ question }}" maxlength="500" autofocus
+           placeholder="for example: How much did we disburse last month by region?">
+  </label>
+  <button type="submit">Resolve</button>
+</form>
+<p><small>Today is {{ today.isoformat() }} (the date of the server): "last month" and "this year" are counted from it.</small></p>
+
+{% if question %}
+{# Block 2: search hits #}
+<h2>Search hits</h2>
+{% if resolve_error %}
+<p role="alert"><mark>{{ resolve_error.code }}: {{ resolve_error.message }}</mark></p>
+{% elif resolution and resolution.hits %}
+<p>Approved metrics and glossary terms, best first. Confidence: <strong>{{ resolution.confidence }}</strong>.</p>
+<table>
+  <thead>
+    <tr><th>Id</th><th>Label</th><th>Score</th><th>Coverage</th><th>Matched terms</th></tr>
+  </thead>
+  <tbody>
+    {% for hit in resolution.hits %}
+    <tr>
+      <td><code>{{ hit.id }}</code></td>
+      <td>{{ hit.label }}</td>
+      <td>{{ "%.5f" | format(hit.score) }}</td>
+      <td>{{ "%.2f" | format(hit.coverage) }}</td>
+      <td>{{ hit.matched_terms | join(", ") }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% elif resolution %}
+<p>No hits.</p>
+{% endif %}
+
+{# Block 3: the resolution #}
+<h2>Resolution</h2>
+{% if resolution %}
+<p>
+  Status:
+  {% if resolution.status == "resolved" %}<ins>resolved</ins>
+  {% elif resolution.status == "ambiguous" %}<mark>ambiguous</mark>
+  {% else %}<mark>no match</mark>{% endif %}
+</p>
+{% if resolution.status == "resolved" and resolution.candidates %}
+{% set chosen = resolution.candidates[0] %}
+<p>Metric: <strong>{{ chosen.label }}</strong> (<code>{{ chosen.id }}</code>){% if chosen.via %}, through <code>{{ chosen.via }}</code>{% endif %}. {{ chosen.description }}</p>
+{% elif resolution.candidates %}
+<p>
+  {% if resolution.status == "ambiguous" %}Nothing was chosen. The question fits these metrics about equally well; the first two are the ones it cannot tell apart:
+  {% else %}The closest metrics, which do not clearly match:{% endif %}
+</p>
+<table>
+  <thead>
+    <tr><th>Metric</th><th>Meaning</th><th>Score</th><th>Coverage</th></tr>
+  </thead>
+  <tbody>
+    {% for candidate in resolution.candidates %}
+    <tr>
+      <td>{{ candidate.label }}<br><code>{{ candidate.id }}</code>{% if candidate.via %}<br><small>through {{ candidate.via }}</small>{% endif %}</td>
+      <td>{{ candidate.description }}</td>
+      <td>{{ "%.5f" | format(candidate.score) }}</td>
+      <td>{{ "%.2f" | format(candidate.coverage) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if resolution.interpretation %}
+<table>
+  <thead>
+    <tr><th>Part</th><th>Words</th><th>Read as</th></tr>
+  </thead>
+  <tbody>
+    {% for item in resolution.interpretation %}
+    <tr><td>{{ item.kind }}</td><td>{{ item.words }}</td><td>{{ item.result }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if resolution.unresolved_terms %}
+<p>Words that matched nothing (a curator can read this as a list of missing synonyms): <strong>{{ resolution.unresolved_terms | join(", ") }}</strong></p>
+{% endif %}
+{% for note in resolution.notes %}
+<p><small>{{ note }}</small></p>
+{% endfor %}
+{% elif resolve_error %}
+<p>The question could not be resolved.</p>
+{% endif %}
+{% endif %}
+
+{# Block 4: the request, editable #}
+<h2>Request</h2>
+<form method="post" action="/bench">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="q" value="{{ question }}">
+  <label>Request as JSON (edit it and compile again)
+    <textarea name="request_json" rows="12" spellcheck="false" maxlength="{{ max_request_bytes }}">{{ request_text }}</textarea>
+  </label>
+  <button type="submit">Compile this request</button>
+</form>
+{% if input_error %}
+<p role="alert"><mark>{{ input_error }}</mark></p>
+{% endif %}
+
+{# Block 5: the SQL and its explanation #}
+{% if compiled or compile_error %}
+<h2>SQL</h2>
+{% endif %}
+{% if compile_error %}
+<article role="alert">
+  <header>Error <code>{{ compile_error.code }}</code></header>
+  <p>{{ compile_error.message }}</p>
+  {% if compile_error.details %}
+  <pre><code>{{ compile_error.details }}</code></pre>
+  {% endif %}
+</article>
+{% endif %}
+{% if compiled %}
+<p>Dialect: {{ compiled.dialect }}. Metric: <code>{{ compiled.metric.id }}</code>{% if compiled.metric.version %}, version {{ compiled.metric.version }}{% endif %}. Makna does not run this query: run it with your own database tool.</p>
+<pre><code id="sql-text">{{ compiled.sql }}</code></pre>
+<p><button type="button" id="copy-sql" class="secondary" hidden>Copy the SQL</button></p>
+<h3>Columns</h3>
+<table>
+  <thead>
+    <tr><th>Name</th><th>Role</th><th>Unit</th></tr>
+  </thead>
+  <tbody>
+    {% for column in compiled.columns %}
+    <tr><td><code>{{ column.name }}</code></td><td>{{ column.role }}</td><td>{{ column.unit or "" }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if compiled.warnings %}
+<h3>Warnings</h3>
+<ul>
+  {% for warning in compiled.warnings %}
+  <li>{{ warning }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+<h3>Explanation</h3>
+<ul>
+  {% for line in compiled.explanation %}
+  <li>{{ line }}</li>
+  {% endfor %}
+</ul>
+<script src="/static/bench.js" defer></script>
+{% endif %}
+{% endblock %}

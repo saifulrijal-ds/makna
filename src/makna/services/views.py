@@ -71,6 +71,8 @@ class SearchHit(View):
 
 class SearchOutcome(View):
     confidence: str
+    ambiguous_between: list[str] = []
+    """Two metric ids the question does not tell apart: the caller asks the user to choose."""
     guidance: str | None = None
     hits: list[SearchHit] = []
 

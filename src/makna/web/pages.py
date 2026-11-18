@@ -64,7 +64,10 @@ def navigation(caller: Caller | None) -> list[tuple[str, str]]:
     pages only for a caller who may manage."""
     if caller is None:
         return []
-    links = [("Home", "/"), ("Account", "/account")]
+    links = [("Home", "/")]
+    if permissions.can_use_test_bench(caller):
+        links.append(("Bench", "/bench"))
+    links.append(("Account", "/account"))
     if permissions.can_manage(caller):
         links += [("Users", "/admin/users"), ("Tokens", "/admin/tokens")]
     return links

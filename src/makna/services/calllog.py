@@ -21,6 +21,7 @@ What a row holds:
 
 from __future__ import annotations
 
+import datetime
 import functools
 import json
 import logging
@@ -184,6 +185,15 @@ class CallLog:
             "domain": _text(domain, 80),
             "include_deprecated": _flag(include_deprecated),
             "limit": _whole(limit),
+        }
+
+    @staticmethod
+    @_never_fails
+    def resolve_request(question: object, today: object) -> dict[str, Any]:
+        """The question is logged like a search query (clipped and redacted); the date is a day."""
+        return {
+            "question": _text(question, 500),
+            "today": today.isoformat() if isinstance(today, datetime.date) else INVALID,
         }
 
     @staticmethod
