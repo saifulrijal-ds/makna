@@ -6,6 +6,7 @@ from __future__ import annotations
 from makna.config import ConfigError, Settings
 from makna.index.db import make_engine
 from makna.search.embedding import EmbeddingError, make_provider
+from makna.services.approval import ApprovalSettings
 from makna.services.service import Services
 
 
@@ -24,6 +25,11 @@ def build_services(settings: Settings) -> Services:
             policy=settings.governance.policy(),
             dialect=settings.dialect,
             search_settings=settings.search,
+            definitions_repo=settings.definitions_repo,
+            approval=ApprovalSettings(
+                governance_team=settings.governance.team,
+                allow_self_approval=settings.allow_self_approval,
+            ),
         )
     except (EmbeddingError, ValueError) as error:
         raise ConfigError(f"Invalid settings: {error}") from error

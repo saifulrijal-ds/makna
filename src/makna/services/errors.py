@@ -20,11 +20,27 @@ class ServiceErrorCode(StrEnum):
     INTERNAL = "INTERNAL"
 
 
+class LifecycleErrorCode(StrEnum):
+    """The codes only the write path (WP-18) uses. They are separate from `ServiceErrorCode`,
+    which is the set of the four read tools, so that no read tool can return them."""
+
+    DEFINITION_INVALID = "DEFINITION_INVALID"
+    """The definition has errors; `details.issues` lists rule code, line, and message."""
+    OPEN_REFERENCE_ISSUE = "OPEN_REFERENCE_ISSUE"
+    """An approval is refused because the object has an open reference issue."""
+    CONFLICT = "CONFLICT"
+    """The change cannot be made now: another one is in progress, or the object is in another
+    state than the action needs."""
+
+
 class ServiceError(Exception):
     """A service call that cannot be answered: a code, a message, and details."""
 
     def __init__(
-        self, code: ServiceErrorCode, message: str, details: dict[str, Any] | None = None
+        self,
+        code: ServiceErrorCode | LifecycleErrorCode,
+        message: str,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code

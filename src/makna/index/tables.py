@@ -134,6 +134,8 @@ semantic_object = Table(
     Column("official_path", Text),
     Column("official_commit", Text),
     Column("proposal_commit", Text),
+    Column("proposal_origin", Text),
+    Column("proposal_errors", JSONB),
     Column("version", Integer),
     Column("owner_team", Text),
     Column("sensitivity", Text),
@@ -246,6 +248,7 @@ audit_event = Table(
     Column("to_status", Text),
     Column("reason", Text),
     Column("commit_sha", Text),
+    Column("files", JSONB),
     UniqueConstraint(
         "commit_sha", "object_id", "action", name="uq_audit_event_commit_object_action"
     ),
