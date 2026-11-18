@@ -115,6 +115,8 @@ class Hit:
     vector_similarity: float | None
     vector_rank: int | None
     matched_terms: tuple[str, ...]
+    coverage: float = 0.0
+    """The share of the question's content words that this hit's own names hold (section 8.4)."""
 
 
 @dataclass(frozen=True)
@@ -214,6 +216,7 @@ class HybridSearch:
                     "limit": max(limit, confidence_module.TOP_HITS),
                 },
             ).all()
+        content, _ = confidence_module.split_words(processed.words, vocabulary)
         hits = tuple(
             Hit(
                 object_id=r.object_id,
@@ -228,6 +231,7 @@ class HybridSearch:
                 vector_similarity=None if r.vector_cosine is None else float(r.vector_cosine),
                 vector_rank=r.vector_rank,
                 matched_terms=tuple(matched_terms(processed.words, r.names)),
+                coverage=confidence_module.hit_coverage(content, r.names, vocabulary),
             )
             for r in rows
         )

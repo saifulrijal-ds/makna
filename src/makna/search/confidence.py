@@ -95,6 +95,38 @@ def split_words(query_words: Sequence[str], vocabulary: Vocabulary) -> tuple[lis
     return content, qualifiers
 
 
+AMBIGUITY_SCORE_RATIO = 0.85
+"""Two metric candidates are close when the second one's score is at least this share of the
+first one's (section 8.4, rule 3). The search service and the resolver read it from here."""
+
+AMBIGUITY_COVERAGE_GAP = 0.15
+"""...and they are ambiguous when, besides, their coverage differs by less than this."""
+
+
+def is_ambiguous(
+    first_score: float, first_coverage: float, second_score: float, second_coverage: float
+) -> bool:
+    """The rule of section 8.4: the question does not tell the first candidate from the second.
+
+    The scores are the fused scores of the two hits, the coverages the share of the question's
+    content words (`hit_coverage`) that each hit's own names hold. The first is the better ranked.
+    """
+    return (
+        first_score > 0
+        and second_score >= AMBIGUITY_SCORE_RATIO * first_score
+        and abs(first_coverage - second_coverage) < AMBIGUITY_COVERAGE_GAP
+    )
+
+
+def hit_coverage(content_words: Sequence[str], names: str, vocabulary: Vocabulary) -> float:
+    """The share (weighted like `assess`) of the content words found in the names of one hit."""
+    total = sum(vocabulary.idf(word) for word in content_words)
+    if total <= 0:
+        return 0.0
+    held = tokens_of(names)
+    return sum(vocabulary.idf(word) for word in content_words if _in(word, held)) / total
+
+
 @dataclass(frozen=True)
 class Confidence:
     band: Band

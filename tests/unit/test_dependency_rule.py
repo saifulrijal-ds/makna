@@ -44,10 +44,22 @@ ALLOWED_MAKNA: dict[str, frozenset[str] | None] = {
     "catalog": frozenset({"model", "index"}),
     "index": frozenset({"model"}),
     "search": frozenset({"model"}),
+    # The resolver reads a search result and the compiler's snapshot and available dimensions.
+    "resolve": frozenset({"model", "search", "compiler"}),
     "model": frozenset(),
     # The use cases depend on every library package, never on an interface (WP-13).
     "services": frozenset(
-        {"model", "config", "definitions", "catalog", "index", "search", "engine", "compiler"}
+        {
+            "model",
+            "config",
+            "definitions",
+            "catalog",
+            "index",
+            "search",
+            "engine",
+            "compiler",
+            "resolve",
+        }
     ),
 }
 # Single modules a package may import although it may not import the rest of their package:

@@ -60,12 +60,38 @@ RELATIVE_WORDS = frozenset(
         "ytd", "mtd", "qtd", "date", "to",
         "sampai", "hingga", "dari", "from", "until", "since", "sejak", "during", "selama",
         "end", "akhir", "start", "awal", "per",
+        "sepanjang", "throughout", "over",
     }
 )  # fmt: skip
 """Words that make a period relative to today or bound it."""
 
 ROMAN_NUMERALS = frozenset({"i", "ii", "iii", "iv"})
 """Quarter numbers written in Roman numerals ("triwulan II 2026")."""
+
+ORDINALS: MappingProxyType[str, int] = MappingProxyType(
+    {
+        "first": 1, "second": 2, "third": 3, "fourth": 4,
+        "pertama": 1, "kedua": 2, "ketiga": 3, "keempat": 4,
+    }
+)  # fmt: skip
+"""The number of a quarter or a half written as a word ("first half of 2026", "kuartal pertama
+2026")."""
+
+FINAL_WORDS = frozenset({"final", "terakhir"})
+"""The last quarter or half of a named year ("kuartal terakhir 2025"). `last` is one too, but
+only before a year ("the last quarter of 2025"); without a year it is a relative phrase."""
+
+EACH_WORDS = frozenset({"each", "every", "tiap", "setiap"})
+"""Before a period length they ask for a grain ("each month"), else for a dimension."""
+
+GROUP_CUES = frozenset({"by", "per", "berdasarkan"}) | EACH_WORDS
+"""The words that introduce a dimension to group by ("by region", "per wilayah", "tiap wilayah")."""
+
+END_WORDS = frozenset({"end", "akhir"})
+"""In "end of June 2026" the period is the month; "end of 2025" is its last month."""
+
+TIME_LEAD_INS = frozenset({"during", "selama", "sepanjang", "throughout", "over"})
+"""Words that introduce a period without changing it ("during 2025", "sepanjang 2025")."""
 
 TIME_PHRASES: MappingProxyType[str, str] = MappingProxyType(
     {
@@ -82,6 +108,17 @@ TIME_PHRASES: MappingProxyType[str, str] = MappingProxyType(
     }
 )  # fmt: skip
 """Relative time phrases to a symbolic range the resolver evaluates against `today`."""
+
+GRAIN_ADJECTIVES: MappingProxyType[str, str] = MappingProxyType(
+    {
+        "daily": "day", "harian": "day",
+        "weekly": "week", "mingguan": "week",
+        "monthly": "month", "bulanan": "month",
+        "quarterly": "quarter", "kuartalan": "quarter", "triwulanan": "quarter",
+        "yearly": "year", "annual": "year", "annually": "year", "tahunan": "year",
+    }
+)  # fmt: skip
+"""Single words that ask for a grain by themselves ("monthly NPF", "tingkat penagihan bulanan")."""
 
 GRAIN_PHRASES: MappingProxyType[str, str] = MappingProxyType(
     {
@@ -103,6 +140,8 @@ QUALIFIER_WORDS: frozenset[str] = frozenset(
     | TREND_WORDS
     | RELATIVE_WORDS
     | ROMAN_NUMERALS
+    | set(ORDINALS)
+    | FINAL_WORDS
 )
 """Every word of the vocabulary: a query word in this set is a qualifier, not a content word."""
 
