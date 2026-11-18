@@ -131,6 +131,23 @@ def test_more_than_one_phrase_are_all_found_and_the_first_comes_first() -> None:
     assert [m.start.isoformat() for m in found] == ["2026-01-01", "2026-04-01"]
 
 
+def test_one_the_may_stand_between_a_lead_in_and_the_phrase() -> None:
+    words = tokens("balance over the first half of 2026")
+    (match,) = find_times(words, TODAY)
+    assert words[match.first : match.last] == ["over", "the", "first", "half", "of", "2026"]
+
+
+def test_the_end_of_each_period_is_part_of_the_grain_phrase() -> None:
+    for text, used in (
+        ("contracts at the end of each year", ["end", "of", "each", "year"]),
+        ("kontrak di akhir tiap tahun", ["akhir", "tiap", "tahun"]),
+    ):
+        words = tokens(text)
+        match, _ = find_grain(words, set(), None)
+        assert match is not None and match.grain == "year"
+        assert words[match.first : match.last] == used
+
+
 def test_a_lead_in_belongs_to_the_phrase() -> None:
     words = tokens("total sepanjang 2025")
     (match,) = find_times(words, TODAY)

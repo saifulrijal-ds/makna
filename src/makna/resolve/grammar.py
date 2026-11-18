@@ -236,7 +236,11 @@ def find_times(words: Sequence[str], today: datetime.date) -> list[TimeMatch]:
             i += 1
             continue
         first = match.first
-        while first > 0 and words[first - 1] in TIME_LEAD_INS:
+        while first > 0 and (
+            words[first - 1] in TIME_LEAD_INS
+            # "over the first half of 2026": one "the" may stand between the lead-in and the phrase
+            or (words[first - 1] == "the" and first > 1 and words[first - 2] in TIME_LEAD_INS)
+        ):
             first -= 1
         found.append(TimeMatch(match.start, match.end, match.kind, first, match.last, match.note))
         i = match.last
@@ -272,6 +276,14 @@ def find_grain(
             return GrainMatch(GRAIN_ADJECTIVES[word], i, i + 1), False
         following = words[i + 1] if i + 1 < len(words) and i + 1 not in taken else None
         if word in EACH_WORDS and following in _GRAIN_NOUNS:
+            # "at the end of each year", "di akhir tiap tahun": the end belongs to the phrase
+            start = i
+            if i >= 2 and words[i - 2] in END_WORDS and words[i - 1] == "of":
+                start = i - 2
+            elif i >= 1 and words[i - 1] in END_WORDS:
+                start = i - 1
+            if start not in taken:
+                return GrainMatch(_GRAIN_NOUNS[following], start, i + 2), False
             return GrainMatch(_GRAIN_NOUNS[following], i, i + 2), False
         if (
             word in _GRAIN_NOUNS
