@@ -27,6 +27,47 @@ job, and here together. The Makna image installs `uv` 0.11.32 (the version CI us
 **Ports.** Both published ports bind to `127.0.0.1` only: PostgreSQL on 5432
 (`MAKNA_POSTGRES_PORT` changes it) and the app on 8000.
 
+## The OpenMetadata stack (optional, CON-2)
+
+`deploy/docker-compose.openmetadata.yml` runs an OpenMetadata server apart from the main stack
+(its own project name, `makna-openmetadata`, and its own volumes; ports bind to `127.0.0.1`).
+It needs Docker and about 3 GB of memory.
+
+| Service | Image |
+|---|---|
+| `mysql` | `docker.getcollate.io/openmetadata/db:2.0.7` |
+| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:9.3.0` |
+| `migrate` | `docker.getcollate.io/openmetadata/server:2.0.7` |
+| `server` | `docker.getcollate.io/openmetadata/server:2.0.7` |
+
+**Version pin.** OpenMetadata 2.0.7. It is the release whose published JSON schemas the
+connector's fixtures follow (`tests/unit/fixtures/openmetadata/README.md`). Change the tags in the
+compose file and in this table together; a unit test compares them. The compose file is the
+release's own quickstart without the ingestion (Airflow) service.
+
+```
+docker compose -f deploy/docker-compose.openmetadata.yml up -d --wait
+```
+
+The web interface is at `http://localhost:8585`. A new server has an administrator whose
+user name and password the OpenMetadata documentation gives for the release; change the
+password. Create a token with Settings, Bots, `ingestion-bot` (it may write), or a personal
+access token of your profile, and put it in `MAKNA_OPENMETADATA_TOKEN`. Load the sample catalog,
+then sync it:
+
+```
+export MAKNA_OPENMETADATA_TOKEN=<token>
+uv run python -m deploy.seed_openmetadata          # idempotent; creates service lending_sample
+uv run makna catalog sync --source openmetadata
+docker compose -f deploy/docker-compose.openmetadata.yml down -v
+```
+
+`[catalog.openmetadata]` of `config/makna.toml` names the URL and maps the service
+`lending_sample` to the engine catalog `lending`. A database that was synced from the file
+source refuses the OpenMetadata source (its tables belong to the file source): start from a
+fresh database, or keep one source. **These two files have not been run**: the session that wrote
+them had no Docker. WP-21 manual criterion 4 is their first start.
+
 ## Databases and roles
 
 | Database | Owner | Roles that can connect |

@@ -1,0 +1,93 @@
+# The optional OpenMetadata stack (CON-2): a catalog server for `makna catalog sync --source
+# openmetadata`. It runs on its own, apart from docker-compose.yml:
+#
+#   docker compose -f deploy/docker-compose.openmetadata.yml up -d --wait
+#   docker compose -f deploy/docker-compose.openmetadata.yml down -v
+#
+# Pinned to OpenMetadata 2.0.7, the release whose published schemas the connector's fixtures
+# follow. Reduced from the release's own docker/docker-compose-quickstart/docker-compose.yml: the
+# ingestion (Airflow) service is left out and the pipeline client is switched off, because
+# Makna reads the catalog and the sample catalog is loaded by deploy/seed_openmetadata.py. The
+# remaining settings are the server's defaults (conf/openmetadata.yaml of the release).
+# Everything binds to 127.0.0.1. Not run in the session that wrote it (no Docker there):
+# WP-21 manual criterion 4 is the first real start.
+name: makna-openmetadata
+
+x-server-environment: &server-environment
+  SERVER_PORT: "8585"
+  SERVER_ADMIN_PORT: "8586"
+  DB_HOST: mysql
+  DB_PORT: "3306"
+  DB_USER: openmetadata_user
+  DB_USER_PASSWORD: ${MAKNA_OPENMETADATA_DB_PASSWORD:-openmetadata_dev_password}
+  OM_DATABASE: openmetadata_db
+  ELASTICSEARCH_HOST: elasticsearch
+  ELASTICSEARCH_PORT: "9200"
+  PIPELINE_SERVICE_CLIENT_ENABLED: "false"
+
+services:
+  mysql:
+    image: docker.getcollate.io/openmetadata/db:2.0.7
+    command: "--sort_buffer_size=10M"
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MAKNA_OPENMETADATA_DB_ROOT_PASSWORD:-openmetadata_dev_root}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: mysql --user=root --password=$$MYSQL_ROOT_PASSWORD --silent --execute "use openmetadata_db"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.0
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - xpack.security.enabled=false
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: "curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep -qE 'green|yellow' || exit 1"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  migrate:
+    image: docker.getcollate.io/openmetadata/server:2.0.7
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    environment: *server-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  server:
+    image: docker.getcollate.io/openmetadata/server:2.0.7
+    restart: unless-stopped
+    environment: *server-environment
+    ports:
+      - "127.0.0.1:8585:8585"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  mysql-data:
+  es-data:
