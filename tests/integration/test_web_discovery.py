@@ -350,7 +350,8 @@ def test_stored_text_is_escaped_and_a_question_with_special_characters_is_encode
         page = pages[0].text
         assert "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;" in page
         # The question in the link is URL-encoded, then escaped for HTML; parsed back it is exact.
-        links = [h for h in parsed(page).hrefs if h.startswith("/bench")]
+        # The navigation's plain "/bench" link (WP-20) is not an example question.
+        links = [h for h in parsed(page).hrefs if h.startswith("/bench?")]
         assert links[0] == "/bench?" + urlencode({"q": question})
         assert parse_qs(urlsplit(links[0]).query)["q"] == [question]
         assert "&amp;" in page and "&#34;penalties&#34;" in page  # the visible text, escaped
@@ -482,4 +483,4 @@ def test_the_discovery_pages_are_in_the_navigation_and_every_route_needs_a_sign_
     hx = signed_out.get("/search?q=npf", headers={"HX-Request": "true"})
     assert hx.status_code == 401 and hx.headers["hx-redirect"] == "/login"
     nav = re.search(r"<nav.*?</nav>", client_for(world, "viewer").get("/").text, re.S)
-    assert nav and 'href="/search"' in nav.group(0) and "/bench" not in nav.group(0)
+    assert nav and 'href="/search"' in nav.group(0) and 'href="/bench"' in nav.group(0)
