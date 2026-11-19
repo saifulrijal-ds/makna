@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import stat
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -211,15 +212,24 @@ def _open_folder(root: Path, parts: list[str], *, create: bool) -> int:
 
 
 def _write_file(root: Path, relative: str, data: bytes) -> None:
-    """Write `data` to `relative` below `root`, never through a link (`OSError` if there is one)."""
+    """Write `data` to `relative` below `root`, never through a link and only to a regular file
+    (`OSError` otherwise). The file is opened without blocking and checked with `fstat` before it
+    is truncated, so a FIFO or device planted at the path cannot hang the caller (which holds the
+    lock) or be written to."""
     *folders, name = relative.split("/")
     folder = _open_folder(root, folders, create=True)
     try:
         descriptor = os.open(
-            name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=folder
+            name, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644, dir_fd=folder
         )
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError("not a regular file")
+            os.ftruncate(descriptor, 0)
+            with os.fdopen(os.dup(descriptor), "wb") as handle:
+                handle.write(data)
+        finally:
+            os.close(descriptor)
     finally:
         os.close(folder)
 

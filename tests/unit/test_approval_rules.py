@@ -575,3 +575,56 @@ def test_columns_are_compared_as_parsed_not_as_text() -> None:
         )
     )  # fmt: skip
     assert loosenings(EXPR_BASE, spaced)
+
+
+# --- round 4: expressions over several columns, and the level part on its own -----------------
+
+
+def _two_columns(name: str, **fields: Any) -> Any:
+    return lambda dims: _sibling(
+        dims, name, "COALESCE(birth_date_col, registered_col)", sensitivity="personal", **fields
+    )
+
+
+def test_a_dimension_over_two_columns_is_compared_with_the_dimension_of_each() -> None:
+    bucket = entity_doc(
+        _both(
+            _with_expr,
+            _two_columns("birth_or_registered", masking={"method": "bucket", "width": 5000}),
+        )
+    )
+    found = loosenings(EXPR_BASE, bucket)
+    assert any("birth_or_registered" in line and "birth_date" in line for line in found), found
+    unmasked = entity_doc(_both(_with_expr, _two_columns("birth_or_registered_raw")))
+    assert loosenings(EXPR_BASE, unmasked)
+    internal = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(
+                d, "birth_or_registered_low", "COALESCE(birth_date_col, registered_col)",
+                sensitivity="internal", masking={"method": "redact"},
+            ),
+        )
+    )  # fmt: skip
+    assert loosenings(EXPR_BASE, internal)
+
+
+def test_a_dimension_over_two_columns_that_is_masked_at_least_as_strictly_is_fine() -> None:
+    redact = entity_doc(
+        _both(_with_expr, _two_columns("birth_or_registered", masking={"method": "redact"}))
+    )
+    assert loosenings(EXPR_BASE, redact) == []
+
+
+def test_a_sibling_at_a_lower_level_with_the_same_masking_is_a_loosening_by_level_alone() -> None:
+    lower = entity_doc(
+        _both(
+            _with_expr,
+            lambda d: _sibling(
+                d, "birth_year_c", "birth_date_col", sensitivity="confidential",
+                masking={"method": "truncate_date", "grain": "year"},
+            ),
+        )
+    )  # fmt: skip
+    found = loosenings(EXPR_BASE, lower)
+    assert any("birth_year_c" in line for line in found), found

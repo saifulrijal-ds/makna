@@ -14,9 +14,10 @@ Notes on what is and is not compared:
   dimension's effective level (its own, else the entity's), and each dimension's masking rule.
   Dimensions are matched by name; one that is gone is matched with a new one that reads the same
   parsed columns (a rename); and **every new or changed dimension is compared with the strictest
-  official dimension that reads the same parsed columns**, so a sibling (`birth_month` next to a
-  masked `birth_year`), a swap of names, and a dimension re-pointed at a protected column all need
-  the governance team when they show that column at a lower level or with less masking. A new
+  official dimension that reads any of the same parsed columns**, so a sibling (`birth_month`
+  next to a masked `birth_year`), a swap of names, a dimension re-pointed at a protected column,
+  and an expression over several columns all need the governance team when they show a protected
+  column at a lower level or with less masking. A new
   dimension on a column no official dimension reads is compared with the entity's official level.
   Levels the catalog derives for columns are not part of a definition and are not compared.
   A rule (`Rule`) carries no sensitivity of its own in the file format, so there is nothing to
@@ -162,8 +163,9 @@ def _mask_of(dimension: Dimension) -> tuple[int, float]:
 
 
 def _sibling_findings(official: Entity, proposal: Entity) -> list[str]:
-    """Each new or changed dimension, against the strictest official dimension that reads the same
-    parsed columns: it may not show those columns at a lower level or with less masking. This is
+    """Each new or changed dimension, against the strictest official dimension that reads any of
+    the same parsed columns (an expression over two columns is compared with the dimensions of
+    each): it may not show those columns at a lower level or with less masking. This is
     what a sibling (`birth_month` next to a masked `birth_year`), a swap of names, and a dimension
     re-pointed at a protected column have in common."""
     found: list[str] = []
@@ -173,7 +175,7 @@ def _sibling_findings(official: Entity, proposal: Entity) -> list[str]:
         old = before.get(new.name)
         if old is not None and _parsed_columns(old) == columns:
             continue  # same name, same columns: the comparison by name has judged it
-        same = [o for o in official.dimensions if _parsed_columns(o) == columns]
+        same = [o for o in official.dimensions if _parsed_columns(o) & columns]
         if not same:
             continue
         level = max((_level(official, o) for o in same), key=rank)

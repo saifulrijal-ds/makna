@@ -8,7 +8,9 @@ test gaps of the task review.
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import threading
 import time
 from collections.abc import Iterator
@@ -894,3 +896,95 @@ def test_a_sibling_dimension_on_a_masked_personal_column_needs_the_governance_te
     assert (
         world.life.approve(world.caller("governance"), CUSTOMER, "governance agrees").version == 2
     )
+
+
+# --- round 4 ---------------------------------------------------------------------------------
+
+
+def test_a_fifo_at_the_target_path_cannot_hang_the_action_that_holds_the_lock(
+    world: World,
+) -> None:
+    fifo = world.repo.path / NEW_DRAFT
+    os.mkfifo(fifo)
+    outcome: list[Any] = []
+
+    def act() -> None:
+        try:
+            outcome.append(
+                world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "fifo")
+            )
+        except ServiceError as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=act, daemon=True)
+    thread.start()
+    thread.join(20)
+    if thread.is_alive():  # unblock the writer so the test does not leave a thread behind
+        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        os.close(fd)
+        thread.join(5)
+        pytest.fail("the action hung on a FIFO in the working tree")
+    assert not isinstance(outcome[0], ServiceError)  # the commit is made from the checked bytes
+    assert b"contract_count_total" in (world.repo.show(sup.head(world), NEW_DRAFT) or b"")
+    with store.advisory_lock(world.engine, wait_seconds=2):  # the lock was released
+        pass
+    assert stat.S_ISFIFO(fifo.lstat().st_mode)  # the planted FIFO was left alone
+
+
+def _break_seed_record(world: World, how: str) -> None:
+    from makna.index.tables import audit_event
+
+    seed = world.repo.log()[0].sha
+    with world.engine.begin() as connection:
+        files = connection.execute(
+            text("SELECT files FROM audit_event WHERE commit_sha = :sha"), {"sha": seed}
+        ).scalar_one()
+        if how == "paths":
+            files = {**{k: v for k, v in list(files.items())[1:]}}
+        else:
+            files = {**files, NPF_PATH: "0" * 64}
+        connection.execute(
+            update(audit_event).where(audit_event.c.commit_sha == seed).values(files=files)
+        )
+
+
+@pytest.mark.parametrize("how", ["paths", "hash"])
+def test_accepting_a_rewritten_history_still_checks_the_audit_record(
+    world: World, how: str
+) -> None:
+    approve_new(world)
+    sup.git(world.repo, "reset", "-q", "--hard", world.repo.log()[0].sha)  # a rewrite
+    _break_seed_record(world, how)
+    before = sup.state_dump(world.engine)
+    with pytest.raises(ServiceError) as raised:
+        world.life.sync(accept_rewritten_history=True)
+    assert "audit log recorded" in raised.value.message  # the record check, not the history one
+    assert "history" not in raised.value.message
+    assert sup.state_dump(world.engine) == before
+
+
+def test_the_recorded_files_of_an_intent_claimed_by_its_own_action_are_checked(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zlib
+
+    from makna.search.embedding import HashProvider
+
+    world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "first")
+    world.life.submit(world.caller("curator"), NEW, "ready")
+    with monkeypatch.context() as patched:
+        patched.setattr(store, "reindex", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+        with pytest.raises(ServiceError):
+            world.life.approve(world.caller("approver"), NEW, "approve")
+    intent = next(r for r in sup.audit_rows(world.engine) if sup.is_open(r))
+    head = sup.head(world)
+    oid = sup.git(world.repo, "rev-parse", f"HEAD:{NEW_PATH}").strip()
+    loose = world.repo.path / ".git" / "objects" / oid[:2] / oid[2:]
+    forged = b"label: forged\n"
+    loose.chmod(0o644)
+    loose.write_bytes(zlib.compress(b"blob %d\x00" % len(forged) + forged))
+    with pytest.raises(store.StoreError) as raised:
+        store.sync(
+            world.engine, HashProvider(), world.repo, derive=None, claimed={intent["id"]: head}
+        )
+    assert "audit" in str(raised.value)
