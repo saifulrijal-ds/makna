@@ -261,6 +261,7 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
         "/mcp/",
         "/static",
         "/",
+        "/bench",
         "/login",
         "/logout",
         "/account",

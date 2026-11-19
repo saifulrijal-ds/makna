@@ -1,4 +1,6 @@
-"""The four services: `search`, `get_definition`, `list_related`, `compile_query` (WP-12).
+"""The services: `search`, `get_definition`, `list_related`, `compile_query`, and `resolve`.
+
+The first four are WP-12, `resolve` is WP-20.
 
 `Services` holds the database engine, the embedding provider, the snapshot cache, and the
 governance policy. Every method takes a `Caller` first, checks the permission of section 11,
@@ -18,6 +20,7 @@ a structured request and nothing more.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 import threading
@@ -32,12 +35,13 @@ from makna.compiler.compile import compile_plan
 from makna.compiler.governance import GovernanceError
 from makna.compiler.plan import QueryPlan, plan_request
 from makna.compiler.snapshot import Model
-from makna.model.definitions import NAME_PATTERN, Entity, Metric
+from makna.model.definitions import NAME_PATTERN, Entity, GlossaryTerm, Metric, parse_definition
 from makna.model.governance import GovernancePolicy
 from makna.model.metrics import dependency_closure, metric_unit
 from makna.model.request import CompileResponse, ErrorCode, QueryError, QueryRequest
 from makna.model.search import EmbeddingProvider, SearchSettings
-from makna.search.confidence import LOW_GUIDANCE
+from makna.resolve import Resolution, resolve
+from makna.search.confidence import AMBIGUOUS_GUIDANCE, LOW_GUIDANCE
 from makna.search.embedding import EmbeddingError
 from makna.search.hybrid import HybridSearch, SearchError
 from makna.services import accounts, objects, permissions
@@ -249,8 +253,17 @@ class Services:
             guidance = found.confidence.guidance
             if guidance == LOW_GUIDANCE and chosen and "metric" not in chosen:
                 guidance = KINDS_GUIDANCE.format(kinds=", ".join(chosen))
-            outcome = SearchOutcome(confidence=found.confidence.band, guidance=guidance, hits=hits)
+            if found.ambiguous_between:
+                guidance = AMBIGUOUS_GUIDANCE
+            outcome = SearchOutcome(
+                confidence=found.confidence.band,
+                ambiguous_between=list(found.ambiguous_between),
+                guidance=guidance,
+                hits=hits,
+            )
             call.result = {"ids": [hit.id for hit in hits], "confidence": outcome.confidence}
+            if outcome.ambiguous_between:
+                call.result["ambiguous_between"] = outcome.ambiguous_between
             return outcome
 
     @staticmethod
@@ -288,6 +301,48 @@ class Services:
         if not isinstance(include_deprecated, bool):
             raise invalid_input("include_deprecated", "true or false")
         return query.strip()
+
+    # --- resolve -------------------------------------------------------------------------
+
+    def resolve(self, caller: Caller, question: str, today: datetime.date) -> Resolution:
+        """Read a question as a request, by rules (ARCHITECTURE 8.4): the test bench's resolver.
+
+        `today` is the date the question counts as today; nothing here reads the clock. The search
+        covers approved metrics and glossary terms for every role, and the answer is a candidate
+        request, never a compiled query: the bench compiles it separately through `compile_query`.
+        Only callers who may use the test bench (not a token) may call it.
+        """
+        with self._logged(caller, "resolve") as call:
+            call.request = CallLog.resolve_request(question, today)
+            text = self._check_question(question, today)
+            permissions.require(caller, permissions.Permission.USE_TEST_BENCH)
+            snapshot, _ = self._cache.current()
+            try:
+                resolution = resolve_on_snapshot(
+                    self._search, self._engine, snapshot, text, today, self._policy
+                )
+            except (SearchError, EmbeddingError) as error:
+                logger.warning("search is not available: %s", type(error).__name__)
+                raise ServiceError(ServiceErrorCode.INTERNAL, SEARCH_UNAVAILABLE_MESSAGE) from None
+            call.result = {
+                "ids": [c.id for c in resolution.candidates],
+                "status": resolution.status,
+                "confidence": resolution.confidence,
+            }
+            return resolution
+
+    @staticmethod
+    def _check_question(question: object, today: object) -> str:
+        if not isinstance(question, str) or not question.strip():
+            raise invalid_input("question", "give the question to resolve; it must not be empty")
+        check_text("question", question)
+        if len(question) > MAX_QUERY_LENGTH:
+            raise invalid_input(
+                "question", f"at most {MAX_QUERY_LENGTH} characters", maximum=MAX_QUERY_LENGTH
+            )
+        if not isinstance(today, datetime.date):
+            raise invalid_input("today", "a date")
+        return question.strip()
 
     # --- get_definition ------------------------------------------------------------------
 
@@ -495,6 +550,44 @@ def compile_on_snapshot(
         return compile_plan(model, plan, dialect)
     except GovernanceError as error:
         raise _personal_column_error(error, model, request.metric) from None
+
+
+# --- the resolve path shared with the evals ---
+
+RESOLVE_KINDS = ("metric", "glossary_term")
+RESOLVE_HITS = 10
+
+
+def resolve_on_snapshot(
+    search: HybridSearch,
+    engine: Engine,
+    snapshot: Snapshot,
+    question: str,
+    today: datetime.date,
+    policy: GovernancePolicy,
+) -> Resolution:
+    """Search approved metrics and glossary terms, read the related metrics of the glossary hits,
+    and resolve the question against the approved snapshot: what `Services.resolve` does after its
+    input and permission checks and before its log row.
+
+    The one resolve path of the product, as `compile_on_snapshot` is the one compile path: the
+    resolver evals (`evals/`) call it, and log nothing. Search is for role `viewer`, so a draft is
+    never a candidate, whoever asks. Raises what the search raises (`SearchError`,
+    `EmbeddingError`).
+    """
+    found = search.search(question, role="viewer", kinds=list(RESOLVE_KINDS), limit=RESOLVE_HITS)
+    terms = [hit.object_id for hit in found.hits if hit.kind == "glossary_term"]
+    related: dict[str, list[str]] = {}
+    if terms:
+        with engine.connect() as connection:
+            rows = objects.fetch_objects(connection, terms)
+        for term_id, row in rows.items():
+            official = parse_definition(row.official) if row.official is not None else None
+            if row.status == "approved" and isinstance(official, GlossaryTerm):
+                related[term_id] = list(official.related or [])
+    return resolve(
+        question, today, found=found, model=snapshot.model, policy=policy, glossary_related=related
+    )
 
 
 # --- helpers ---

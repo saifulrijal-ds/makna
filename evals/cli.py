@@ -1,6 +1,7 @@
 """The `makna-eval` command: `uv run python -m evals <command>`.
 
-    all         retrieval and compile; writes report.md and report.json; exit 1 if a gate fails
+    all         retrieval, compile, and the resolver score (no gate); writes report.md and
+                report.json; exit 1 if a gate fails
     retrieval   the retrieval eval only (docs/EVALS.md section 3)
     compile     the compile correctness eval only (section 4)
     tune        grid over the weights on the tuned split; prints the setting the rule chooses
@@ -27,7 +28,7 @@ from typing import Any
 import psycopg
 from sqlalchemy.exc import SQLAlchemyError
 
-from evals import compile_eval, gates, heldout_eval, report, retrieval, tune
+from evals import compile_eval, gates, heldout_eval, report, resolver_eval, retrieval, tune
 from evals.agent.bootstrap import DEFAULT_SEED as DEFAULT_BOOTSTRAP_SEED
 from evals.agent.golden import load_golden
 from evals.agent.record import RunsFileError
@@ -46,7 +47,7 @@ from evals.runtime import (
 )
 from evals.sqlrun import SqlFailure, SqlRunner
 from makna.search.embedding import EmbeddingError
-from makna.search.hybrid import SearchError
+from makna.search.hybrid import HybridSearch, SearchError
 from makna.services import compile_on_snapshot, require_catalog
 from makna.services.errors import ServiceError
 from makna.services.snapshot import SnapshotCache
@@ -66,6 +67,13 @@ def run_retrieval_eval(
     )
     section["heldout"] = heldout_eval.run_heldout(runtime.engine, searchers, heldout)
     return section
+
+
+def run_resolver_eval(runtime: Runtime, questions: Sequence[Question]) -> dict[str, Any]:
+    """The resolver's exact-request accuracy on the golden questions (informative, no gate)."""
+    snapshot, _ = SnapshotCache(runtime.engine).current()
+    search = HybridSearch(runtime.engine, runtime.provider, runtime.search)
+    return resolver_eval.run_resolver(search, runtime.engine, snapshot, runtime.policy, questions)
 
 
 def log_for(verbose: bool) -> Callable[[str], None]:
@@ -139,13 +147,16 @@ def evaluate_command(args: argparse.Namespace) -> int:
     runtime: Runtime | None = None
     try:
         runtime = open_runtime()
-        retrieval_section = compile_section = None
+        retrieval_section = compile_section = resolver_section = None
         if args.command in ("all", "retrieval"):
             print("makna-eval: retrieval ...", flush=True)
             retrieval_section = run_retrieval_eval(runtime, questions, search_questions, heldout)
         if args.command in ("all", "compile"):
             print("makna-eval: compile ...", flush=True)
             compile_section = run_compile_eval(runtime, questions, verbose=args.verbose)
+        if args.command == "all":
+            print("makna-eval: resolver ...", flush=True)
+            resolver_section = run_resolver_eval(runtime, questions)
         settings = describe_settings(runtime)
     except (EvalSetupError, SearchError, EmbeddingError, ServiceError) as error:
         print(f"makna-eval: cannot run: {error}", file=sys.stderr)
@@ -174,6 +185,7 @@ def evaluate_command(args: argparse.Namespace) -> int:
         results,
         retrieval=retrieval_section,
         compile_section=compile_section,
+        resolver=resolver_section,
     )
     out_dir = Path(args.out) if args.out else report.default_out_dir()
     json_path, md_path = report.write_report(document, out_dir)
