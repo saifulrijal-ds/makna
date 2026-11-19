@@ -8,7 +8,12 @@ and hold no logic of their own.
 
 from makna.resolve import Resolution
 from makna.services.caller import CHANNELS, ROLES, Caller
-from makna.services.errors import PermissionDenied, ServiceError, ServiceErrorCode
+from makna.services.errors import (
+    LifecycleErrorCode,
+    PermissionDenied,
+    ServiceError,
+    ServiceErrorCode,
+)
 from makna.services.factory import build_services
 from makna.services.service import (
     Services,
@@ -22,6 +27,7 @@ __all__ = [
     "CHANNELS",
     "ROLES",
     "Caller",
+    "LifecycleErrorCode",
     "PermissionDenied",
     "Resolution",
     "ServiceError",

@@ -103,7 +103,10 @@ def test_main_without_urls_exits_2_and_names_the_variable(
 
 def test_sync_catalog_runs_after_migrate_and_the_image_carries_its_inputs() -> None:
     names = [step.name for step in init.STEPS]
-    assert names.index("sync-catalog") == names.index("migrate") + 1
+    # WP-18 puts `definitions-repo` between the two: the catalog check reads the repository.
+    assert names.index("migrate") < names.index("sync-catalog")
+    assert names.index("sync-catalog") == names.index("definitions-repo") + 1
+    assert names.index("definitions-repo") == names.index("migrate") + 1
     dockerfile = (Path(__file__).resolve().parents[2] / "deploy" / "Dockerfile").read_text()
     assert "COPY semantic ./semantic" in dockerfile and "COPY data ./data" in dockerfile
 

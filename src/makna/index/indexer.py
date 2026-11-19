@@ -443,8 +443,14 @@ def semantic_row(obj: DefinitionObject, lookup: _Lookup) -> dict[str, Any]:
         "official": dump_definition(obj.official) if obj.official is not None else None,
         "proposal": dump_definition(obj.proposal) if obj.proposal is not None else None,
         "official_path": obj.official_path,
-        "official_commit": None,
-        "proposal_commit": None,
+        "official_commit": obj.official_commit,
+        "proposal_commit": obj.proposal_commit,
+        "proposal_origin": obj.proposal_origin,
+        "proposal_errors": (
+            [{"code": c, "line": ln, "message": m} for c, ln, m in obj.proposal_errors]
+            if obj.proposal_errors is not None
+            else None
+        ),
         "version": served.version,
         "owner_team": served.owner.team,
         "sensitivity": served.sensitivity,
@@ -855,6 +861,7 @@ def build(
     objects: Sequence[DefinitionObject],
     *,
     derive: Derive | None = None,
+    within: Callable[[Connection], None] | None = None,
 ) -> IndexResult:
     """Rebuild the semantic index from `objects` and the catalog tables.
 
@@ -865,7 +872,16 @@ def build(
     `derive` is the service layer's hook (see the module docstring): when given, its facts are
     merged into the metric rows and its `R05` issues are synced; when not, the stored dimensions
     and the `R05` rows are left as they are.
+
+    `within` runs inside the same transaction, after the index rows are written: the write path
+    uses it to set the commit of an intent row and `last_indexed_commit` together with the index
+    (ARCHITECTURE section 10, step 4), so either all of it is stored or none.
     """
+    ids = [obj.id for obj in objects]
+    if len(ids) != len(set(ids)):
+        # Two files that name one object would write one row twice, and the later one would hide
+        # the other (review I-5): the caller must have settled which file is the object.
+        raise IndexerError("two definition objects have the same id")
     result = IndexResult()
     with engine.begin() as connection:
         # The marker first: a sync that commits after it is not claimed as covered by the facts.
@@ -925,6 +941,8 @@ def build(
             select(search_document.c.kind, func.count()).group_by(search_document.c.kind)
         )
         result.by_kind = {kind: count for kind, count in counts}
+        if within is not None:
+            within(connection)
     return result
 
 

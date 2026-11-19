@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,8 @@ ALLOWED_MAKNA: dict[str, frozenset[str] | None] = {
     # The composition root mounts the interfaces; it is the only module that may import both.
     "app": frozenset({"services", "web", "mcp", "model", "config"}),
     "compiler": frozenset({"model"}),
+    # The definition store reads and writes files and calls git; it knows only the models.
+    "definitions": frozenset({"model"}),
     "engine": frozenset({"model"}),
     "catalog": frozenset({"model", "index"}),
     "index": frozenset({"model"}),
@@ -190,6 +193,9 @@ def test_every_package_of_the_architecture_exists() -> None:
         ("mcp/bridge.py", "from makna.model import request\n", "makna.model"),
         ("mcp/bridge.py", "from makna.services import Caller\n", "makna.services"),
         ("mcp/bridge.py", "from makna.mcp import texts\n", "makna.mcp"),
+        ("definitions/x.py", "from makna.services import lifecycle\n", "makna.services"),
+        ("definitions/x.py", "from makna.index import indexer\n", "makna.index"),
+        ("definitions/x.py", "from makna.compiler import plan\n", "makna.compiler"),
         ("services/x.py", "from makna.mcp import server\n", "makna.mcp"),
         ("services/x.py", "from makna.web import routes\n", "makna.web"),
         ("services/x.py", "from makna.app import create_app\n", "makna.app"),
@@ -253,3 +259,17 @@ def test_allowed_imports_pass(tmp_path: Path) -> None:
     _write(tmp_path, "search/a.py", "from makna.model.search import S\nfrom . import b\n")
     _write(tmp_path, "engine/a.py", "from makna.model import m\nfrom . import b\n")
     assert check_dependency_rule(tmp_path) == []
+
+
+def test_only_the_git_wrapper_starts_a_program() -> None:
+    """WP-18: `makna.definitions.repo` is the one place that runs a command, and it never uses a
+    shell. Nothing in the web app or the MCP server can start a process or call git."""
+    pattern = re.compile(
+        r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|os\.spawn\w*|pty|shell\s*=\s*True)\b"
+    )
+    found = {
+        str(path.relative_to(SRC))
+        for path in (SRC / "makna").rglob("*.py")
+        if pattern.search(path.read_text(encoding="utf-8"))
+    }
+    assert found == {"makna/definitions/repo.py"}

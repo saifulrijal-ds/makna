@@ -139,6 +139,8 @@ semantic_object = Table(
     Column("sensitivity", Text),
     Column("derived", JSONB),
     _ts("updated_at", nullable=False, default_now=True),
+    Column("proposal_origin", Text),
+    Column("proposal_errors", JSONB),
 )
 
 object_edge = Table(
@@ -246,6 +248,8 @@ audit_event = Table(
     Column("to_status", Text),
     Column("reason", Text),
     Column("commit_sha", Text),
+    Column("files", JSONB),
+    _ts("failed_at"),
     UniqueConstraint(
         "commit_sha", "object_id", "action", name="uq_audit_event_commit_object_action"
     ),

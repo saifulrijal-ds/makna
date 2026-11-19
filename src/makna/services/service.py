@@ -46,13 +46,15 @@ from makna.search.embedding import EmbeddingError
 from makna.search.hybrid import HybridSearch, SearchError
 from makna.services import accounts, objects, permissions
 from makna.services.accounts import AccountStore
+from makna.services.approval import ApprovalSettings
 from makna.services.caller import Caller
 from makna.services.calllog import CallLog, CallState
 from makna.services.definitions import DefinitionReader
-from makna.services.derive import personal_column_issue
+from makna.services.derive import make_derive, personal_column_issue
 from makna.services.discovery import Discovery
 from makna.services.errors import ServiceError, ServiceErrorCode, invalid_input
 from makna.services.filter_types import check_filter_types
+from makna.services.lifecycle import Lifecycle
 from makna.services.redact import redact_value
 from makna.services.related import RELATIONS, list_related
 from makna.services.snapshot import Snapshot, SnapshotCache
@@ -104,6 +106,8 @@ class Services:
         policy: GovernancePolicy,
         dialect: str = "postgres",
         search_settings: SearchSettings | None = None,
+        definitions_repo: str | None = None,
+        approval: ApprovalSettings | None = None,
     ) -> None:
         if dialect not in SUPPORTED_DIALECTS:
             raise ValueError(
@@ -121,6 +125,15 @@ class Services:
         self._warned: set[tuple[str, str]] = set()
         self._warn_lock = threading.Lock()
         self._reader = DefinitionReader(self, self._warn_stale_policy)
+        self._lifecycle = Lifecycle(
+            engine,
+            provider,
+            derive=make_derive(policy, dialect),
+            repo_path=definitions_repo,
+            settings=approval or ApprovalSettings(governance_team="data-governance"),
+            policy=policy,
+            dialect=dialect,
+        )
 
     @property
     def policy(self) -> GovernancePolicy:
@@ -131,6 +144,12 @@ class Services:
     def accounts(self) -> AccountStore:
         """Users and tokens on this database, for the web app (it holds no engine)."""
         return AccountStore(self._engine)
+
+    @property
+    def lifecycle(self) -> Lifecycle:
+        """The write path of the definition store (WP-18): the seven lifecycle actions and the
+        index sync. Refuses every action when the definitions are a plain directory."""
+        return self._lifecycle
 
     @property
     def discovery(self) -> Discovery:

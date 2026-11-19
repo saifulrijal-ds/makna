@@ -32,13 +32,15 @@ from makna.config import (
     load_tag_map,
 )
 from makna.definitions.loader import definition_objects, load_definitions, official_objects
+from makna.definitions.repo import GitRepo, RepoMode, RepoUnusable, repository_mode
 from makna.engine.postgres import PostgresConnector
 from makna.index import indexer, migrate
 from makna.index.db import make_engine
 from makna.search.embedding import make_provider
-from makna.services import accounts, freshness
+from makna.services import accounts, freshness, store
 from makna.services.derive import make_derive
 from makna.services.examples import validate_for_build
+from makna.services.lifecycle import seed_repository
 
 
 class InitError(Exception):
@@ -57,7 +59,13 @@ class Context:
     catalog_file: Path = Path("data/catalog/lending.catalog.yaml")
     """The catalog export that `sync-catalog` reads."""
     definitions_dir: Path = Path("semantic/definitions")
-    """The definitions the reference check reads, until the definitions repository (WP-18)."""
+    """The sample definitions of the source tree: the content that `definitions-repo` seeds the
+    repository with, and what the reference check and the index read while there is no
+    repository of their own (`definitions_repo` unset). Never written to."""
+    definitions_repo: Path | None = None
+    """`MAKNA_DEFINITIONS_REPO`: the definitions git repository (ARCHITECTURE section 10). When it
+    is a repository of its own, the reference check and the index read it, as the application
+    committed it, and not `definitions_dir`."""
     engine_url: str | None = field(default=None, repr=False)
     """`MAKNA_ENGINE_URL`: the read-only account of the sample database, for the freshness check.
     Without it the `refresh-freshness` step skips. Left out of `repr` (it holds a password)."""
@@ -105,9 +113,58 @@ def run_migrations(context: Context) -> str:
     return "unchanged" if before == after else f"upgraded {before} -> {after}"
 
 
-def sync_catalog_step(context: Context) -> str:
-    found = official_objects(context.definitions_dir)
+def _repository(context: Context) -> GitRepo | None:
+    """The definitions repository when `MAKNA_DEFINITIONS_REPO` is set and is one of its own; None
+    when it is not set or lies inside another repository (a plain directory). A configured path
+    whose repository is broken is an error and never a fallback to other files."""
+    path = context.definitions_repo
+    if path is None:
+        return None
+    try:
+        mode = repository_mode(path, configured=True)
+    except RepoUnusable as error:
+        raise InitError(error.message) from None
+    return GitRepo(path) if mode is RepoMode.REPOSITORY else None
+
+
+def _plain_directory(context: Context) -> Path:
+    """The plain directory the checks read when there is no repository: the configured path when
+    it lies inside another repository, else the sample definitions of the source tree."""
+    return context.definitions_repo or context.definitions_dir
+
+
+def seed_definitions_step(context: Context) -> str:
+    """Make `MAKNA_DEFINITIONS_REPO` a git repository with the sample definitions in it.
+
+    When the path is missing or empty, it is made a repository and the definitions of
+    `semantic/definitions` are committed as one application action, `seed`. A repository that
+    already has content, or a directory that holds other things, is left alone, so a second `init`
+    changes nothing. Nothing is ever written into `semantic/definitions`. The commit is completed
+    in the index by the `build-index` step that follows.
+    """
+    if context.definitions_repo is None:
+        return "skipped (MAKNA_DEFINITIONS_REPO is not set, so the definitions stay read-only)"
     engine = make_engine(context.database_url)
+    try:
+        outcome = seed_repository(engine, context.definitions_repo, context.definitions_dir)
+    except store.StoreError as error:
+        shown = "; ".join(i.format("") for i in error.issues[:5])
+        raise InitError(f"{error}: {shown}" if shown else str(error)) from None
+    except SQLAlchemyError as error:
+        raise InitError(f"database error ({type(error).__name__})") from None
+    finally:
+        engine.dispose()
+    return f"seeded: {outcome.message}" if outcome.seeded else f"unchanged ({outcome.message})"
+
+
+def sync_catalog_step(context: Context) -> str:
+    engine = make_engine(context.database_url)
+    repository = _repository(context)
+    found = (
+        store.official_objects(repository, engine)
+        if repository is not None
+        else official_objects(_plain_directory(context))
+    )
     try:
         result = sync_catalog(
             engine,
@@ -140,7 +197,10 @@ def build_index_step(context: Context) -> str:
     `fastembed`, whose model the image carries). A run that finds nothing to change writes
     nothing, so a second `init` prints `unchanged`.
     """
-    loaded = load_definitions(context.definitions_dir)
+    repository = _repository(context)
+    if repository is not None:
+        return _sync_repository_step(context, repository)
+    loaded = load_definitions(_plain_directory(context))
     problems = validate_for_build(loaded)
     if problems:
         # The same check as `makna validate`, V19 included (C-1): nothing is indexed, and the
@@ -154,7 +214,7 @@ def build_index_step(context: Context) -> str:
     objects = definition_objects(loaded)
     if not objects:
         raise InitError(
-            f"{context.definitions_dir} holds no definition objects; nothing was indexed"
+            f"{_plain_directory(context)} holds no definition objects; nothing was indexed"
         )
     runtime = load_search_runtime()
     governance = load_governance_runtime()
@@ -172,6 +232,31 @@ def build_index_step(context: Context) -> str:
         f"indexed with {provider.model_id} (documents +{result.documents_added} "
         f"~{result.documents_changed} -{result.documents_removed}, objects "
         f"+{result.objects_added} ~{result.objects_changed} -{result.objects_removed})"
+    )
+
+
+def _sync_repository_step(context: Context, repository: GitRepo) -> str:
+    """The index of a definitions repository: `makna index sync` (it also completes the `seed`)."""
+    runtime = load_search_runtime()
+    governance = load_governance_runtime()
+    derive = make_derive(governance.governance.policy(), governance.dialect)
+    key = runtime.embedding_api_key.get_secret_value() if runtime.embedding_api_key else None
+    provider = make_provider(runtime.embedding_provider, runtime.embedding, key)
+    engine = make_engine(context.database_url)
+    try:
+        state, result = store.sync(engine, provider, repository, derive=derive)
+    except store.StoreError as error:
+        shown = "; ".join(i.format("") for i in error.issues[:5])
+        more = f" (and {len(error.issues) - 5} more)" if len(error.issues) > 5 else ""
+        raise InitError(f"{error}: {shown}{more}" if shown else str(error)) from None
+    finally:
+        engine.dispose()
+    if result.total_changes == 0 and not state.matched and not state.dead:
+        return "unchanged"
+    return (
+        f"indexed from the repository with {provider.model_id} (documents "
+        f"+{result.documents_added} ~{result.documents_changed} -{result.documents_removed}, "
+        f"objects +{result.objects_added} ~{result.objects_changed} -{result.objects_removed})"
     )
 
 
@@ -258,6 +343,7 @@ STEPS: list[Step] = [
     Step("generate-sample-data", generate_sample_data),
     Step("load-lending", load_lending),
     Step("migrate", run_migrations),
+    Step("definitions-repo", seed_definitions_step),
     Step("sync-catalog", sync_catalog_step),
     Step("build-index", build_index_step),
     Step("refresh-freshness", refresh_freshness_step),
@@ -299,6 +385,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             lending_loader_url=_required("MAKNA_LENDING_LOADER_URL"),
             engine_url=os.environ.get("MAKNA_ENGINE_URL") or None,
             demo_password=os.environ.get("MAKNA_DEMO_PASSWORD") or None,
+            definitions_repo=Path(repo)
+            if (repo := os.environ.get("MAKNA_DEFINITIONS_REPO"))
+            else None,
         )
     except InitError as error:
         print(f"init: {error}", file=sys.stderr)

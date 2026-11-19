@@ -40,8 +40,11 @@ services:
       MAKNA_ENGINE_URL: postgresql://lending_reader:${MAKNA_LENDING_READER_PASSWORD:-makna_dev_reader}@postgres:5432/lending
       # No default: without it, init creates no demo users (deploy/README.md).
       MAKNA_DEMO_PASSWORD: ${MAKNA_DEMO_PASSWORD:-}
+      # The definitions git repository: `init` seeds it from semantic/definitions (once).
+      MAKNA_DEFINITIONS_REPO: /var/lib/makna/definitions
     volumes:
       - generated:/app/data/generated
+      - definitions:/var/lib/makna/definitions
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +59,9 @@ services:
       MAKNA_SECRET_KEY: ${MAKNA_SECRET_KEY:?set MAKNA_SECRET_KEY (see deploy/README.md)}
       # The stack is served over plain http://, so the session cookie cannot be Secure here.
       MAKNA_WEB_DEVELOPMENT: "true"
+      MAKNA_DEFINITIONS_REPO: /var/lib/makna/definitions
+    volumes:
+      - definitions:/var/lib/makna/definitions
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -74,3 +80,4 @@ services:
 volumes:
   pgdata:
   generated:
+  definitions:

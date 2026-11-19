@@ -19,6 +19,15 @@ class DefinitionObject:
     proposal: AnyDefinition | None = None
     official_path: str | None = None
     proposal_path: str | None = None
+    official_commit: str | None = None
+    """The application commit the official content is from (a git repository only)."""
+    proposal_commit: str | None = None
+    """The latest commit that touched the proposal (a git repository only)."""
+    proposal_origin: str | None = None
+    """`external:<author email>` for a proposal that came from a commit made outside Makna."""
+    proposal_errors: tuple[tuple[str, int | None, str], ...] | None = None
+    """The definition errors of the proposal as `(rule code, line, message)`; None when not
+    checked (a plain directory)."""
 
     def __post_init__(self) -> None:
         if self.official is None and self.proposal is None:
