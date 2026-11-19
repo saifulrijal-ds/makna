@@ -1,0 +1,101 @@
+# The optional OpenMetadata stack (CON-2): a catalog server for `makna catalog sync --source
+# openmetadata`. It runs on its own, apart from docker-compose.yml:
+#
+#   docker compose -f deploy/docker-compose.openmetadata.yml up -d --wait
+#   docker compose -f deploy/docker-compose.openmetadata.yml down -v
+#
+# Pinned to OpenMetadata 2.0.7, the release whose published schemas the connector's fixtures
+# follow. Built from the release's own PostgreSQL quickstart (docker/docker-compose-quickstart/
+# docker-compose-postgres.yml) and its development compose with OpenSearch
+# (docker/development/docker-compose-postgres.yml): PostgreSQL instead of MySQL (GPL) and
+# OpenSearch instead of Elasticsearch (not permissive), so every image is under a permissive or
+# Apache licence (deploy/README.md). The ingestion (Airflow) service is left out and the pipeline client is switched off, because
+# Makna reads the catalog and the sample catalog is loaded by deploy/seed_openmetadata.py. The
+# remaining settings are the server's defaults (conf/openmetadata.yaml of the release).
+# Everything binds to 127.0.0.1. Not run in the session that wrote it (no Docker there):
+# WP-21 manual criterion 4 is the first real start.
+name: makna-openmetadata
+
+x-server-environment: &server-environment
+  SERVER_PORT: "8585"
+  SERVER_ADMIN_PORT: "8586"
+  DB_DRIVER_CLASS: org.postgresql.Driver
+  DB_SCHEME: postgresql
+  DB_HOST: postgresql
+  DB_PORT: "5432"
+  # The database image creates this user and password itself (its init script), so they are fixed.
+  DB_USER: openmetadata_user
+  DB_USER_PASSWORD: openmetadata_password
+  OM_DATABASE: openmetadata_db
+  SEARCH_TYPE: opensearch
+  ELASTICSEARCH_HOST: opensearch
+  ELASTICSEARCH_PORT: "9200"
+  ELASTICSEARCH_SCHEME: http
+  ELASTICSEARCH_CLUSTER_ALIAS: openmetadata
+  PIPELINE_SERVICE_CLIENT_ENABLED: "false"
+
+services:
+  postgresql:
+    image: docker.getcollate.io/openmetadata/postgresql:2.0.7
+    command: "--work_mem=10MB"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${MAKNA_OPENMETADATA_DB_ROOT_PASSWORD:-openmetadata_dev_root}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: psql -U postgres -tAc 'select 1' -d openmetadata_db
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  opensearch:
+    image: opensearchproject/opensearch:3.4.0
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${MAKNA_OPENMETADATA_SEARCH_PASSWORD:-OpenMetadata_password123!!!}
+      - indices.query.bool.max_clause_count=4096
+    volumes:
+      - search-data:/usr/share/opensearch/data
+    healthcheck:
+      test: "curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep -qE 'green|yellow' || exit 1"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  migrate:
+    image: docker.getcollate.io/openmetadata/server:2.0.7
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    environment: *server-environment
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+  server:
+    image: docker.getcollate.io/openmetadata/server:2.0.7
+    restart: unless-stopped
+    environment: *server-environment
+    ports:
+      - "127.0.0.1:8585:8585"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  db-data:
+  search-data:

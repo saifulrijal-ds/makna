@@ -10,7 +10,7 @@ import re
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -160,6 +160,53 @@ class McpSettings(BaseModel):
 
 MIN_SECRET_KEY_LENGTH = 32
 
+_ENGINE_CATALOG_PATTERN = re.compile(r"[^.\s]+")
+
+
+class OpenMetadataSettings(BaseModel):
+    """`[catalog.openmetadata]` of `config/makna.toml` (ARCHITECTURE section 6.1, CON-2).
+
+    `services` maps the name of an OpenMetadata database service to the catalog name the query
+    engine uses (the first part of `engine_fqn`); a table of a service that is not listed is
+    skipped. The token is not here: it comes only from `MAKNA_OPENMETADATA_TOKEN`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    base_url: str
+    services: dict[str, str]
+    source_name: str = "openmetadata"
+    page_size: Annotated[int, Field(strict=True, ge=1, le=1000)] = 100
+    max_pages: Annotated[int, Field(strict=True, ge=1, le=100_000)] = 1000
+    timeout_seconds: Annotated[float, Field(gt=0, le=600)] = 30.0
+
+    @field_validator("services")
+    @classmethod
+    def _services(cls, value: dict[str, str]) -> dict[str, str]:
+        if not value:
+            raise ValueError('list at least one service, as service-name = "engine-catalog"')
+        for service, catalog in value.items():
+            if not service.strip() or _ENGINE_CATALOG_PATTERN.fullmatch(catalog) is None:
+                raise ValueError(
+                    "each value is the engine's catalog name: not empty, no dot, no whitespace"
+                )
+        return value
+
+    @field_validator("source_name")
+    @classmethod
+    def _named(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+
+class CatalogSettings(BaseModel):
+    """`[catalog]` of `config/makna.toml`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    openmetadata: OpenMetadataSettings | None = None
+
 
 class WebSettings(BaseModel):
     """`[web]` of `config/makna.toml`: the web pages (ARCHITECTURE section 13).
@@ -211,6 +258,7 @@ class Settings(BaseModel):
     engine: EngineSettings = Field(default_factory=EngineSettings)
     mcp: McpSettings = Field(default_factory=McpSettings)
     web: WebSettings = Field(default_factory=WebSettings)
+    catalog: CatalogSettings = Field(default_factory=CatalogSettings)
 
 
 _ENV_FIELDS = (
@@ -391,5 +439,32 @@ def load_governance_runtime(
         env = os.environ
     try:
         return GovernanceRuntime.model_validate(_collect_values(env, config_path))
+    except ValidationError as error:
+        raise ConfigError(_problems(error)) from None
+
+
+class OpenMetadataRuntime(BaseModel):
+    """What the OpenMetadata connector needs: its settings and the token.
+
+    `makna catalog sync --source openmetadata` uses this, so it does not require
+    `MAKNA_SECRET_KEY`. `openmetadata_token` is None when `MAKNA_OPENMETADATA_TOKEN` is not set.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
+
+    openmetadata_token: SecretStr | None = None
+    catalog: CatalogSettings = Field(default_factory=CatalogSettings)
+
+
+def load_openmetadata_runtime(
+    env: Mapping[str, str] | None = None, config_path: Path | str | None = None
+) -> OpenMetadataRuntime:
+    """`MAKNA_OPENMETADATA_TOKEN` and the `[catalog.openmetadata]` settings."""
+    if env is None:
+        import os
+
+        env = os.environ
+    try:
+        return OpenMetadataRuntime.model_validate(_collect_values(env, config_path))
     except ValidationError as error:
         raise ConfigError(_problems(error)) from None

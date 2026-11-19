@@ -76,3 +76,24 @@ def test_a_failing_stack_check_never_prints_an_empty_message(
     out = capsys.readouterr().out
     assert out.startswith("FAIL check_bare: AssertionError: ")
     assert "1 + 1 == 3" in out
+
+
+def test_openmetadata_without_a_token_exits_2_naming_the_variable(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MAKNA_OPENMETADATA_TOKEN", raising=False)
+    monkeypatch.setenv("MAKNA_DATABASE_URL", "postgresql://u:p@localhost/none")
+    assert main(["catalog", "sync", "--source", "openmetadata"]) == 2
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "MAKNA_OPENMETADATA_TOKEN" in err
+
+
+def test_file_is_for_the_file_source_only(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["catalog", "sync", "--source", "openmetadata", "--file", "x.yaml"]) == 2
+    assert "--file is for --source file only" in capsys.readouterr().err
+
+
+def test_an_unknown_source_is_a_usage_error() -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["catalog", "sync", "--source", "datahub"])
+    assert raised.value.code == 2

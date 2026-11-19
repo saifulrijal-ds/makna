@@ -27,6 +27,53 @@ job, and here together. The Makna image installs `uv` 0.11.32 (the version CI us
 **Ports.** Both published ports bind to `127.0.0.1` only: PostgreSQL on 5432
 (`MAKNA_POSTGRES_PORT` changes it) and the app on 8000.
 
+## The OpenMetadata stack (optional, CON-2)
+
+`deploy/docker-compose.openmetadata.yml` runs an OpenMetadata server apart from the main stack
+(its own project name, `makna-openmetadata`, and its own volumes; ports bind to `127.0.0.1`).
+It needs Docker and about 3 GB of memory. Only the web interface (8585) is published (to 127.0.0.1); the database and OpenSearch are reached over the compose network only, so it does not clash with the main stack's PostgreSQL on 5432.
+
+| Service | Image | Licence |
+|---|---|---|
+| `postgresql` | `docker.getcollate.io/openmetadata/postgresql:2.0.7` | PostgreSQL License (permissive). Built by the release from `postgres:15` (`docker/postgresql/Dockerfile_postgres`) plus an init script. |
+| `opensearch` | `opensearchproject/opensearch:3.4.0` | Apache-2.0. The search engine of the stack; the release's quickstart uses Elasticsearch, which is not permissive, so the release's own OpenSearch setup (`docker/development/docker-compose-postgres.yml`, `SEARCH_TYPE=opensearch`) is used. |
+| `migrate` | `docker.getcollate.io/openmetadata/server:2.0.7` | OpenMetadata server, Apache-2.0 (`LICENSE` of the repository at the tag). Alpine base and OpenJDK 21 runtime as in `docker/development/Dockerfile`. |
+| `server` | `docker.getcollate.io/openmetadata/server:2.0.7` | The same image. |
+
+Licences were read from the release's Dockerfiles and `LICENSE` and from general knowledge of the
+upstream images (PostgreSQL License, Apache-2.0); the image registry pages were not reachable
+from the session that wrote this, so check them before relying on the table. The release's
+default MySQL image (`mysql/mysql-server`) is GPL-2.0, which is why PostgreSQL is used.
+
+**Version pin.** OpenMetadata 2.0.7. It is the release whose published JSON schemas the
+connector's fixtures follow (`tests/unit/fixtures/openmetadata/README.md`). Change the tags in the
+compose file and in this table together; a unit test compares them. The compose file follows the
+release's PostgreSQL quickstart and its OpenSearch development compose, without the ingestion
+(Airflow) service.
+
+```
+docker compose -f deploy/docker-compose.openmetadata.yml up -d --wait
+```
+
+The web interface is at `http://localhost:8585`. A new server has an administrator whose
+user name and password the OpenMetadata documentation gives for the release; change the
+password. Create a token with Settings, Bots, `ingestion-bot` (it may write), or a personal
+access token of your profile, and put it in `MAKNA_OPENMETADATA_TOKEN`. Load the sample catalog,
+then sync it:
+
+```
+export MAKNA_OPENMETADATA_TOKEN=<token>
+uv run python -m deploy.seed_openmetadata          # idempotent; creates service lending_sample
+uv run makna catalog sync --source openmetadata
+docker compose -f deploy/docker-compose.openmetadata.yml down -v
+```
+
+`[catalog.openmetadata]` of `config/makna.toml` names the URL and maps the service
+`lending_sample` to the engine catalog `lending`. A database that was synced from the file
+source refuses the OpenMetadata source (its tables belong to the file source): start from a
+fresh database, or keep one source. **These two files have not been run**: the session that wrote
+them had no Docker. WP-21 manual criterion 4 is their first start.
+
 ## Databases and roles
 
 | Database | Owner | Roles that can connect |
