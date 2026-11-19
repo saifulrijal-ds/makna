@@ -16,7 +16,13 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from makna.definitions import layout
+from makna.definitions.render import MAX_YAML_BYTES, parse_text
 from makna.services.errors import invalid_input
+
+KINDS = layout.KINDS
+"""The kinds of definition an editor can open (the web layer may not import `makna.definitions`)."""
+__all__ = ["MAX_YAML_BYTES", "KINDS"]
 
 NO_PROPOSAL = "none"
 """`expected_proposal_sha256` for "the object had no proposal when I opened the editor"."""
@@ -96,3 +102,16 @@ class CheckResult:
     @property
     def ok(self) -> bool:
         return self.count == 0
+
+
+def is_object_id(kind: str, name: str) -> bool:
+    """True when `kind:name` is the id of a definition object (a known kind, a well-formed name)."""
+    return layout.parse_object_id(f"{kind}:{name}") is not None
+
+
+def name_in(text: str) -> tuple[str | None, list[tuple[str, int | None, str]]]:
+    """The name a text gives itself, or the V01 problems (rule, line, message) that stop it."""
+    definition, problems = parse_text(text)
+    if definition is None:
+        return None, [(i.code, i.line, i.message) for i in problems]
+    return definition.name, []

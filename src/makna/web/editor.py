@@ -42,15 +42,17 @@ import anyio.to_thread
 from fastapi import APIRouter, Form, HTTPException, Request
 from starlette.responses import RedirectResponse, Response
 
-from makna.definitions import layout
-from makna.definitions.render import MAX_YAML_BYTES, parse_text
 from makna.services import Caller, LifecycleErrorCode, ServiceError, ServiceErrorCode, permissions
 from makna.services.editing import (
+    KINDS,
+    MAX_YAML_BYTES,
     NEW_OBJECT,
     NO_PROPOSAL,
     CheckIssue,
     CheckResult,
     EditorSource,
+    is_object_id,
+    name_in,
 )
 from makna.services.lifecycle import (
     EXISTS_MESSAGE,
@@ -69,7 +71,7 @@ logger = logging.getLogger(__name__)
 editor_router = APIRouter()
 
 TEMPLATES = Path(__file__).parent / "definition_templates"
-"""One file per kind of `layout.KINDS`: `<kind>.yaml`. They are files of the package, not built
+"""One file per kind of `KINDS`: `<kind>.yaml`. They are files of the package, not built
 from the model, so a person can read and change them; `template_text` fills in the owner team."""
 
 KIND_LABELS = {
@@ -125,7 +127,7 @@ STATUS_OF: dict[str, int] = {
 def template_text(kind: str, team: str | None) -> str:
     """The template of `kind` with `owner.team` set to `team` when there is one. Every other
     field the author must fill is left empty, so Check names it."""
-    if kind not in layout.KINDS:
+    if kind not in KINDS:
         raise ValueError("not a kind of definition")
     text = (TEMPLATES / f"{kind}.yaml").read_text(encoding="utf-8")
     if team:
@@ -136,10 +138,7 @@ def template_text(kind: str, team: str | None) -> str:
 
 def edit_path(caller: Caller, kind: str, name: str) -> str | None:
     """The editor's address for an object, or None for a caller who may not edit."""
-    if (
-        not permissions.can_edit_proposals(caller)
-        or layout.parse_object_id(f"{kind}:{name}") is None
-    ):
+    if not permissions.can_edit_proposals(caller) or not is_object_id(kind, name):
         return None
     return f"/edit/{kind}/{quote(name, safe='')}"
 
@@ -330,7 +329,7 @@ def _render(request: Request, page: Page, status: int = 200) -> Response:
     target = page.target
     if page.diff is None and target.is_new:
         page.diff = make_diff(None, "", None)
-    other_kinds = [(k, KIND_LABELS[k]) for k in layout.KINDS if k != target.kind]
+    other_kinds = [(k, KIND_LABELS[k]) for k in KINDS if k != target.kind]
     return state.pages.render(
         request.scope,
         "editor.html",
@@ -427,9 +426,9 @@ def _guard(request: Request) -> WebContext:
 
 
 def _target(kind: str, name: str | None = None) -> Target:
-    if kind not in layout.KINDS:
+    if kind not in KINDS:
         raise HTTPException(status_code=404)
-    if name is not None and layout.parse_object_id(f"{kind}:{name}") is None:
+    if name is not None and not is_object_id(kind, name):
         raise HTTPException(status_code=404)
     return Target(kind, name)
 
@@ -462,13 +461,13 @@ async def _source(life: Lifecycle, caller: Caller, object_id: str | None) -> Edi
 def _name_in(kind: str, text: str) -> tuple[str | None, list[CheckIssue]]:
     """The name a new object's text gives itself, or the V01 problems that stop it from having
     one. The kind is checked by `Lifecycle.check` and by the actions."""
-    definition, problems = parse_text(text)
-    if definition is None:
+    name, problems = name_in(text)
+    if name is None:
         return None, [
-            CheckIssue(i.code, i.line, "your text", i.message[:MAX_MESSAGE_SHOWN], True)
-            for i in problems
+            CheckIssue(rule, line, "your text", message[:MAX_MESSAGE_SHOWN], True)
+            for rule, line, message in problems
         ]
-    return definition.name, []
+    return name, []
 
 
 # --- pages -----------------------------------------------------------------------------------
@@ -480,7 +479,7 @@ async def new_index(request: Request) -> Response:
     return _state(request).pages.render(
         request.scope,
         "new.html",
-        {"kinds": [(k, KIND_LABELS[k]) for k in layout.KINDS]},
+        {"kinds": [(k, KIND_LABELS[k]) for k in KINDS]},
     )
 
 
