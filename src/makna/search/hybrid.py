@@ -23,7 +23,13 @@ from sqlalchemy import Connection, Engine, text
 
 from makna.model.search import DOCUMENT_KINDS, EmbeddingProvider, SearchSettings
 from makna.search import confidence as confidence_module
-from makna.search.confidence import Confidence, Vocabulary, build_vocabulary, matched_terms
+from makna.search.confidence import (
+    Confidence,
+    Vocabulary,
+    build_vocabulary,
+    is_ambiguous,
+    matched_terms,
+)
 from makna.search.query import process
 
 ROLES: tuple[str, ...] = ("viewer", "agent", "curator", "approver", "admin")
@@ -115,6 +121,11 @@ class Hit:
     vector_similarity: float | None
     vector_rank: int | None
     matched_terms: tuple[str, ...]
+    coverage: float = 0.0
+    """The share of the question's content words that this hit's own names hold (section 8.4)."""
+    pre_fusion_score: float = 0.0
+    """`w_keyword * keyword_score + w_vector * vector_similarity`, the two legs before the rank
+    fusion squeezes them (section 8.4, rule 3, D-38). A leg the hit is not in counts 0."""
 
 
 @dataclass(frozen=True)
@@ -122,6 +133,9 @@ class SearchResult:
     query: str
     hits: tuple[Hit, ...]
     confidence: Confidence
+    ambiguous_between: tuple[str, ...] = ()
+    """The ids of the two best metric hits when the question does not tell them apart (section
+    8.4, rule 3); empty otherwise, and always when the confidence is low."""
 
     @property
     def ids(self) -> list[str]:
@@ -137,6 +151,30 @@ def visible_statuses(role: str, include_deprecated: bool) -> list[str]:
     if include_deprecated:
         statuses.append("deprecated")
     return statuses
+
+
+def _pre_fusion(
+    w_keyword: float, w_vector: float, keyword: float | None, cosine: float | None
+) -> float:
+    return w_keyword * (keyword or 0.0) + w_vector * (cosine or 0.0)
+
+
+def ambiguous_pair(hits: tuple[Hit, ...], band: str) -> tuple[str, ...]:
+    """The ids of the two best metric hits when the rule of section 8.4 holds for them.
+
+    It looks at every hit the statement returned (at least three, whatever `limit` is), so the
+    answer does not depend on how many hits the caller asked to see. A `low` band names none: the
+    guidance then says that nothing may match.
+    """
+    metrics = [hit for hit in hits if hit.kind == "metric"][:2]
+    if band == "low" or len(metrics) < 2:
+        return ()
+    first, second = metrics
+    if is_ambiguous(
+        first.pre_fusion_score, first.coverage, second.pre_fusion_score, second.coverage
+    ):
+        return (first.object_id, second.object_id)
+    return ()
 
 
 def vector_literal(vector: list[float]) -> str:
@@ -214,6 +252,7 @@ class HybridSearch:
                     "limit": max(limit, confidence_module.TOP_HITS),
                 },
             ).all()
+        content, _ = confidence_module.split_words(processed.words, vocabulary)
         hits = tuple(
             Hit(
                 object_id=r.object_id,
@@ -228,6 +267,10 @@ class HybridSearch:
                 vector_similarity=None if r.vector_cosine is None else float(r.vector_cosine),
                 vector_rank=r.vector_rank,
                 matched_terms=tuple(matched_terms(processed.words, r.names)),
+                coverage=confidence_module.hit_coverage(content, r.names, vocabulary),
+                pre_fusion_score=_pre_fusion(
+                    settings.w_keyword, settings.w_vector, r.keyword_score, r.vector_cosine
+                ),
             )
             for r in rows
         )
@@ -238,4 +281,4 @@ class HybridSearch:
             vocabulary,
             settings.confidence,
         )
-        return SearchResult(query, hits[:limit], band)
+        return SearchResult(query, hits[:limit], band, ambiguous_pair(hits, band.band))

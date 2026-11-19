@@ -1,0 +1,135 @@
+{
+  "data": [
+    {
+      "id": "5193def7-f8d8-56d4-9dd0-95490096ad2f",
+      "name": "NPF",
+      "displayName": "NPF",
+      "description": "Financing more than 90 days past due.",
+      "fullyQualifiedName": "lending.NPF",
+      "synonyms": [
+        "non-performing financing",
+        "non-performing loan",
+        "kredit macet"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    },
+    {
+      "id": "564984cd-b607-5a55-aa96-4639bd228496",
+      "name": "Days past due",
+      "displayName": "Days past due",
+      "description": "Days since the oldest unpaid installment fell due.",
+      "fullyQualifiedName": "lending.Days past due",
+      "synonyms": [
+        "DPD",
+        "hari keterlambatan",
+        "tunggakan"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    },
+    {
+      "id": "0b753bad-d878-5c61-be86-8fb51855edec",
+      "name": "Collectibility",
+      "displayName": "Collectibility",
+      "description": "Credit quality class of a contract, from 1 (current) to 5 (loss).",
+      "fullyQualifiedName": "lending.Collectibility",
+      "synonyms": [
+        "kolektibilitas",
+        "kol"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    },
+    {
+      "id": "e8f7d31e-8a16-5edf-912e-156d30630edb",
+      "name": "Disbursement",
+      "displayName": "Disbursement",
+      "description": "Release of the approved financing amount to the customer.",
+      "fullyQualifiedName": "lending.Disbursement",
+      "synonyms": [
+        "pencairan",
+        "drawdown"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    },
+    {
+      "id": "f556ad97-cf84-5102-a220-3d6a967486f8",
+      "name": "Restructuring",
+      "displayName": "Restructuring",
+      "description": "Replacing the remaining repayment schedule of a contract by an easier one.",
+      "fullyQualifiedName": "lending.Restructuring",
+      "synonyms": [
+        "restrukturisasi",
+        "rescheduling"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    }
+  ],
+  "paging": {
+    "total": 8,
+    "after": "eyJuYW1lIjoiUmVzdHJ1Y3R1cmluZyIsImlkIjoiZjU1NmFkOTctY2Y4NC01MTAyLWEyMjAtM2Q2YTk2NzQ4NmY4In0="
+  }
+}

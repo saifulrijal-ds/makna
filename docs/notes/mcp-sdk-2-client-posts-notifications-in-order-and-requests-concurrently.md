@@ -1,0 +1,3 @@
+# The MCP 2.x HTTP client posts requests in concurrent tasks and notifications or responses inline, so "no pending request" does not mean "everything sent"
+
+In `mcp.client.streamable_http`, `post_writer` starts a task per JSON-RPC request but awaits the POST of a notification or a response inside its own loop. Requests and others therefore reach the server in no fixed order, and only a request has an answer to wait for. A bridge that stops when no request is pending can cancel a notification or response POST still in flight. Close the send stream and wait for the client's read stream to end (it ends after the last inline POST has its status), bounded by a timeout; tests should assert the set of messages received, and delay the stub's answer to reproduce a loss.

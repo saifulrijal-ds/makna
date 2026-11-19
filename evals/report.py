@@ -31,6 +31,7 @@ def build_report(
     *,
     retrieval: Mapping[str, Any] | None = None,
     compile_section: Mapping[str, Any] | None = None,
+    resolver: Mapping[str, Any] | None = None,
     generated_at: datetime.datetime | None = None,
 ) -> dict[str, Any]:
     moment = generated_at or datetime.datetime.now(datetime.UTC)
@@ -44,6 +45,8 @@ def build_report(
         report["retrieval"] = dict(retrieval)
     if compile_section is not None:
         report["compile"] = dict(compile_section)
+    if resolver is not None:
+        report["resolver"] = dict(resolver)
     report["gates"] = [
         {
             "name": r.name,
@@ -107,6 +110,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         lines += _render_retrieval(report["retrieval"])
     if "compile" in report:
         lines += _render_compile(report["compile"])
+    if "resolver" in report:
+        lines += _render_resolver(report["resolver"])
     lines += _render_settings(settings)
     return "\n".join(lines).rstrip() + "\n"
 
@@ -385,6 +390,87 @@ def _render_compile(section: Mapping[str, Any]) -> list[str]:
             "",
         ]
     return lines
+
+
+def _render_resolver(section: Mapping[str, Any]) -> list[str]:
+    """The resolver's exact-request accuracy (WP-20). Informative: no gate."""
+    answer, first = section["answer"], section["answer_first_20"]
+    lines = ["## Resolver (rule-based, no gate)", ""]
+    lines += [
+        f"The rule-based resolver of section 8.4 reads each golden question with today = "
+        f"{section['today']} and builds a request. A request is exact when it equals "
+        "`expected.request` as a value (metric, dimensions, filters, grain, both dates). The "
+        "held-out questions are not used.",
+        "",
+    ]
+    rows = [
+        [
+            "`answer`, all",
+            f"{_num(answer['exact'])} of {_num(answer['total'])}",
+            _num(answer["rate"]),
+            _status_line(answer),
+        ],
+        [
+            "`answer`, G01 to G20",
+            f"{_num(first['exact'])} of {_num(first['total'])}",
+            _num(first["rate"]),
+            _status_line(first),
+        ],
+    ]
+    for language, label in (("en", "English"), ("id", "Indonesian"), ("mixed", "mixed")):
+        part = section["by_language"][language]
+        if part["total"]:
+            rows.append(
+                [
+                    f"`answer`, {label}",
+                    f"{_num(part['exact'])} of {_num(part['total'])}",
+                    _num(part["rate"]),
+                    _status_line(part),
+                ]
+            )
+    clarify, none = section["clarify"], section["no_answer"]
+    rows += [
+        [
+            "`clarify`: ambiguous, with the expected candidates",
+            f"{_num(clarify['exact'])} of {_num(clarify['total'])}",
+            _num(clarify["rate"]),
+            _status_line(clarify),
+        ],
+        [
+            "`no_metric` and `refuse`: no request built",
+            f"{_num(none['exact'])} of {_num(none['total'])}",
+            _num(none["rate"]),
+            _status_line(none),
+        ],
+    ]
+    lines += _table(["Questions", "Exact", "Rate", "Resolver status of each"], rows) + [""]
+    lines += [
+        "G01 to G20 are the first 20 questions of the golden set (WP-20 acceptance 2: at least "
+        "10 of the 15 `answer` questions among them).",
+        "",
+    ]
+    wrong = [i for i in section["items"] if i["outcome"] == "answer" and not i["exact"]]
+    if wrong:
+        lines += ["`answer` questions whose request is not exact:", ""]
+        lines += _table(
+            ["Id", "Status", "Expected metric", "Built metric", "Unresolved words"],
+            [
+                [
+                    i["id"],
+                    i["status"],
+                    (i["expected_request"] or {}).get("metric", ""),
+                    (i["request"] or {}).get("metric", "none"),
+                    ", ".join(i["unresolved_terms"]) or "none",
+                ]
+                for i in wrong
+            ],
+        ) + [""]
+    return lines
+
+
+def _status_line(part: Mapping[str, Any]) -> str:
+    by = part["by_status"]
+    return f"resolved {by['resolved']}, ambiguous {by['ambiguous']}, no match {by['no_match']}"
 
 
 def _render_settings(settings: Mapping[str, Any]) -> list[str]:

@@ -31,6 +31,12 @@ PREFIX_MIN_LENGTH = 4
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 
 
+def tokens(text: str) -> list[str]:
+    """Lower-case words of `text` (letters and digits), in order, with repeats kept: what the
+    resolver reads, because the place of a word matters to it."""
+    return _WORD.findall(text.lower())
+
+
 def words(text: str) -> list[str]:
     """Lower-case words of `text` (letters and digits), in order, with repeats removed."""
     seen: dict[str, None] = {}

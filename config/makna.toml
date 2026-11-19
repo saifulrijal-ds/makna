@@ -115,6 +115,25 @@ statement_timeout_seconds = 30
 [web]
 development = false
 
+# The OpenMetadata catalog connector (ARCHITECTURE section 6.1, CON-2): `makna catalog sync
+# --source openmetadata`. The token comes only from MAKNA_OPENMETADATA_TOKEN. base_url must be
+# https://, except http://localhost or http://127.0.0.1, because the token is sent with every
+# request. [catalog.openmetadata.services] maps the name of each OpenMetadata database service
+# to read to the catalog name of the query engine (the first part of engine_fqn); a table of a
+# service that is not listed here is skipped and reported. The values below are for the optional
+# stack of deploy/docker-compose.openmetadata.yml seeded with the sample catalog.
+[catalog.openmetadata]
+base_url = "http://localhost:8585"
+# Name of the source in catalog_source. A table already stored under another source (for
+# example the file source) is refused, never taken over.
+source_name = "openmetadata"
+page_size = 100        # tables or glossary terms per request (1 to 1000)
+max_pages = 1000       # a listing longer than this fails instead of looping
+timeout_seconds = 30
+
+[catalog.openmetadata.services]
+lending_sample = "lending"
+
 [sensitivity.tag_map]
 "PII.Sensitive" = "personal"
 "PersonalData.Personal" = "personal"

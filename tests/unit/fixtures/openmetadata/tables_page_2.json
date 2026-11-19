@@ -1,0 +1,606 @@
+{
+  "data": [
+    {
+      "id": "bec60614-2862-52f0-9874-e9c8349508e1",
+      "name": "contracts",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.contracts",
+      "description": "Loan contracts, one row per contract.",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "contract_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Contract identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.contract_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "application_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Application the contract came from.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.application_id",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "customer_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Customer who signed the contract.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.customer_id",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "product_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Product of the contract.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.product_id",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "booking_branch_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Branch that originated the contract.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.booking_branch_id",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "servicing_branch_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Cabang",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.servicing_branch_id",
+          "tags": [],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "signed_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date the customer signed.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.signed_date",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "disbursement_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Tanggal pencairan dana",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.disbursement_date",
+          "tags": [],
+          "ordinalPosition": 8
+        },
+        {
+          "name": "first_due_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Due date of the first installment.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.first_due_date",
+          "tags": [],
+          "ordinalPosition": 9
+        },
+        {
+          "name": "maturity_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Due date of the last installment.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.maturity_date",
+          "tags": [],
+          "ordinalPosition": 10
+        },
+        {
+          "name": "closed_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date the contract was closed.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.closed_date",
+          "tags": [],
+          "ordinalPosition": 11
+        },
+        {
+          "name": "principal_amount",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Principal financed.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.principal_amount",
+          "tags": [],
+          "ordinalPosition": 12
+        },
+        {
+          "name": "tenor_months",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Number of installments at signing.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.tenor_months",
+          "tags": [],
+          "ordinalPosition": 13
+        },
+        {
+          "name": "annual_rate_pct",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(5,2)",
+          "description": "Flat annual rate in percent.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.annual_rate_pct",
+          "tags": [],
+          "ordinalPosition": 14
+        },
+        {
+          "name": "contract_status",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "dataLength": 255,
+          "description": "Status of the contract.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.contract_status",
+          "tags": [],
+          "ordinalPosition": 15
+        },
+        {
+          "name": "is_restructured",
+          "dataType": "BOOLEAN",
+          "dataTypeDisplay": "boolean",
+          "description": "True if the contract was restructured.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.is_restructured",
+          "tags": [],
+          "ordinalPosition": 16
+        },
+        {
+          "name": "restructured_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date of the restructuring.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contracts.restructured_date",
+          "tags": [],
+          "ordinalPosition": 17
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    },
+    {
+      "id": "e098c58f-fbd6-5086-974d-e4505c477f5d",
+      "name": "installment_schedules",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "schedule_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Schedule row identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.schedule_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "contract_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Contract the installment belongs to.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.contract_id",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "installment_no",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Installment number within the schedule version.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.installment_no",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "schedule_version",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.schedule_version",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "is_current",
+          "dataType": "BOOLEAN",
+          "dataTypeDisplay": "boolean",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.is_current",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "effective_from",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.effective_from",
+          "tags": [],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "superseded_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.superseded_date",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "due_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date the installment falls due.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.due_date",
+          "tags": [],
+          "ordinalPosition": 8
+        },
+        {
+          "name": "principal_due",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Principal part.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.principal_due",
+          "tags": [],
+          "ordinalPosition": 9
+        },
+        {
+          "name": "interest_due",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Interest part.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.interest_due",
+          "tags": [],
+          "ordinalPosition": 10
+        },
+        {
+          "name": "installment_amount",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Principal plus interest.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.installment_schedules.installment_amount",
+          "tags": [],
+          "ordinalPosition": 11
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    },
+    {
+      "id": "99728d6c-9e9e-5569-8d74-8330bf1e5fd6",
+      "name": "payments",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.payments",
+      "description": "Payments received, one row per payment.",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "payment_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Payment identifier.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.payment_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "contract_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Contract the payment is for.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.contract_id",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "schedule_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Installment the payment was applied to.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.schedule_id",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "payment_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Date the customer paid.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.payment_date",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "posting_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Tgl posting",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.posting_date",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "amount_paid",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Total amount paid.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.amount_paid",
+          "tags": [],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "principal_paid",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Part applied to principal.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.principal_paid",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "interest_paid",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Part applied to interest.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.interest_paid",
+          "tags": [],
+          "ordinalPosition": 8
+        },
+        {
+          "name": "penalty_paid",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Late payment penalty collected.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.penalty_paid",
+          "tags": [],
+          "ordinalPosition": 9
+        },
+        {
+          "name": "payment_channel",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "dataLength": 255,
+          "description": "Channel the payment came through.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.payment_channel",
+          "tags": [],
+          "ordinalPosition": 10
+        },
+        {
+          "name": "is_reversed",
+          "dataType": "BOOLEAN",
+          "dataTypeDisplay": "boolean",
+          "description": "Flag",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.payments.is_reversed",
+          "tags": [],
+          "ordinalPosition": 11
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    },
+    {
+      "id": "a8c54a48-5ae0-5d6c-8469-a34575517592",
+      "name": "collection_actions",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "act_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.act_id",
+          "tags": [],
+          "constraint": "PRIMARY_KEY",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "kontrak_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.kontrak_id",
+          "tags": [],
+          "ordinalPosition": 2
+        },
+        {
+          "name": "tgl_aksi",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.tgl_aksi",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "jns_aksi",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "dataLength": 255,
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.jns_aksi",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "kolektor_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.kolektor_id",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "hasil",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "dataLength": 255,
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.hasil",
+          "tags": [],
+          "ordinalPosition": 6
+        },
+        {
+          "name": "tgl_janji",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.tgl_janji",
+          "tags": [],
+          "ordinalPosition": 7
+        },
+        {
+          "name": "nom_janji",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.collection_actions.nom_janji",
+          "tags": [],
+          "ordinalPosition": 8
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false
+    }
+  ],
+  "paging": {
+    "total": 9,
+    "before": "eyJuYW1lIjoiYnJhbmNoZXMiLCJpZCI6ImFlNTJjM2Q5LTJhNGYtNTA2YS04ODAyLTk2ZTQ3MDkwNjQ1MyJ9",
+    "after": "eyJuYW1lIjoiY29sbGVjdGlvbl9hY3Rpb25zIiwiaWQiOiJhOGM1NGE0OC01YWUwLTVkNmMtODQ2OS1hMzQ1NzU1MTc1OTIifQ=="
+  }
+}

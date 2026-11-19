@@ -1,0 +1,120 @@
+{
+  "data": [
+    {
+      "id": "205f97f9-19a0-5560-92f6-89f31dd5d632",
+      "name": "contract_monthly_snapshots",
+      "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots",
+      "description": "Data bulanan kontrak",
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "tableType": "Regular",
+      "columns": [
+        {
+          "name": "snapshot_date",
+          "dataType": "DATE",
+          "dataTypeDisplay": "date",
+          "description": "Month-end date of the position.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.snapshot_date",
+          "tags": [],
+          "constraint": "NOT_NULL",
+          "ordinalPosition": 1
+        },
+        {
+          "name": "contract_id",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "Contract the position is for.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.contract_id",
+          "tags": [],
+          "constraint": "NOT_NULL",
+          "ordinalPosition": 2
+        },
+        {
+          "name": "outstanding_principal",
+          "dataType": "DECIMAL",
+          "dataTypeDisplay": "decimal(18,2)",
+          "description": "Principal still owed at the snapshot date.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.outstanding_principal",
+          "tags": [],
+          "ordinalPosition": 3
+        },
+        {
+          "name": "days_past_due",
+          "dataType": "INT",
+          "dataTypeDisplay": "integer",
+          "description": "DPD",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.days_past_due",
+          "tags": [],
+          "ordinalPosition": 4
+        },
+        {
+          "name": "dpd_bucket",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "dataLength": 255,
+          "description": "Past-due bucket.",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.dpd_bucket",
+          "tags": [],
+          "ordinalPosition": 5
+        },
+        {
+          "name": "collectibility",
+          "dataType": "VARCHAR",
+          "dataTypeDisplay": "varchar",
+          "dataLength": 255,
+          "description": "Kol",
+          "fullyQualifiedName": "lending_sample.lending_prod.core.contract_monthly_snapshots.collectibility",
+          "tags": [],
+          "ordinalPosition": 6
+        }
+      ],
+      "owners": [
+        {
+          "id": "eb9bdcfa-3cb4-5212-8d3c-b933cdf378aa",
+          "type": "team",
+          "name": "data-governance",
+          "fullyQualifiedName": "data-governance",
+          "deleted": false
+        }
+      ],
+      "tags": [],
+      "service": {
+        "id": "04774993-a334-5f11-981c-651cbb0f853a",
+        "type": "databaseService",
+        "name": "lending_sample",
+        "fullyQualifiedName": "lending_sample",
+        "deleted": false
+      },
+      "serviceType": "Postgres",
+      "database": {
+        "id": "31928d36-2279-5a07-82e6-730cb690e88f",
+        "type": "database",
+        "name": "lending_prod",
+        "fullyQualifiedName": "lending_sample.lending_prod",
+        "deleted": false
+      },
+      "databaseSchema": {
+        "id": "c324d20f-7334-57d7-9ca8-1761cabc793b",
+        "type": "databaseSchema",
+        "name": "core",
+        "fullyQualifiedName": "lending_sample.lending_prod.core",
+        "deleted": false
+      },
+      "deleted": false,
+      "tableConstraints": [
+        {
+          "constraintType": "PRIMARY_KEY",
+          "columns": [
+            "snapshot_date",
+            "contract_id"
+          ]
+        }
+      ]
+    }
+  ],
+  "paging": {
+    "total": 9,
+    "before": "eyJuYW1lIjoiY29udHJhY3RzIiwiaWQiOiJiZWM2MDYxNC0yODYyLTUyZjAtOTg3NC1lOWM4MzQ5NTA4ZTEifQ=="
+  }
+}

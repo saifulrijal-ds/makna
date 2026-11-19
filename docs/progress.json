@@ -602,7 +602,7 @@
         "WP-14C"
       ],
       "suggested_model": "Sonnet 5.5",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": "WP-21",
@@ -615,7 +615,7 @@
         "WP-06"
       ],
       "suggested_model": "Sonnet 5.5",
-      "status": "not_started"
+      "status": "in_review"
     },
     {
       "id": "WP-22",
@@ -629,7 +629,7 @@
         "WP-15"
       ],
       "suggested_model": "Sonnet 5.5",
-      "status": "in_review"
+      "status": "done"
     },
     {
       "id": "WP-22B",

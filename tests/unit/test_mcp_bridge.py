@@ -393,19 +393,49 @@ def test_every_message_goes_both_ways_requests_notifications_and_responses() -> 
     with StubServer(answer) as stub:
         result = run_bridge(stub.url, lines, wait=60)
     assert result.returncode == 0, result.stderr
-    # To the server: the request, the notification, and the client's own response.
-    assert [b.get("method") or ("response", b.get("id")) for b in seen] == [
-        "initialize",
-        "notifications/initialized",
-        "tools/list",
-        ("response", "srv-1"),
-    ]
+    # To the server: the request, the notification, and the client's own response. The bridge
+    # posts independent messages concurrently (the SDK starts a task for each request), and
+    # MCP orders only a request before its answer, so the test asserts the set received.
+    assert sorted(
+        (b.get("method") or f"response:{b.get('id')}" for b in seen),
+    ) == sorted(["initialize", "notifications/initialized", "tools/list", "response:srv-1"])
     # To the client: the answer, the server's notification, and the server's own request.
     printed = [json.loads(line) for line in result.stdout.splitlines()]
     methods = [m.get("method") for m in printed]
     assert "notifications/message" in methods and "ping" in methods
     assert {"jsonrpc": "2.0", "id": 2, "result": {"tools": []}} in printed
     assert any(m.get("id") == 1 and "result" in m for m in printed)
+
+
+def test_a_client_response_written_last_reaches_the_server_before_the_bridge_ends() -> None:
+    """MCP-3: a response or notification is not a pending request, so the bridge must wait for
+    its own post. The stub answers that post late; a bridge that stops when no request is
+    pending would end first and the message would never be recorded."""
+    import time
+
+    seen: list[dict[str, Any]] = []
+
+    def answer(body: dict[str, Any]) -> tuple[int, str, str]:
+        if body.get("method") == "initialize":
+            result = {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "serverInfo": {"name": "stub", "version": "1"},
+            }
+            return (
+                200,
+                "application/json",
+                json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}),
+            )
+        time.sleep(4)
+        seen.append(body)
+        return 202, "application/json", ""
+
+    last = ['{"jsonrpc":"2.0","id":"srv-1","result":{}}']
+    with StubServer(answer) as stub:
+        result = run_bridge(stub.url, [INITIALIZE, *last], wait=60)
+    assert result.returncode == 0, result.stderr
+    assert [b.get("id") for b in seen] == ["srv-1"]
 
 
 class StubServer:

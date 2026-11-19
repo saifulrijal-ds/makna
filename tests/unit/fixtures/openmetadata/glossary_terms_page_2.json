@@ -1,0 +1,84 @@
+{
+  "data": [
+    {
+      "id": "d5b4056b-52c3-59f0-90a3-071857762d1a",
+      "name": "Outstanding principal",
+      "displayName": "Outstanding principal",
+      "description": "Principal still owed on a contract.",
+      "fullyQualifiedName": "lending.Outstanding principal",
+      "synonyms": [
+        "baki debet",
+        "sisa pokok",
+        "outstanding balance"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    },
+    {
+      "id": "51120d51-fbf0-5b36-b096-954819939459",
+      "name": "Tenor",
+      "displayName": "Tenor",
+      "description": "Number of months over which a contract is repaid.",
+      "fullyQualifiedName": "lending.Tenor",
+      "synonyms": [
+        "loan term",
+        "jangka waktu"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    },
+    {
+      "id": "b063a143-6999-5ed7-bd3b-5fa0998e3f36",
+      "name": "Portfolio at risk",
+      "displayName": "Portfolio at risk",
+      "description": "Share of the portfolio that is past due beyond a stated number of days.",
+      "fullyQualifiedName": "lending.Portfolio at risk",
+      "synonyms": [
+        "PAR",
+        "portofolio berisiko"
+      ],
+      "glossary": {
+        "id": "cdb83584-a300-5513-9319-3f4ce7971ef2",
+        "type": "glossary",
+        "name": "lending",
+        "fullyQualifiedName": "lending",
+        "deleted": false
+      },
+      "relatedTerms": [],
+      "tags": [],
+      "version": 0.1,
+      "updatedAt": 1782777600000,
+      "updatedBy": "admin",
+      "entityStatus": "Approved",
+      "deleted": false
+    }
+  ],
+  "paging": {
+    "total": 8,
+    "before": "eyJuYW1lIjoiTlBGIiwiaWQiOiI1MTkzZGVmNy1mOGQ4LTU2ZDQtOWRkMC05NTQ5MDA5NmFkMmYifQ=="
+  }
+}

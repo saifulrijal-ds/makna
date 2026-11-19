@@ -1,0 +1,23 @@
+{
+  "data": [
+    {
+      "id": "7c4d9e10-0000-4000-8000-000000000001",
+      "name": "Write-off",
+      "displayName": "Write-off",
+      "description": "Removal of an uncollectible contract balance from the books.",
+      "fullyQualifiedName": "lending.Write-off",
+      "synonyms": ["charge-off", "hapus buku"],
+      "glossary": {"id": "7c4d9e10-0000-4000-8000-0000000000f0", "type": "glossary", "name": "lending"},
+      "relatedTerms": [
+        {"relationType": "relatedTo", "term": {"id": "7c4d9e10-0000-4000-8000-000000000002", "type": "glossaryTerm", "name": "NPF", "fullyQualifiedName": "lending.NPF"}}
+      ],
+      "tags": [
+        {"tagFQN": "PII.NonSensitive", "source": "Classification", "labelType": "Manual", "state": "Confirmed"},
+        {"tagFQN": "Tier.Tier1", "source": "Classification", "labelType": "Automated", "state": "Suggested"}
+      ],
+      "entityStatus": "Approved",
+      "deleted": false
+    }
+  ],
+  "paging": {"total": 1}
+}
