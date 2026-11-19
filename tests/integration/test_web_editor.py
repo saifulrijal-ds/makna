@@ -97,7 +97,9 @@ def box(page: str) -> str:
     """The text of the YAML box as a browser shows it (entities decoded)."""
     found = re.search(r'<textarea name="yaml_text"[^>]*>(.*?)</textarea>', page, re.S)
     assert found, "no text area"
-    return html.unescape(found.group(1))
+    body = found.group(1)
+    # A browser drops the one newline that follows the start tag (the page puts one there).
+    return html.unescape(body.removeprefix("\n"))
 
 
 def expected_of(page: str) -> str:
@@ -1060,3 +1062,164 @@ def test_with_no_script_the_text_area_is_the_editor_and_the_buttons_are_form_pos
     assert saved.status_code == 422  # still has fields to fill: the template alone is not saved
     done = form(client, buttons[1], own_metric(), reason="no script")
     assert done.status_code == 303 and len(ctx.world.repo.log()) == commits + 1
+
+
+# --- fix round 1 -----------------------------------------------------------------------------
+
+
+def test_a_failure_after_the_commit_says_so_and_never_claims_nothing_was_changed(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import store
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("secret-index-error")
+
+    monkeypatch.setattr(store, "sync", broken)
+    client = ctx.client()
+    commits = len(ctx.world.repo.log())
+    response = form(client, "/new/metric/save", own_metric(), reason="committed, not indexed")
+    assert response.status_code == 500
+    assert len(ctx.world.repo.log()) == commits + 1  # the commit was made
+    page = html.unescape(response.text)
+    assert "The change was committed but the index could not be updated" in page
+    assert "makna index sync" in page
+    assert "nothing was changed" not in page.lower() and "Nothing was changed" not in page
+    assert "secret-index-error" not in page
+    assert box(response.text) == own_metric()  # the typed text stays
+
+
+def test_a_rewritten_history_gives_the_409_message_on_every_editor_page(ctx: Ctx) -> None:
+    client = ctx.client()
+    sup.git(ctx.world.repo, "commit", "--amend", "-m", "rewritten history", "--allow-empty")
+    commits = len(ctx.world.repo.log())
+    page = client.get("/edit/metric/disbursement_amount")
+    assert page.status_code == 409 and 'data-code="CONFLICT"' in page.text
+    assert "history" in page.text and 'name="yaml_text"' not in page.text
+    for path in (
+        "/new/metric/check",
+        "/new/metric/save",
+        "/edit/metric/disbursement_amount/check",
+        "/edit/metric/disbursement_amount/save",
+        "/edit/metric/disbursement_amount/submit",
+    ):
+        response = form(client, path, own_metric(), expected="none")
+        assert response.status_code == 409, path
+        assert "history" in response.text, path
+        assert box(response.text) == own_metric(), path  # the text of a POST is kept
+    assert len(ctx.world.repo.log()) == commits
+
+
+def test_a_text_that_starts_with_a_newline_comes_back_as_it_was_sent(shared: Ctx) -> None:
+    client = shared.client()
+    for lead in ("\n", "\n\n", "\r\n\r\n"):
+        sent = lead + own_metric()
+        page = form(client, "/new/metric/check", sent).text
+        assert box(page) == sent.replace("\r\n", "\n")
+        assert "<textarea" in page and ">\n" + sent.replace("\r\n", "\n").split("\n")[0] in page
+    # With the first lines blank, the issue lines of the next Check are those of what was shown.
+    page = form(client, "/new/metric/check", "\n\n" + own_metric() + "colour: blue\n").text
+    line = (box(page).splitlines().index("colour: blue")) + 1
+    assert ("V01", line) in issues_of(page)
+
+
+def test_a_hostile_official_text_is_escaped_in_the_left_column_of_the_difference(ctx: Ctx) -> None:
+    retired = "metric:penalty_income"
+    hostile = "</td><script>alert(1)</script><img src=x onerror=alert(2)> and more words"
+    text = sup.edited(sup.official_text(ctx.world, retired), lambda d: d.update(caveats=hostile))
+    author = ctx.world.caller("curator")
+    ctx.world.life.create_proposal(author, retired, text, "hostile")
+    ctx.world.life.submit(author, retired, "ready")
+    ctx.world.life.approve(ctx.world.caller("approver"), retired, "ok")
+    client = ctx.client()
+    edited = sup.edited(text, lambda d: d.update(caveats="plain"))
+    page = form(client, "/edit/metric/penalty_income/check", edited, expected="none").text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page  # the official side, escaped
+    assert_inert(page)
+    assert_inert(client.get("/edit/metric/penalty_income").text)
+
+
+def test_the_issue_list_of_a_new_text_that_cannot_be_read_is_capped_and_counted(
+    shared: Ctx,
+) -> None:
+    client = shared.client()
+    text = own_metric() + "".join(f"unknown_key_{i}: 1\n" for i in range(300))
+    for path in ("/new/metric/check", "/new/metric/save", "/new/metric/submit"):
+        response = form(client, path, text)
+        assert len(issues_of(response.text)) == 50, path
+        assert "300 problems found" in response.text or path != "/new/metric/check"
+    page = form(client, "/new/metric/check", text).text
+    assert "Only the first 50 are shown." in page
+
+
+def test_a_number_with_too_many_digits_is_a_v01_issue_and_the_text_stays(ctx: Ctx) -> None:
+    client = ctx.client()
+    digits = "9" * 5000
+    text = own_metric() + f"extra_number: {digits}\n"
+    line = text.splitlines().index(f"extra_number: {digits}") + 1
+    commits = len(ctx.world.repo.log())
+    for path, extra in (
+        ("/new/metric/check", {}),
+        ("/edit/metric/disbursement_amount/check", {"expected": "none"}),
+    ):
+        response = form(client, path, text, **extra)
+        assert response.status_code == 200, path
+        assert ("V01", line) in issues_of(response.text) and "too many digits" in response.text
+        assert box(response.text) == text
+    response = form(client, "/new/metric/save", text)
+    assert response.status_code == 422 and box(response.text) == text
+    response = form(client, "/edit/metric/disbursement_amount/save", text, expected="none")
+    assert response.status_code in (400, 422) and box(response.text) == text
+    assert len(ctx.world.repo.log()) == commits
+
+
+def test_an_unreadable_proposal_offers_check_only_and_no_empty_box_to_overwrite(ctx: Ctx) -> None:
+    path = ctx.world.repo.path / "lending" / "metrics" / "huge_one.draft.yaml"
+    path.write_text("# " + "a" * (MAX_YAML_BYTES + 10) + "\n")
+    sup.git(ctx.world.repo, "add", "-A")
+    sup.git(ctx.world.repo, "commit", "-m", "outside huge file")
+    admin = ctx.client("admin", teams=())
+    page = admin.get("/edit/metric/huge_one").text
+    assert "cannot be read here" in page and 'data-field="blocked"' in page
+    assert "/save" not in page and "/submit" not in page and "/check" in page
+    assert expected_of(page) != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+def test_an_entity_change_that_check_passes_is_saved_submitted_and_approved(ctx: Ctx) -> None:
+    """Check and approval agree: V06, V13 and V19 (the metrics that read the entity and their
+    example requests) are run by both, and a clean Check means the gate of approval passes."""
+    object_id = "entity:contract_snapshot"
+    changed = sup.edited(
+        sup.official_text(ctx.world, object_id),
+        lambda d: d.update(description=d["description"] + " Reviewed in the editor."),
+    )
+    client = ctx.client(teams=("credit-risk",))
+    path = "/edit/entity/contract_snapshot"
+    checked = form(client, path + "/check", changed, expected="none")
+    assert checked.status_code == 200 and 'data-field="check-ok"' in checked.text
+    saved = form(client, path + "/submit", changed, reason="describe it", expected="none")
+    assert saved.status_code == 303
+    approved = ctx.world.life.approve(ctx.world.caller("approver"), object_id, "looks right")
+    assert (approved.status, approved.version) == ("approved", 2)
+    # A change that breaks a metric is refused by Check and by approval alike.
+    broken = sup.edited(
+        sup.official_text(ctx.world, object_id),
+        lambda d: d.update(measures=[m for m in d["measures"] if m["name"] != "active_contracts"]),
+    )
+    result = form(client, path + "/check", broken, expected="none")
+    assert issues_of(result.text) and 'data-own="no"' in result.text
+
+
+def test_the_script_blocks_every_module_load_and_leaves_the_editor_by_keyboard() -> None:
+    script = (STATIC / "editor.js").read_text()
+    assert "ace.config.setLoader(function () {})" in script
+    assert "enableKeyboardAccessibility: true" in script
+    for command in ("find", "replace", "showSettingsMenu", "openCommandPalette", "gotoline"):
+        assert f'"{command}"' in script
+    css = (STATIC / "editor.css").read_text()
+    assert "prefers-color-scheme: dark" in css and 'data-theme="dark"' in css
+
+
+def test_the_page_says_how_to_leave_the_editor_with_the_keyboard(shared: Ctx) -> None:
+    page = shared.client().get("/new/metric").text
+    assert "press Esc and then Tab" in page

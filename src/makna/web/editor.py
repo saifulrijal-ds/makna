@@ -45,6 +45,7 @@ from starlette.responses import RedirectResponse, Response
 from makna.services import Caller, LifecycleErrorCode, ServiceError, ServiceErrorCode, permissions
 from makna.services.editing import (
     KINDS,
+    MAX_CHECK_ISSUES,
     MAX_YAML_BYTES,
     NEW_OBJECT,
     NO_PROPOSAL,
@@ -102,7 +103,7 @@ HEADLINES: dict[str, str] = {
     str(ServiceErrorCode.PERMISSION_DENIED): "You are not allowed to do this.",
     str(ServiceErrorCode.INVALID_INPUT): "Something in the form cannot be used.",
     str(ServiceErrorCode.CATALOG_NOT_SYNCED): "The catalog has not been synced yet.",
-    str(ServiceErrorCode.INTERNAL): "Makna could not complete this, and nothing was changed.",
+    str(ServiceErrorCode.INTERNAL): "Makna could not complete this.",
     str(LifecycleErrorCode.DEFINITION_INVALID): "The definition has errors.",
     str(LifecycleErrorCode.OPEN_REFERENCE_ISSUE): "The definition has a reference issue.",
     str(LifecycleErrorCode.CONFLICT): "The change cannot be made now.",
@@ -377,7 +378,7 @@ def _problem(error: ServiceError, *, link: str | None = None, link_text: str = "
                         True,
                     )
                 )
-    message = "" if code == str(ServiceErrorCode.INTERNAL) else error.message
+    message = error.message  # fixed text in every case, and the truth about what was written
     return Problem(
         code,
         HEADLINES.get(code, "The change cannot be made."),
@@ -458,16 +459,21 @@ async def _source(life: Lifecycle, caller: Caller, object_id: str | None) -> Edi
         return None
 
 
-def _name_in(kind: str, text: str) -> tuple[str | None, list[CheckIssue]]:
+def _name_in(text: str) -> tuple[str | None, CheckResult]:
     """The name a new object's text gives itself, or the V01 problems that stop it from having
-    one. The kind is checked by `Lifecycle.check` and by the actions."""
+    one, as a `CheckResult` (at most `MAX_CHECK_ISSUES` of them, with the count of all). The kind
+    is checked by `Lifecycle.check` and by the actions. Parses the text: call it through `_run`."""
     name, problems = name_in(text)
-    if name is None:
-        return None, [
-            CheckIssue(rule, line, "your text", message[:MAX_MESSAGE_SHOWN], True)
-            for rule, line, message in problems
-        ]
-    return name, []
+    shown = tuple(
+        CheckIssue(rule, line, "your text", message[:MAX_MESSAGE_SHOWN], True)
+        for rule, line, message in problems[:MAX_CHECK_ISSUES]
+    )
+    return name, CheckResult(shown, len(problems), False)
+
+
+async def _diff(official_text: str | None, text: str, version: int | None) -> Diff:
+    """`make_diff` off the event loop: it parses and renders the text."""
+    return await _run("diff", make_diff, official_text, text, version)
 
 
 # --- pages -----------------------------------------------------------------------------------
@@ -517,8 +523,8 @@ async def edit_form(request: Request, kind: str, name: str, notice: str = "") ->
         expected=source.proposal_sha256,
         source=source,
         notice=NOTICES.get(notice),
-        diff=make_diff(source.official_text, source.text, source.version),
     )
+    page.diff = await _diff(source.official_text, source.text, source.version)
     return _render(request, page)
 
 
@@ -538,9 +544,9 @@ async def _check(
     the text; when the text cannot be read, the result is its V01 problems."""
     if target.object_id is not None:
         return target.object_id, await _run("check", life.check, caller, target.object_id, text)
-    name, problems = _name_in(target.kind, text)
+    name, found = await _run("parse", _name_in, text)
     if name is None:
-        return None, CheckResult(tuple(problems), len(problems), False)
+        return None, found
     object_id = f"{target.kind}:{name}"
     return object_id, await _run("check", life.check, caller, object_id, text)
 
@@ -564,7 +570,7 @@ async def _save(
 async def _post(
     request: Request, target: Target, action: str, yaml_text: str, reason: str, expected: str
 ) -> Response:
-    context = _guard(request)
+    context = _signed_in(request)  # who may edit was decided by the handler that called this
     caller = context.caller
     life = _lifecycle(request)
     text = _newlines(yaml_text)
@@ -594,18 +600,18 @@ async def _post(
             return _render(request, page, _status(error))
         page.check = result
         if page.source is not None:
-            page.diff = make_diff(page.source.official_text, text, page.source.version)
+            page.diff = await _diff(page.source.official_text, text, page.source.version)
         elif object_id is not None:
-            page.diff = make_diff(None, text, None)
+            page.diff = await _diff(None, text, None)
         if target.is_new and result.exists and object_id is not None:
             page.problem = _exists(target.kind, object_id)
         _log(action, context, object_id, "ok" if result.ok else "problems")
         return _render(request, page)
 
     if object_id is None:
-        name, found = _name_in(target.kind, text)
+        name, found = await _run("parse", _name_in, text)
         if name is None:  # a new object whose text cannot be read: nothing to save yet
-            page.check = CheckResult(tuple(found), len(found), False)
+            page.check = found
             page.problem = Problem(
                 str(LifecycleErrorCode.DEFINITION_INVALID),
                 "The text cannot be saved yet.",
@@ -688,7 +694,7 @@ async def _failed(
         page.stored = "The draft was saved, but it was not submitted."
     page.source = await _source(life, context.caller, object_id)
     if page.source is not None:
-        page.diff = make_diff(page.source.official_text, page.text, page.source.version)
+        page.diff = await _diff(page.source.official_text, page.text, page.source.version)
     _log(action, context, object_id, str(error.code))
     return _render(request, page, _status(error))
 

@@ -4,7 +4,7 @@ temporary git repository)."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -309,3 +309,161 @@ def test_existing_callers_work_without_the_parameter(world: World) -> None:
     world.life.create_proposal(curator, NEW, sup.metric_text(), "first")
     world.life.update_proposal(curator, NEW, sup.metric_text(label="Contracts"), "second")
     world.life.submit(curator, NEW, "ready")
+
+
+# --- fix round 1 -------------------------------------------------------------------------------
+
+
+def stored_description(world: World, size: int) -> str:
+    """A new metric whose canonical draft is exactly `size` bytes (a single long word, which the
+    canonical form neither wraps nor quotes)."""
+    from makna.definitions.render import parse_text, to_yaml
+    from makna.services.lifecycle import _as_proposal
+
+    def canonical(k: int) -> int:
+        text = sup.metric_text(description="x" * k)
+        definition, _ = parse_text(text)
+        assert definition is not None
+        return len(to_yaml(_as_proposal(definition, "draft", None)).encode())
+
+    k = 20 + size - canonical(20)  # the description needs at least 20 characters
+    assert canonical(k) == size
+    return sup.metric_text(description="x" * k)
+
+
+def test_a_text_under_the_limit_whose_stored_form_is_over_it_is_refused_before_any_commit(
+    world: World,
+) -> None:
+    import yaml
+
+    data = yaml.safe_load(sup.metric_text())
+    data["description"] = "PLACEHOLDER"
+    base = yaml.safe_dump(data, sort_keys=False)
+    n = (MAX_YAML_BYTES - len(base) - 20) // 3
+    text = base.replace("PLACEHOLDER", '"' + "x\\n" * n + '"')
+    assert len(text.encode()) < MAX_YAML_BYTES  # the posted text is allowed
+    before = sup.snapshot(world)
+    commits = len(world.repo.log())
+    with pytest.raises(ServiceError) as refused:
+        world.life.create_proposal(world.caller("curator"), NEW, text, "big")
+    assert refused.value.code == ServiceErrorCode.INVALID_INPUT
+    assert "256 KiB" in refused.value.message and "stored form" in refused.value.message
+    assert len(world.repo.log()) == commits
+    assert sup.snapshot(world) == before  # no intent row, no failed row
+    # Check says the same, with the rule and no line.
+    result = world.life.check(world.caller("curator"), NEW, text)
+    assert [(i.rule, i.line) for i in result.issues] == [("V01", None)]
+    assert "stored form" in result.issues[0].message
+
+
+def test_a_submit_that_would_grow_the_file_over_the_limit_is_refused_before_any_commit(
+    world: World,
+) -> None:
+    curator = world.caller("curator")
+    text = stored_description(
+        world, MAX_YAML_BYTES - 2
+    )  # `in_review` is 4 bytes longer than `draft`
+    saved = world.life.create_proposal(curator, NEW, text, "just fits")
+    assert saved.status == "draft"
+    before, commits = sup.snapshot(world), len(world.repo.log())
+    with pytest.raises(ServiceError) as refused:
+        world.life.submit(curator, NEW, "ready", saved.proposal_sha256)
+    assert (
+        refused.value.code == ServiceErrorCode.INVALID_INPUT and "256 KiB" in refused.value.message
+    )
+    assert len(world.repo.log()) == commits and sup.snapshot(world) == before
+
+
+def test_a_refused_text_does_not_take_the_lock(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parse and the identity check come before the advisory lock, so a refused text cannot
+    make other writers wait."""
+    from makna.services import store
+
+    def no_lock(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the lock was taken")
+
+    monkeypatch.setattr(store, "advisory_lock", no_lock)
+    curator = world.caller("curator")
+    for text in ("name: [unclosed\n", sup.metric_text(name="other_name"), "a: " + "9" * 5000):
+        with pytest.raises(ServiceError) as refused:
+            world.life.create_proposal(curator, NEW, text, "r")
+        assert refused.value.code in (
+            LifecycleErrorCode.DEFINITION_INVALID,
+            ServiceErrorCode.INVALID_INPUT,
+        )
+
+
+def test_the_expected_value_is_checked_before_anything_else_under_the_lock(world: World) -> None:
+    curator = world.caller("curator")
+    with pytest.raises(ServiceError) as refused:
+        world.life.create_proposal(
+            curator, CHANGED, sup.official_text(world, CHANGED), "r", NEW_OBJECT
+        )
+    assert refused.value.details == {"exists": True}
+
+
+def amend_head(world: World) -> None:
+    sup.git(world.repo, "commit", "--amend", "-m", "rewritten history", "--allow-empty")
+
+
+def test_a_rewritten_history_is_a_conflict_with_the_stores_message_in_both_reads(
+    world: World,
+) -> None:
+    amend_head(world)
+    curator = world.caller("curator")
+    calls: list[Callable[[], Any]] = [
+        lambda: world.life.check(curator, NEW, sup.metric_text()),
+        lambda: world.life.editor_source(curator, CHANGED),
+    ]
+    for call in calls:
+        with pytest.raises(ServiceError) as refused:
+            call()
+        assert refused.value.code == LifecycleErrorCode.CONFLICT
+        assert refused.value.details.get("fatal") is True
+        assert "history" in refused.value.message
+
+
+def test_an_outside_file_with_a_huge_integer_does_not_stop_sync_or_the_write_path(
+    world: World,
+) -> None:
+    path = world.repo.path / "lending" / "metrics" / "bigint_metric.draft.yaml"
+    path.write_text(
+        "apiVersion: makna/v1\nkind: metric\nname: bigint_metric\nlabel: " + "9" * 5000 + "\n"
+    )
+    sup.git(world.repo, "add", "-A")
+    sup.git(world.repo, "commit", "-m", "outside file")
+    synced = world.life.sync()  # must not raise
+    assert synced is not None
+    state, _ = synced
+    item = state.objects["metric:bigint_metric"]
+    assert item.proposal is None and [i.code for i in item.unreadable] == ["V01"]
+    assert "too many digits" in item.unreadable[0].message
+    # The write path still works for everything else.
+    curator = world.caller("curator")
+    world.life.create_proposal(curator, NEW, sup.metric_text(), "still works")
+    source = world.life.editor_source(world.caller("admin"), "metric:bigint_metric")
+    # The text is readable, so it is loaded as it is (an admin may replace it), with no status.
+    assert source is not None and source.status is None and source.text.startswith("apiVersion")
+
+
+def test_an_unreadable_proposal_is_blocked_and_never_an_empty_box_with_a_shared_hash(
+    world: World,
+) -> None:
+    def outside(name: str, filler: str) -> None:
+        path = world.repo.path / "lending" / "metrics" / f"{name}.draft.yaml"
+        path.write_text("# " + filler * (MAX_YAML_BYTES // len(filler) + 10) + "\n")
+        sup.git(world.repo, "add", "-A")
+        sup.git(world.repo, "commit", "-m", f"outside {name}")
+
+    outside("huge_one", "a")
+    outside("huge_two", "b")
+    admin = world.caller("admin")
+    one = world.life.editor_source(admin, "metric:huge_one")
+    two = world.life.editor_source(admin, "metric:huge_two")
+    assert one is not None and two is not None
+    for source in (one, two):
+        assert source.text == "" and source.blocked and "cannot be read" in source.blocked
+        assert source.proposal_sha256 != sha256(b"")
+    assert one.proposal_sha256 != two.proposal_sha256

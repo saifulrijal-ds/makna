@@ -34,8 +34,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -357,18 +358,76 @@ class RepoState:
         return objects
 
 
+class _DecodeCache:
+    """A small bounded LRU of `load_text` results, keyed by the path and the SHA-256 of the file's
+    bytes. A git blob is content-addressed, so the same bytes at the same path always decode the
+    same; reading the repository again (every action, Check, and editor page does) then parses only
+    the files that changed. What is stored is never handed out: a hit returns a deep copy of the
+    definition, so a caller that changes it cannot change what later reads get."""
+
+    def __init__(self, entries: int = 256, max_bytes: int = 32 * 1024 * 1024) -> None:
+        self._items: OrderedDict[tuple[str, str], tuple[int, DefinitionFile, tuple[Issue, ...]]] = (
+            OrderedDict()
+        )
+        self._bytes = 0
+        self._entries = entries
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[str, str]) -> tuple[DefinitionFile, list[Issue]] | None:
+        with self._lock:
+            found = self._items.get(key)
+            if found is None:
+                return None
+            self._items.move_to_end(key)
+            _, file, issues = found
+        return _copy_file(file), list(issues)
+
+    def put(
+        self, key: tuple[str, str], size: int, file: DefinitionFile, issues: list[Issue]
+    ) -> None:
+        if size > self._max_bytes // 4:
+            return
+        stored = (size, _copy_file(file), tuple(issues))
+        with self._lock:
+            old = self._items.pop(key, None)
+            if old is not None:
+                self._bytes -= old[0]
+            self._items[key] = stored
+            self._bytes += size
+            while self._items and (
+                len(self._items) > self._entries or self._bytes > self._max_bytes
+            ):
+                _, (dropped, _, _) = self._items.popitem(last=False)
+                self._bytes -= dropped
+
+
+def _copy_file(file: DefinitionFile) -> DefinitionFile:
+    definition = file.definition.model_copy(deep=True) if file.definition is not None else None
+    return DefinitionFile(file.path, file.is_proposal, definition, file.lines)
+
+
+_DECODED = _DecodeCache()
+
+
 def _decode(path: str, data: bytes | TooLarge) -> tuple[DefinitionFile, list[Issue]]:
     if isinstance(data, TooLarge):
         return DefinitionFile(path, path.endswith(PROPOSAL_SUFFIX), None), [
             Issue(path, None, "V01", f"file is larger than {MAX_YAML_BYTES // 1024} KiB")
         ]
+    key = (path, sha256(data))
+    cached = _DECODED.get(key)
+    if cached is not None:
+        return cached
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return DefinitionFile(path, path.endswith(PROPOSAL_SUFFIX), None), [
             Issue(path, None, "V01", "not valid UTF-8 text")
         ]
-    return load_text(path, text)
+    file, issues = load_text(path, text)
+    _DECODED.put(key, len(data), file, issues)
+    return file, issues
 
 
 def _force_proposal(

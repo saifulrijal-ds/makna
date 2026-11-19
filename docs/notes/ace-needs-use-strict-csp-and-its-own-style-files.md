@@ -6,3 +6,5 @@ Seen in WP-19 (2026-11-19, Ace 1.45.2, Chromium).
 - Passing `mode` before `useWorker: false` in the options of `ace.edit` starts a blob worker first, which `default-src 'self'` blocks (a console error and a `worker-src` violation). Create the editor with `useWorker: false`, then `session.setMode(...)`.
 - Fold widgets are off, so the `main-N` images of `ace.css` are never requested.
 - Check after any Ace change with Playwright: listen for `securitypolicyviolation`, `console` errors and failed requests, and count `<style>` elements (0 expected).
+- Ctrl+F, Ctrl+H, Ctrl+, and F1 make Ace load `ext-searchbox`, `ext-settings_menu` and the command bar from `basePath`. None is vendored (404, but a file placed there would run on a key press). `editor.js` sets `ace.config.setLoader(function () {})` and removes those commands; check that no key press makes a request.
+- Esc then Tab leaves the editor only with `enableKeyboardAccessibility: true`.

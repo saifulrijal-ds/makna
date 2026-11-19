@@ -129,6 +129,10 @@ COMMITTED_NOT_INDEXED = (
 )
 UNEXPECTED = "The change could not be made. Nothing was changed."
 DEPRECATED_MESSAGE = "A deprecated object cannot be changed."
+UNREADABLE_MESSAGE = (
+    "This proposal cannot be read here (it is larger than 256 KiB or is not text), so it cannot "
+    "be edited. It has to be withdrawn first."
+)
 OUTSIDE_PROPOSAL_MESSAGE = (
     "This proposal was made outside Makna in the official file. Reject it first; it "
     "then becomes a draft that can be edited."
@@ -458,7 +462,7 @@ class Lifecycle:
             raise invalid_input("id", "an id of the form kind:name, for example metric:npf_ratio")
         repo = self._repo()
         user = self._user(caller)
-        state = self._read(repo)
+        state = self._read_for_editor(repo)
         item = state.objects.get(ref.id)
         if item is None or (item.official is None and item.proposal_source is None):
             return None
@@ -475,16 +479,26 @@ class Lifecycle:
             )
             if not who:
                 blocked = who.message
+        loaded: Literal["proposal", "official"]
         if item.proposal_source is not None:
-            data, loaded = item.proposal_bytes or b"", "proposal"
+            loaded = "proposal"
             status = item.proposal.status if item.proposal is not None else None
+            text_ = ""
+            try:
+                if item.proposal_bytes is None:
+                    raise UnicodeDecodeError("utf-8", b"", 0, 1, "too large")
+                text_ = item.proposal_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # Never an empty box that looks like the content: Check only.
+                blocked = UNREADABLE_MESSAGE
         else:
             assert item.official_bytes is not None and official is not None
-            data, loaded, status = item.official_bytes, "official", official.status
+            loaded, status = "official", official.status
+            text_ = item.official_bytes.decode("utf-8", "replace")
         return EditorSource(
             object_id=ref.id,
-            text=data.decode("utf-8", "replace"),
-            loaded="proposal" if loaded == "proposal" else "official",
+            text=text_,
+            loaded=loaded,
             status=status,
             version=version,
             official_text=(
@@ -513,7 +527,7 @@ class Lifecycle:
             raise invalid_input("id", "an id of the form kind:name, for example metric:npf_ratio")
         _check_size(yaml_text)
         repo = self._repo()
-        state = self._read(repo)
+        state = self._read_for_editor(repo)
         item = state.objects.get(ref.id)
         exists = item is not None and (
             item.official is not None or item.proposal_source is not None
@@ -571,6 +585,9 @@ class Lifecycle:
         expected_sha = check_expectation(expected_proposal_sha256)
         self._early_refusal(caller, action)
         repo = self._repo()
+        # The text is parsed and its identity checked before the lock is taken: that depends on
+        # no state, and a refused text must not make other writers wait.
+        parsed = self._parse_text(ref, yaml_text) if yaml_text is not None else None
         try:
             with store.advisory_lock(self._engine) as lock:
                 user = self._user(caller)
@@ -581,9 +598,10 @@ class Lifecycle:
                 self._early_refusal(actor, action)
                 state = self._read(repo)
                 plan = self._plan(
-                    actor, user, action, ref, state, yaml_text, replaced_by, text,
+                    actor, user, action, ref, state, parsed, replaced_by, text,
                     expected_proposal_commit, expected_sha,
                 )  # fmt: skip
+                _check_stored_size(plan)
                 lock.check()
                 intent_id = self._write_intent(user, action, ref.id, text, plan)
                 made = self._commit(repo, lock, user, action, ref.id, text, plan, intent_id, state)
@@ -651,6 +669,17 @@ class Lifecycle:
             logger.error("lifecycle: cannot read the repository (%s)", type(error).__name__)
             raise ServiceError(
                 ServiceErrorCode.INTERNAL, "The definitions repository cannot be read."
+            ) from None
+
+    def _read_for_editor(self, repo: GitRepo) -> RepoState:
+        """`_read` for the two editor reads: a repository the store refuses (a rewritten history,
+        a commit that does not match its record) is `CONFLICT` with the store's fixed message, as
+        in `_act` and `sync`."""
+        try:
+            return self._read(repo)
+        except store.StoreError as error:
+            raise ServiceError(
+                LifecycleErrorCode.CONFLICT, str(error), {"fatal": error.fatal}
             ) from None
 
     def _proposal_reference_issues(
@@ -725,7 +754,7 @@ class Lifecycle:
         action: str,
         ref: ObjectRef,
         state: RepoState,
-        yaml_text: str | None,
+        parsed: AnyDefinition | None,
         replaced_by: str | None,
         reason: str,
         expected_commit: str | None = None,
@@ -733,20 +762,30 @@ class Lifecycle:
     ) -> _Plan:
         item = state.objects.get(ref.id)
         if action == CREATE_PROPOSAL:
-            assert yaml_text is not None
-            return self._plan_create(caller, user, ref, item, state, yaml_text, expected_sha)
+            assert parsed is not None
+            return self._plan_create(caller, user, ref, item, state, parsed, expected_sha)
         if item is None or (item.official is None and item.proposal_source is None):
             raise ServiceError(
                 ServiceErrorCode.NOT_FOUND, f"There is no object with the id {ref.id}."
             )
         if action == UPDATE_PROPOSAL:
-            assert yaml_text is not None
-            return self._plan_update(caller, user, ref, item, state, yaml_text, expected_sha)
+            assert parsed is not None
+            return self._plan_update(caller, user, ref, item, state, parsed, expected_sha)
         if action == DEPRECATE:
             return self._plan_deprecate(caller, user, ref, item, state, replaced_by, reason)
         return self._plan_proposal_action(
             caller, user, action, ref, item, state, expected_commit, expected_sha
         )
+
+    def _parse_text(self, ref: ObjectRef, yaml_text: str) -> AnyDefinition:
+        """`_parse`, with anything it does not expect as the fixed `INTERNAL` message."""
+        try:
+            return self._parse(ref, yaml_text)
+        except ServiceError:
+            raise
+        except Exception as error:
+            logger.error("lifecycle: cannot parse a text (%s)", type(error).__name__)
+            raise ServiceError(ServiceErrorCode.INTERNAL, UNEXPECTED) from None
 
     def _parse(self, ref: ObjectRef, yaml_text: str) -> AnyDefinition:
         definition, problems = parse_text(yaml_text)
@@ -770,12 +809,11 @@ class Lifecycle:
         ref: ObjectRef,
         item: ObjectState | None,
         state: RepoState,
-        yaml_text: str,
+        proposal: AnyDefinition,
         expected_sha: str | None = None,
     ) -> _Plan:
-        proposal = self._parse(ref, yaml_text)
-        domain = self._domain_of(proposal, state)
         _expect(item, expected_sha)
+        domain = self._domain_of(proposal, state)
         if item is not None and item.proposal_source is not None:
             raise ServiceError(
                 LifecycleErrorCode.CONFLICT,
@@ -806,7 +844,7 @@ class Lifecycle:
         ref: ObjectRef,
         item: ObjectState,
         state: RepoState,
-        yaml_text: str,
+        proposal: AnyDefinition,
         expected_sha: str | None = None,
     ) -> _Plan:
         if item.proposal_source is None:
@@ -819,7 +857,6 @@ class Lifecycle:
         _expect(item, expected_sha)
         if item.in_official_file:
             raise ServiceError(LifecycleErrorCode.CONFLICT, OUTSIDE_PROPOSAL_MESSAGE)
-        proposal = self._parse(ref, yaml_text)
         domain = self._domain_of(proposal, state)
         if domain != item.domain:
             raise invalid_input("domain", "a change cannot move the object to another domain")
@@ -1124,11 +1161,30 @@ class Lifecycle:
 
 
 def _proposal_sha256(item: ObjectState) -> str:
-    """The value the editor sends back for a proposal: the SHA-256 of its file's bytes (those of
-    a file too large to be read count as empty), or `NO_PROPOSAL`."""
+    """The value the editor sends back for a proposal: the SHA-256 of its file's bytes, or
+    `NO_PROPOSAL`. A file that could not be read (over the limit) has no bytes here; it is
+    given a value of its own from the commit it came from, so two different unreadable proposals
+    never share one."""
     if item.proposal_source is None:
         return NO_PROPOSAL
-    return sha256(item.proposal_bytes or b"")
+    if item.proposal_bytes is None:
+        return sha256(f"unreadable:{item.proposal_commit}".encode())
+    return sha256(item.proposal_bytes)
+
+
+def _check_stored_size(plan: _Plan) -> None:
+    """Refuse an action whose file would be larger than the store reads back. The posted text is
+    limited, but the application writes the canonical form (a block scalar can be much longer than
+    the quoted text it came from) and `submit` adds a few bytes (`in_review`). Done before the
+    intent row, so nothing is committed that `read_state` would then refuse as `TooLarge`."""
+    for data in plan.files.values():
+        if data is not None and len(data) > MAX_YAML_BYTES:
+            raise invalid_input(
+                "yaml",
+                f"the stored form of the definition would be larger than {MAX_YAML_BYTES // 1024} "
+                "KiB, which is the most Makna reads back; shorten it",
+                maximum=MAX_YAML_BYTES,
+            )
 
 
 def _expect(item: ObjectState | None, expected: str | None) -> None:
@@ -1187,12 +1243,23 @@ def _check_text(
                 "a change cannot move the object to another domain",
             )
         ]
+    official = item.official if item is not None else None
+    stored = to_yaml(_as_proposal(definition, "draft", official.version if official else None))
+    if len(stored.encode("utf-8")) > MAX_YAML_BYTES:
+        return label, [
+            Issue(
+                label,
+                None,
+                "V01",
+                f"the stored form of this definition would be larger than "
+                f"{MAX_YAML_BYTES // 1024} KiB, which is the most Makna reads back",
+            )
+        ]
     path = (
         item.official_path
         if item is not None and item.official_path is not None
         else layout.object_path(ref, domain, proposal=False)
     )
-    official = item.official if item is not None else None
     version = (official.version or 1) + 1 if official is not None else 1
     approved = with_state(definition, status="approved", version=version)
     checked = DefinitionFile(path, False, approved, file.lines)

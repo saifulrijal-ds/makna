@@ -34,11 +34,19 @@ LANGUAGE_PATTERN = r"^[a-z]{2}$"
 
 
 def _unique[T](items: list[T]) -> list[T]:
-    seen: list[T] = []
+    """`items` if no item appears twice. Linear in the number of items (a set of those seen; an
+    item that cannot be hashed is compared with the others instead)."""
+    seen: set[Any] = set()
+    unhashable: list[T] = []
     for item in items:
-        if item in seen:
-            raise ValueError(f"items must be unique, {item!r} appears twice")
-        seen.append(item)
+        try:
+            if item in seen:
+                raise ValueError(f"items must be unique, {item!r} appears twice")
+            seen.add(item)
+        except TypeError:
+            if item in unhashable:
+                raise ValueError(f"items must be unique, {item!r} appears twice") from None
+            unhashable.append(item)
     return items
 
 

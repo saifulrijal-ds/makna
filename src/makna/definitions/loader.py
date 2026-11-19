@@ -11,6 +11,7 @@ out of the cross-file checks. A directory whose name starts with a dot (such as 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,12 @@ def load_text(path: str, text: str) -> tuple[DefinitionFile, list[Issue]]:
     except RecursionError:
         message = "not readable as YAML: nested too deeply"
         return DefinitionFile(path, is_proposal, None), [Issue(path, None, "V01", message)]
+    except ValueError:
+        # Python refuses an integer of more than 4300 digits with a plain ValueError.
+        message = "a number in the file has too many digits"
+        return DefinitionFile(path, is_proposal, None), [
+            Issue(path, _long_number_line(text), "V01", message)
+        ]
     except yaml.YAMLError as error:
         mark = getattr(error, "problem_mark", None)
         line = mark.line + 1 if mark is not None else None
@@ -178,7 +185,17 @@ def load_text(path: str, text: str) -> tuple[DefinitionFile, list[Issue]]:
             for e in error.errors(include_url=False)
         ]
         return DefinitionFile(path, is_proposal, None, lines), _dedupe(issues)
+    except ValueError:
+        return DefinitionFile(path, is_proposal, None, lines), [
+            Issue(path, _long_number_line(text), "V01", "a value in the file is not acceptable")
+        ]
     return DefinitionFile(path, is_proposal, definition, lines), []
+
+
+def _long_number_line(text: str) -> int | None:
+    """The line of the first run of 4300 or more digits, where Python's integer limit trips."""
+    found = re.search(r"[0-9]{4300,}", text)
+    return text.count("\n", 0, found.start()) + 1 if found else None
 
 
 def _dedupe(issues: list[Issue]) -> list[Issue]:

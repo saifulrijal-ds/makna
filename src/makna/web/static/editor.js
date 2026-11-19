@@ -12,6 +12,10 @@
   }
   ace.config.set("useStrictCSP", true);
   ace.config.set("basePath", "/static/vendor/ace");
+  // Ace loads other modules (the search box, the settings menu, the command bar) from basePath
+  // when a shortcut asks for them. None is vendored, and none must ever be fetched: the loader
+  // does nothing, so no key press makes a request.
+  ace.config.setLoader(function () {});
   var holder = document.createElement("div");
   holder.className = "editor-box";
   area.parentNode.insertBefore(holder, area.nextSibling);
@@ -21,11 +25,18 @@
     theme: "ace/theme/textmate",
     showPrintMargin: false,
     showFoldWidgets: false,
+    enableKeyboardAccessibility: true,
     tabSize: 2,
     useSoftTabs: true,
     wrap: false
   });
   editor.session.setMode("ace/mode/yaml");
+  // The commands that need a module from basePath are removed, so the browser keeps its own
+  // shortcuts (Ctrl+F finds in the page) instead of Ace swallowing them.
+  ["find", "replace", "findnext", "findprevious", "showSettingsMenu", "openCommandPalette",
+   "openCommandPallete", "showKeyboardShortcuts", "gotoline", "modeSelect"].forEach(function (name) {
+    editor.commands.removeCommand(name);
+  });
   editor.setValue(area.value, -1);
   editor.textInput.getElement().setAttribute("aria-label", "Definition (YAML)");
   area.hidden = true;
