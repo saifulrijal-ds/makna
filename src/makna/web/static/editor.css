@@ -32,8 +32,11 @@ table.diff {
   width: 100%;
 }
 
+table.diff col.diff-no {
+  width: 3.5rem;
+}
+
 table.diff td.diff-no {
-  width: 3rem;
   text-align: right;
   color: var(--pico-muted-color, #666);
   vertical-align: top;

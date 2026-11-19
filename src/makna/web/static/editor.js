@@ -15,16 +15,17 @@
   var holder = document.createElement("div");
   holder.className = "editor-box";
   area.parentNode.insertBefore(holder, area.nextSibling);
+  // `useWorker` goes first: setting the mode with it still on would start a (blocked) worker.
   var editor = ace.edit(holder, {
-    mode: "ace/mode/yaml",
-    theme: "ace/theme/textmate",
     useWorker: false,
+    theme: "ace/theme/textmate",
     showPrintMargin: false,
     showFoldWidgets: false,
     tabSize: 2,
     useSoftTabs: true,
     wrap: false
   });
+  editor.session.setMode("ace/mode/yaml");
   editor.setValue(area.value, -1);
   editor.textInput.getElement().setAttribute("aria-label", "Definition (YAML)");
   area.hidden = true;

@@ -398,13 +398,14 @@ def test_the_script_the_ace_styles_and_the_templates_are_served(shared: Ctx) -> 
         "/static/vendor/ace/ace.js",
         "/static/vendor/ace/mode-yaml.js",
         "/static/vendor/ace/theme-textmate.js",
-        "/static/vendor/ace/ace.css",
-        "/static/vendor/ace/textmate.css",
-        "/static/vendor/ace/main-23.png",
+        "/static/vendor/ace/css/ace.css",
+        "/static/vendor/ace/css/theme/textmate.css",
+        "/static/vendor/ace/css/textmate-1.png",
+        "/static/vendor/ace/css/textmate-2.png",
     ):
         assert client.get(path).status_code == 200, path
     page = client.get("/new/metric").text
-    for sheet in ("/static/vendor/ace/ace.css", "/static/vendor/ace/textmate.css"):
+    for sheet in ("/static/vendor/ace/css/ace.css", "/static/vendor/ace/css/theme/textmate.css"):
         assert f'href="{sheet}"' in page
 
 

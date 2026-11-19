@@ -3,8 +3,8 @@
 {% block title %}{% if target.is_new %}New {{ kind_label }}{% else %}Edit {{ target.name }}{% endif %}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/editor.css">
-<link rel="stylesheet" href="/static/vendor/ace/ace.css">
-<link rel="stylesheet" href="/static/vendor/ace/textmate.css">
+<link rel="stylesheet" href="/static/vendor/ace/css/ace.css">
+<link rel="stylesheet" href="/static/vendor/ace/css/theme/textmate.css">
 <h1>{% if target.is_new %}New {{ kind_label }}{% else %}Edit {{ kind_label }} <code>{{ target.name }}</code>{% endif %}</h1>
 {% if object_link %}<p><a href="{{ object_link }}">Open the page of this {{ kind_label }}</a></p>{% endif %}
 
@@ -78,6 +78,7 @@
   {% else %}
   <p><small>Left: the official version. Right: the text in the box. Both are shown in the form Makna stores, so what Makna sets itself (status, version) does not count as a change.</small></p>
   <table class="diff" data-field="diff">
+    <colgroup><col class="diff-no"><col><col class="diff-no"><col></colgroup>
     <thead>
       <tr><th>Line</th><th>Official version</th><th>Line</th><th>Text in the box</th></tr>
     </thead>

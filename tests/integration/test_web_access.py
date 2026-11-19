@@ -43,6 +43,14 @@ def test_every_route_but_login_healthz_and_static_redirects_to_login_when_signed
     paths = {path for path, _ in routes}
     # The walk must see the real routes, or the loop below proves nothing.
     assert {"/", "/account", "/admin/users", "/admin/tokens", "/logout", "/login"} <= paths
+    # The editor's routes (WP-19) are walked too: each of them must redirect when signed out.
+    assert {
+        "/new",
+        "/new/{kind}",
+        "/new/{kind}/save",
+        "/edit/{kind}/{name}",
+        "/edit/{kind}/{name}/submit",
+    } <= paths
     public = {"/login", "/healthz", "/static"}
     checked = 0
     for path, methods in routes:
@@ -546,6 +554,7 @@ def test_the_navigation_depends_on_the_role_and_links_only_to_pages_that_exist(
         assert ("/admin/users" in links) == (role == "admin")
         assert ("/admin/tokens" in links) == (role == "admin")
         assert "/account" in links
+        assert ("/new" in links) == (role != "viewer")
 
 
 # --- fix round 1 ---

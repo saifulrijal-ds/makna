@@ -328,6 +328,8 @@ def _facts(target: Target, source: EditorSource | None) -> list[str]:
 def _render(request: Request, page: Page, status: int = 200) -> Response:
     state = _state(request)
     target = page.target
+    if page.diff is None and target.is_new:
+        page.diff = make_diff(None, "", None)
     other_kinds = [(k, KIND_LABELS[k]) for k in layout.KINDS if k != target.kind]
     return state.pages.render(
         request.scope,

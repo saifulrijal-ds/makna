@@ -26,10 +26,10 @@ Path | Taken from the tarball | SHA-256 of the file
 `ace/mode-yaml.js` | `package/src-min-noconflict/mode-yaml.js` | `24faa242ac5085656ff0b9fe283edc8d8565c2ad84f5a824b5868eb5a7ca5cb3`
 `ace/theme-textmate.js` | `package/src-min-noconflict/theme-textmate.js` | `b6d8bae9abd821bc73ad30efa2b640953dee0132a26169330b80b25f15295937`
 `ace/LICENSE` | `package/LICENSE` | `850f545c5254e8c08204edb2a6d50bbb72727c38a82982c17a84bebf6064cdf8`
-`ace/ace.css` | `package/css/ace.css` | `2272e3f6e5efac0fed1e2d4815fe2c3223fd6cda22aab6cd397fe6881f49ec13`
-`ace/textmate.css` | `package/css/theme/textmate.css` | `7448140ab6e9343d43441e9a39fe67b99b285ba305b7c725e7745969e2b1c94f`
-`ace/main-23.png` | `package/css/main-23.png` | `1a020e872a95cde139d1be39a9c9a4905fdf67e9bd7fa53e72d6e83218cdabf6`
-`ace/main-24.png` | `package/css/main-24.png` | `5dcf845557b32e1af2c3a19623209bfef6f335f215d19f46f4d152544acc94d3`
+`ace/css/ace.css` | `package/css/ace.css` | `2272e3f6e5efac0fed1e2d4815fe2c3223fd6cda22aab6cd397fe6881f49ec13`
+`ace/css/theme/textmate.css` | `package/css/theme/textmate.css` | `7448140ab6e9343d43441e9a39fe67b99b285ba305b7c725e7745969e2b1c94f`
+`ace/css/textmate-1.png` | `package/css/textmate-1.png` | `1a020e872a95cde139d1be39a9c9a4905fdf67e9bd7fa53e72d6e83218cdabf6`
+`ace/css/textmate-2.png` | `package/css/textmate-2.png` | `5dcf845557b32e1af2c3a19623209bfef6f335f215d19f46f4d152544acc94d3`
 
 ## Why these files
 
@@ -41,8 +41,18 @@ Path | Taken from the tarball | SHA-256 of the file
   the browser requests nothing from it.
 - **HTMX: `htmx.min.js`.** The one script of the pages. The pages set `allowEval` to false in
   the `htmx-config` meta tag, so `hx-on` and `js:` values are off.
-- **Ace: `ace.js`, `mode-yaml.js`, `theme-textmate.js`.** The minimum for a YAML editor
-  (WP-19): the editor, the YAML mode, and one theme (the editor's default). The YAML worker
-  (`worker-yaml.js`, about 120 kB) is left out; add it, with its row, if WP-19 wants the
-  editor's own syntax check. Ace loads its modes and themes from the folder of `ace.js`, so set
-  `ace.config.set("basePath", "/static/vendor/ace")`.
+- **Ace: `ace.js`, `mode-yaml.js`, `theme-textmate.js`, and the files under `ace/css/`.** The
+  minimum for a YAML editor (WP-19): the editor, the YAML mode, and one theme (the editor's
+  default). The YAML worker (`worker-yaml.js`, about 120 kB) is left out, and the editor is told
+  not to use a worker (`useWorker: false`), because Ace's workers are blob workers, which the
+  content security policy forbids. By default Ace writes its styles into the page as `<style>`
+  elements, which a policy without `'unsafe-inline'` in `style-src` blocks. The editor therefore
+  sets `useStrictCSP`, with which Ace injects nothing, and the page links the two style files
+  instead (`css/ace.css` for the editor, `css/theme/textmate.css` for the theme) with the two
+  indent-guide images the theme names. The folders keep the layout of the tarball, because the
+  theme file names its image as `../textmate-1.png`. The editor turns off fold widgets, so the
+  other images of `ace.css` (`main-N.png`, `main-N.svg`: fold arrows, gutter icons) are never
+  requested, and are not vendored. Ace loads its modes and themes from the folder of `ace.js`;
+  the page names all three scripts itself, and `editor.js` still sets
+  `ace.config.set("basePath", "/static/vendor/ace")`. When updating Ace, check in a browser that
+  the editor has its styles and that the console shows no policy violation.
