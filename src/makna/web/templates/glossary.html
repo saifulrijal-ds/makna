@@ -8,6 +8,7 @@
 <p data-field="description">{{ view.description }}</p>
 <p data-field="owner"><strong>Owner:</strong> {{ view.owner }}</p>
 <p data-field="status"><strong>Status:</strong> {{ badge(status) }}{% if view.version is not none %} <small>version {{ view.version }}</small>{% endif %}</p>
+{% if edit_path %}<p data-field="edit"><a href="{{ edit_path }}">Edit this definition</a></p>{% endif %}
 {% if view.synonyms %}
 <p data-field="synonyms"><small>Also called: {{ view.synonyms | join(", ") }}</small></p>
 {% endif %}

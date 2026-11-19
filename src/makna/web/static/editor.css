@@ -1,0 +1,58 @@
+/* The editor page of WP-19: the Ace box, the buttons, and the side-by-side difference. */
+textarea.yaml-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  min-height: 20rem;
+}
+
+.editor-box {
+  height: 30rem;
+  margin-bottom: var(--pico-spacing, 1rem);
+  border: 1px solid var(--pico-form-element-border-color, #ccc);
+  border-radius: var(--pico-border-radius, 0.25rem);
+}
+
+#editor-form .buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#editor-form .buttons button {
+  width: auto;
+}
+
+table.issues td:nth-child(2) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+table.diff {
+  table-layout: fixed;
+  width: 100%;
+}
+
+table.diff td.diff-no {
+  width: 3rem;
+  text-align: right;
+  color: var(--pico-muted-color, #666);
+  vertical-align: top;
+}
+
+table.diff td.diff-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+table.diff tr[data-kind="removed"] td.diff-text:nth-child(2),
+table.diff tr[data-kind="changed"] td.diff-text:nth-child(2) {
+  background: #fde8e8;
+}
+
+table.diff tr[data-kind="added"] td.diff-text:nth-child(4),
+table.diff tr[data-kind="changed"] td.diff-text:nth-child(4) {
+  background: #e3f6e8;
+}

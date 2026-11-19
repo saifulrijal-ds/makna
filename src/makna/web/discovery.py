@@ -32,6 +32,7 @@ from makna.services import Caller, ServiceError, ServiceErrorCode, permissions
 from makna.services.discovery import Freshness
 from makna.services.objects import ID_PATTERN, MAX_ID_LENGTH
 from makna.services.views import DefinitionView, SearchHit
+from makna.web.editor import edit_path
 from makna.web.routes import _db, _signed_in, _state
 
 router = APIRouter()
@@ -282,6 +283,7 @@ async def metric(request: Request, name: str) -> Response:
     freshness = await _db(state.services.discovery.freshness, caller, name)
     values = _object_values(caller, view, related)
     values["freshness"] = freshness_text(freshness)
+    values["edit_path"] = edit_path(caller, "metric", name)
     values["examples"] = [(q, bench_path(q)) for q in view.example_questions]
     return state.pages.render(request.scope, "metric.html", values)
 
@@ -290,6 +292,7 @@ async def metric(request: Request, name: str) -> Response:
 async def entity(request: Request, name: str) -> Response:
     caller, view, related = await _definition(request, "entity", name, detail="full")
     values = _object_values(caller, view, related)
+    values["edit_path"] = edit_path(caller, "entity", name)
     values["relationships"] = [
         (item, page_path(f"entity:{item.to}")) for item in view.relationships
     ]
@@ -300,5 +303,6 @@ async def entity(request: Request, name: str) -> Response:
 async def glossary(request: Request, name: str) -> Response:
     caller, view, related = await _definition(request, "glossary_term", name, detail="full")
     values = _object_values(caller, view, related)
+    values["edit_path"] = edit_path(caller, "glossary_term", name)
     values["terms"] = [(item, page_path(item.id)) for item in view.related]
     return _state(request).pages.render(request.scope, "glossary.html", values)

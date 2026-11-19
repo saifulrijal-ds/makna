@@ -9,6 +9,7 @@
 {% if view.formula %}<p data-field="formula"><strong>Formula:</strong> {{ view.formula }}</p>{% endif %}
 <p data-field="owner"><strong>Owner:</strong> {{ view.owner }}</p>
 <p data-field="status"><strong>Status:</strong> {{ badge(status) }}{% if view.version is not none %} <small>version {{ view.version }}</small>{% endif %}</p>
+{% if edit_path %}<p data-field="edit"><a href="{{ edit_path }}">Edit this definition</a></p>{% endif %}
 <p data-field="freshness"><strong>Data:</strong> {{ freshness }}</p>
 {% if view.caveats %}
 <section data-field="caveats">

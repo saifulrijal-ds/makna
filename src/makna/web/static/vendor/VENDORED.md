@@ -26,6 +26,10 @@ Path | Taken from the tarball | SHA-256 of the file
 `ace/mode-yaml.js` | `package/src-min-noconflict/mode-yaml.js` | `24faa242ac5085656ff0b9fe283edc8d8565c2ad84f5a824b5868eb5a7ca5cb3`
 `ace/theme-textmate.js` | `package/src-min-noconflict/theme-textmate.js` | `b6d8bae9abd821bc73ad30efa2b640953dee0132a26169330b80b25f15295937`
 `ace/LICENSE` | `package/LICENSE` | `850f545c5254e8c08204edb2a6d50bbb72727c38a82982c17a84bebf6064cdf8`
+`ace/ace.css` | `package/css/ace.css` | `2272e3f6e5efac0fed1e2d4815fe2c3223fd6cda22aab6cd397fe6881f49ec13`
+`ace/textmate.css` | `package/css/theme/textmate.css` | `7448140ab6e9343d43441e9a39fe67b99b285ba305b7c725e7745969e2b1c94f`
+`ace/main-23.png` | `package/css/main-23.png` | `1a020e872a95cde139d1be39a9c9a4905fdf67e9bd7fa53e72d6e83218cdabf6`
+`ace/main-24.png` | `package/css/main-24.png` | `5dcf845557b32e1af2c3a19623209bfef6f335f215d19f46f4d152544acc94d3`
 
 ## Why these files
 

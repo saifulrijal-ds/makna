@@ -67,6 +67,8 @@ def navigation(caller: Caller | None) -> list[tuple[str, str]]:
     links = [("Home", "/"), ("Search", "/search")]
     if permissions.can_use_test_bench(caller):
         links.append(("Bench", "/bench"))
+    if permissions.can_edit_proposals(caller):
+        links.append(("New", "/new"))
     links.append(("Account", "/account"))
     if permissions.can_manage(caller):
         links += [("Users", "/admin/users"), ("Tokens", "/admin/tokens")]

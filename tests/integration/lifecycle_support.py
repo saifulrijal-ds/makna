@@ -258,3 +258,30 @@ def state_dump(engine: Engine) -> dict[str, list[Any]]:
         ).all()
         dump["search_document"] = [tuple(r) for r in rows]
     return dump
+
+
+def working_tree(world: World) -> str:
+    """`git status --porcelain` of the working tree (empty when nothing differs from the index)."""
+    done = subprocess.run(
+        ["git", "-C", str(world.repo.path), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout
+
+
+def snapshot(world: World) -> tuple[Any, ...]:
+    """Everything a read-only action must leave as it was: `HEAD`, the working tree, the files in
+    it, and every row of the tables the write path touches (including `audit_event` and
+    `semantic_object`)."""
+    return (
+        head(world),
+        working_tree(world),
+        state_dump(world.engine),
+        sorted(
+            str(p.relative_to(world.repo.path))
+            for p in world.repo.path.rglob("*")
+            if ".git" not in p.parts
+        ),
+    )

@@ -1,0 +1,15 @@
+# A new glossary term. Fill in every field that is empty (""). The comments help you here;
+# Makna stores the definition in its own canonical form, so comments and key order are not kept.
+apiVersion: makna/v1
+kind: glossary_term
+name: ""          # lowercase letters, digits and underscores, starting with a letter
+label: ""         # the term as people write it
+description: ""   # what the term means in plain language (at least 20 characters)
+domain: ""        # the name of an existing domain
+owner:
+  team: ""        # the team that owns this term
+status: draft
+sensitivity: internal
+synonyms:
+  en: []          # other English words for it
+  id: []          # other Indonesian words for it

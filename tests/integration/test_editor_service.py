@@ -4,7 +4,6 @@ temporary git repository)."""
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -33,25 +32,6 @@ def world(empty_database: URL, tmp_path: Path) -> Iterator[World]:
     built.services.dispose()
 
 
-def working_tree(world: World) -> str:
-    done = subprocess.run(
-        ["git", "-C", str(world.repo.path), "status", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return done.stdout
-
-
-def snapshot(world: World) -> tuple[Any, ...]:
-    return (
-        sup.head(world),
-        working_tree(world),
-        sup.state_dump(world.engine),
-        sorted(p.name for p in world.repo.path.rglob("*") if ".git" not in p.parts),
-    )
-
-
 def rules(result: Any) -> list[tuple[str, int | None]]:
     return [(i.rule, i.line) for i in result.issues]
 
@@ -61,13 +41,13 @@ def rules(result: Any) -> list[tuple[str, int | None]]:
 
 def test_check_reports_an_unknown_key_with_its_line_and_writes_nothing(world: World) -> None:
     text = sup.metric_text() + "colour: blue\n"
-    before = snapshot(world)
+    before = sup.snapshot(world)
     result = world.life.check(world.caller("curator"), NEW, text)
     line = text.splitlines().index("colour: blue") + 1
     assert not result.ok
     assert [(i.rule, i.line, i.own) for i in result.issues] == [("V01", line, True)]
     assert "colour" in result.issues[0].message
-    assert snapshot(world) == before
+    assert sup.snapshot(world) == before
 
 
 def test_check_reports_a_v06_break_with_its_line_and_writes_nothing(world: World) -> None:
@@ -75,7 +55,7 @@ def test_check_reports_a_v06_break_with_its_line_and_writes_nothing(world: World
     # Point a measure's time dimension at a dimension that is not of type time.
     edited = text.replace("time_dimension: snapshot_date", "time_dimension: dpd_bucket", 1)
     assert edited != text
-    before = snapshot(world)
+    before = sup.snapshot(world)
     result = world.life.check(world.caller("curator"), SNAPSHOT, edited)
     found = [i for i in result.issues if i.rule == "V06"]
     assert found, rules(result)
@@ -84,7 +64,7 @@ def test_check_reports_a_v06_break_with_its_line_and_writes_nothing(world: World
     )
     assert found[0].line == expected_line + 1
     assert found[0].own
-    assert snapshot(world) == before
+    assert sup.snapshot(world) == before
 
 
 def test_check_on_a_good_text_finds_nothing_for_a_new_and_an_existing_object(world: World) -> None:
