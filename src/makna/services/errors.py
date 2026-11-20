@@ -28,6 +28,8 @@ class LifecycleErrorCode(StrEnum):
     """The definition has errors; `details.issues` lists rule code, line, and message."""
     OPEN_REFERENCE_ISSUE = "OPEN_REFERENCE_ISSUE"
     """An approval is refused because the object has an open reference issue."""
+    TOO_MANY_DRAFTS = "TOO_MANY_DRAFTS"
+    """The caller already has the most open proposals one user may have (WP-19, RS-I1)."""
     CONFLICT = "CONFLICT"
     """The change cannot be made now: another one is in progress, or the object is in another
     state than the action needs."""

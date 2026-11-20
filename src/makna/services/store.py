@@ -358,14 +358,28 @@ class RepoState:
         return objects
 
 
+PARSED_BYTES_PER_FILE_BYTE = 40
+"""What a parsed definition costs in memory per byte of its file, measured on the worst files an
+editor accepts (tracemalloc, one `load_text` result): 34 times for 44,000 unique synonyms, 39
+times for 27,000 unknown keys, 18 times for a mix, about 1 for long text. The cache counts this
+estimate, not the file's bytes."""
+DECODE_CACHE_BYTES = 256 * 1024 * 1024
+"""The memory budget of the decode cache, per process: 256 MiB of estimated parsed size, which is
+25 files of the largest size (256 KiB, 10 MiB each), or about 50,000 files of the sample's size.
+It holds `MAX_OPEN_DRAFTS_PER_USER` near-limit drafts of one user (200 MiB) and the official set.
+Several users who all keep near-limit drafts can exceed it; every read then parses the drafts that
+do not fit again (WP-23: rate limits)."""
+
+
 class _DecodeCache:
-    """A small bounded LRU of `load_text` results, keyed by the path and the SHA-256 of the file's
+    """A bounded LRU of `load_text` results (by the estimated memory of what it holds, and at most
+    4096 files), keyed by the path and the SHA-256 of the file's
     bytes. A git blob is content-addressed, so the same bytes at the same path always decode the
     same; reading the repository again (every action, Check, and editor page does) then parses only
     the files that changed. What is stored is never handed out: a hit returns a deep copy of the
     definition, so a caller that changes it cannot change what later reads get."""
 
-    def __init__(self, entries: int = 256, max_bytes: int = 32 * 1024 * 1024) -> None:
+    def __init__(self, entries: int = 4096, max_bytes: int = DECODE_CACHE_BYTES) -> None:
         self._items: OrderedDict[tuple[str, str], tuple[int, DefinitionFile, tuple[Issue, ...]]] = (
             OrderedDict()
         )
@@ -426,7 +440,7 @@ def _decode(path: str, data: bytes | TooLarge) -> tuple[DefinitionFile, list[Iss
             Issue(path, None, "V01", "not valid UTF-8 text")
         ]
     file, issues = load_text(path, text)
-    _DECODED.put(key, len(data), file, issues)
+    _DECODED.put(key, len(data) * PARSED_BYTES_PER_FILE_BYTE, file, issues)
     return file, issues
 
 

@@ -69,7 +69,12 @@ Tags = Annotated[list[str], AfterValidator(_unique)]
 Status = Literal["draft", "in_review", "approved", "deprecated"]
 Sensitivity = Literal["public", "internal", "confidential", "personal"]
 Grain = Literal["day", "week", "month", "quarter", "year"]
-Scalar = str | int | float | bool
+MAX_INTEGER = 2**63 - 1
+BoundedInt = Annotated[int, Field(ge=-MAX_INTEGER - 1, le=MAX_INTEGER)]
+"""Integers in a definition are 64-bit. YAML reads `0x...` and `0o...` of any length, and turning
+such a number into text (a log line, the search text of a filter, the canonical file) raises
+`ValueError` above Python's 4300-digit limit; no definition needs a number that large."""
+Scalar = str | BoundedInt | float | bool
 
 
 class _Model(BaseModel):
@@ -131,7 +136,7 @@ class _Object(_Model):
     status: Status
     sensitivity: Sensitivity
     tags: Tags | None = None
-    version: Annotated[int, Field(ge=1)] | None = None
+    version: Annotated[int, Field(ge=1, le=2**31 - 1)] | None = None
     deprecation: Deprecation | None = None
 
 

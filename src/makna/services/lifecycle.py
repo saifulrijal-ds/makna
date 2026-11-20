@@ -49,7 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import Connection, Engine, func, insert, update
+from sqlalchemy import Connection, Engine, func, insert, select, update
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import SQLAlchemyError
 
 from makna.catalog import references
@@ -104,6 +105,11 @@ logger = logging.getLogger(__name__)
 
 MAX_REASON_LENGTH = 500
 MAX_ISSUES_SHOWN = 20
+MAX_OPEN_DRAFTS_PER_USER = 20
+"""The most open proposals (draft or in review, made through the application) one user may have
+started. Counted under the lock from the audit log (the author is the actor of the latest
+`create_proposal` of the object) and the repository state (the proposal still exists); a proposal
+that came from an outside commit counts for nobody. Updating a proposal is never limited."""
 MAX_MESSAGE_SHOWN = 300
 
 CREATE_PROPOSAL = "create_proposal"
@@ -507,6 +513,8 @@ class Lifecycle:
             proposal_sha256=_proposal_sha256(item),
             blocked=blocked,
             external=item.external_author is not None,
+            can_withdraw=item.proposal_source is not None
+            and bool(approval.may_edit(caller, user.email, item.authors)),
         )
 
     def check(self, caller: Caller, object_id: str, yaml_text: str) -> CheckResult:
@@ -601,7 +609,7 @@ class Lifecycle:
                     actor, user, action, ref, state, parsed, replaced_by, text,
                     expected_proposal_commit, expected_sha,
                 )  # fmt: skip
-                _check_stored_size(plan)
+                _check_stored_size(plan, action)
                 lock.check()
                 intent_id = self._write_intent(user, action, ref.id, text, plan)
                 made = self._commit(repo, lock, user, action, ref.id, text, plan, intent_id, state)
@@ -830,12 +838,48 @@ class Lifecycle:
             decision = approval.may_edit(caller, user.email, None)
         if not decision:
             raise _denied(decision)
+        opened = self._open_drafts(user.id, state)
+        if opened >= MAX_OPEN_DRAFTS_PER_USER:
+            raise ServiceError(
+                LifecycleErrorCode.TOO_MANY_DRAFTS,
+                f"You already have {opened} open proposals, the most one user may have "
+                f"({MAX_OPEN_DRAFTS_PER_USER}). Submit, withdraw, or get one decided before "
+                "starting another.",
+                {"open": opened, "maximum": MAX_OPEN_DRAFTS_PER_USER},
+            )
         version = official.version if official is not None else None
+        if _later_forms_too_large(proposal, version):
+            raise invalid_input("yaml", LATER_FORMS_MESSAGE, maximum=MAX_YAML_BYTES)
         text = to_yaml(_as_proposal(proposal, "draft", version))
         path = layout.object_path(ref, domain, proposal=True)
         return _Plan(
             {path: text.encode("utf-8")}, official.status if official else None, "draft", version
         )
+
+    def _open_drafts(self, user_id: int, state: RepoState) -> int:
+        """How many open proposals `user_id` started: the objects whose latest `create_proposal`
+        in the audit log is theirs and that still have a proposal made through the application.
+        Called under the lock, so the audit and the state are those the action decides on."""
+        statement = (
+            select(audit_event.c.object_id, audit_event.c.actor_user_id)
+            .where(audit_event.c.action == CREATE_PROPOSAL, audit_event.c.commit_sha.is_not(None))
+            .ext(distinct_on(audit_event.c.object_id))
+            .order_by(audit_event.c.object_id, audit_event.c.id.desc())
+        )
+        with self._engine.connect() as connection:
+            rows = connection.execute(statement).all()
+        count = 0
+        for object_id, actor in rows:
+            item = state.objects.get(object_id)
+            if (
+                actor == user_id
+                and item is not None
+                and item.proposal_source is not None
+                and item.external_author is None
+                and not item.in_official_file
+            ):
+                count += 1
+        return count
 
     def _plan_update(
         self,
@@ -854,6 +898,9 @@ class Lifecycle:
         decision = approval.may_edit(caller, user.email, item.authors)
         if not decision:
             raise _denied(decision)
+        if _unreadable(item):
+            # Whatever fingerprint was sent: there is no text to replace knowingly.
+            raise ServiceError(LifecycleErrorCode.CONFLICT, UNREADABLE_MESSAGE)
         _expect(item, expected_sha)
         if item.in_official_file:
             raise ServiceError(LifecycleErrorCode.CONFLICT, OUTSIDE_PROPOSAL_MESSAGE)
@@ -865,6 +912,8 @@ class Lifecycle:
             if not created:
                 raise _denied(created)  # the owner team of a new object holds on every edit
         version = item.official.version if item.official is not None else None
+        if _later_forms_too_large(proposal, version):
+            raise invalid_input("yaml", LATER_FORMS_MESSAGE, maximum=MAX_YAML_BYTES)
         text = to_yaml(_as_proposal(proposal, "draft", version)).encode("utf-8")
         assert item.proposal_path is not None
         if text == item.proposal_bytes:
@@ -902,6 +951,8 @@ class Lifecycle:
                 files[item.proposal_path] = None
             files.update(_restore_official(item))
             return _Plan(files, status, "withdrawn", version)
+        if _unreadable(item):
+            raise ServiceError(LifecycleErrorCode.CONFLICT, UNREADABLE_MESSAGE)
         if proposal is None:
             raise ServiceError(
                 LifecycleErrorCode.CONFLICT,
@@ -1172,19 +1223,67 @@ def _proposal_sha256(item: ObjectState) -> str:
     return sha256(item.proposal_bytes)
 
 
-def _check_stored_size(plan: _Plan) -> None:
+def _check_stored_size(plan: _Plan, action: str) -> None:
     """Refuse an action whose file would be larger than the store reads back. The posted text is
     limited, but the application writes the canonical form (a block scalar can be much longer than
-    the quoted text it came from) and `submit` adds a few bytes (`in_review`). Done before the
-    intent row, so nothing is committed that `read_state` would then refuse as `TooLarge`."""
+    the quoted text it came from), `submit` adds a few bytes (`in_review`), `approve` the version,
+    and `deprecate` a note. Done before the intent row, so nothing is committed that `read_state`
+    would then refuse as `TooLarge`."""
     for data in plan.files.values():
-        if data is not None and len(data) > MAX_YAML_BYTES:
-            raise invalid_input(
-                "yaml",
-                f"the stored form of the definition would be larger than {MAX_YAML_BYTES // 1024} "
-                "KiB, which is the most Makna reads back; shorten it",
-                maximum=MAX_YAML_BYTES,
+        if data is None or len(data) <= MAX_YAML_BYTES:
+            continue
+        limit = f"{MAX_YAML_BYTES // 1024} KiB"
+        if action == DEPRECATE:
+            problem = (
+                f"deprecating adds a note to the file, which would make it larger than {limit}, "
+                "the most Makna reads back; shorten the definition through a proposal first"
             )
+        elif action == APPROVE:
+            problem = (
+                f"approving adds the version to the file, which would make it larger than {limit}, "
+                "the most Makna reads back; shorten the proposal"
+            )
+        else:
+            problem = (
+                f"the stored form of the definition would be larger than {limit}, which is the "
+                "most Makna reads back; shorten it"
+            )
+        raise invalid_input("yaml", problem, maximum=MAX_YAML_BYTES)
+
+
+def _later_forms_too_large(definition: AnyDefinition, official_version: int | None) -> bool:
+    """True when the proposal, once approved (with its version) or later deprecated (with the
+    longest reason and a replacement), would be larger than the store reads back. Checked when a
+    proposal is saved, so a saved proposal can always be submitted, approved, and deprecated."""
+    version = (official_version or 0) + 1
+    deprecation = Deprecation(
+        reason="x" * MAX_REASON_LENGTH, replaced_by=f"{definition.kind}:" + "x" * 63
+    )
+    forms = (
+        with_state(definition, status="approved", version=version),
+        with_state(definition, status="deprecated", version=version, deprecation=deprecation),
+    )
+    return any(len(to_yaml(form).encode("utf-8")) > MAX_YAML_BYTES for form in forms)
+
+
+LATER_FORMS_MESSAGE = (
+    "once approved (with its version) or deprecated (with a reason) the definition would be "
+    "larger than 256 KiB, which is the most Makna reads back; shorten it"
+)
+
+
+def _unreadable(item: ObjectState) -> bool:
+    """True when the proposal's file is over the limit or not UTF-8 text: it has no text the
+    editor can show, so it cannot be edited or submitted, only withdrawn."""
+    if item.proposal_source is None:
+        return False
+    if item.proposal_bytes is None:
+        return True
+    try:
+        item.proposal_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
 
 
 def _expect(item: ObjectState | None, expected: str | None) -> None:
@@ -1244,16 +1343,9 @@ def _check_text(
             )
         ]
     official = item.official if item is not None else None
-    stored = to_yaml(_as_proposal(definition, "draft", official.version if official else None))
-    if len(stored.encode("utf-8")) > MAX_YAML_BYTES:
+    if _later_forms_too_large(definition, official.version if official else None):
         return label, [
-            Issue(
-                label,
-                None,
-                "V01",
-                f"the stored form of this definition would be larger than "
-                f"{MAX_YAML_BYTES // 1024} KiB, which is the most Makna reads back",
-            )
+            Issue(label, None, "V01", LATER_FORMS_MESSAGE[0].upper() + LATER_FORMS_MESSAGE[1:])
         ]
     path = (
         item.official_path

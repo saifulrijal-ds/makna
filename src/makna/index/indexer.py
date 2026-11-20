@@ -154,7 +154,9 @@ def _value_text(dimension: Dimension, level: str | None = None) -> str:
     if (level or dimension.sensitivity) == "personal":
         return ""
     return _join(
-        f"{value.value} {value.description}" if value.description else str(value.value)
+        f"{_scalar_text(value.value)} {value.description}"
+        if value.description
+        else _scalar_text(value.value)
         for value in dimension.values or []
     )
 
@@ -205,6 +207,15 @@ class _Lookup:
         return entity, next((m for m in entity.measures or [] if m.name == measure_name), None)
 
 
+def _scalar_text(value: object) -> str:
+    """A filter constant as text. Never raises: an integer too long for Python to print (the model
+    bounds integers, so this is a second line of defence for sync) is named by what it is."""
+    try:
+        return str(value)
+    except ValueError:
+        return "<number>"
+
+
 def _filter_text(item: Filter | RuleRef, lookup: _Lookup) -> str:
     """A definition filter in words. The constant of a filter on a personal dimension (declared
     or derived from the catalog) is left out."""
@@ -220,7 +231,11 @@ def _filter_text(item: Filter | RuleRef, lookup: _Lookup) -> str:
     )
     if entity is not None and found is not None and lookup.level(entity, found) == "personal":
         return f"{dimension} {item.op}"
-    value = ", ".join(map(str, item.value)) if isinstance(item.value, list) else item.value
+    value = (
+        ", ".join(_scalar_text(v) for v in item.value)
+        if isinstance(item.value, list)
+        else _scalar_text(item.value)
+    )
     return f"{dimension} {item.op} {value}"
 
 

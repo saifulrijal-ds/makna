@@ -43,7 +43,10 @@ EDIT_ROUTES = [
     ("GET", "/new/metric"),
     ("GET", "/edit/metric/disbursement_amount"),
     *[("POST", f"/new/metric/{a}") for a in ("check", "save", "submit")],
-    *[("POST", f"/edit/metric/disbursement_amount/{a}") for a in ("check", "save", "submit")],
+    *[
+        ("POST", f"/edit/metric/disbursement_amount/{a}")
+        for a in ("check", "save", "submit", "withdraw")
+    ],
 ]
 
 
@@ -159,6 +162,17 @@ def test_a_viewer_gets_403_on_every_editor_route_before_any_name_is_looked_at(
     for path in ("/edit/nothing/x", "/edit/metric/NOT_A_NAME", "/new/nothing"):
         assert viewer.get(path).status_code == 403, path
     assert viewer.post("/new/nothing/save", data={"csrf_token": token}).status_code == 403
+    # A POST to an unknown kind or a malformed name is a 403 for a viewer too: the guard comes
+    # before the name is looked at (a 404 would tell a viewer what exists).
+    for path in (
+        "/edit/nothing/x/save",
+        "/edit/nothing/x/check",
+        "/edit/metric/NOT_A_NAME/submit",
+        "/edit/metric/NOT_A_NAME/withdraw",
+        "/edit/metric/no_such_metric/save",
+    ):
+        response = viewer.post(path, data={"csrf_token": token, "yaml_text": "a: b", "reason": "r"})
+        assert response.status_code == 403, path
     assert sup.snapshot(shared.world) == before
 
 
@@ -1223,3 +1237,205 @@ def test_the_script_blocks_every_module_load_and_leaves_the_editor_by_keyboard()
 def test_the_page_says_how_to_leave_the_editor_with_the_keyboard(shared: Ctx) -> None:
     page = shared.client().get("/new/metric").text
     assert "press Esc and then Tab" in page
+
+
+# --- fix round 2 -----------------------------------------------------------------------------
+
+
+def test_the_parsing_of_the_editor_runs_off_the_event_loop(
+    shared: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    seen: list[str] = []
+
+    def off_the_loop(real: Any, name: str) -> Any:
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:  # no running loop: a worker thread, as it must be
+                seen.append(name)
+                return real(*args, **kwargs)
+            raise AssertionError(f"{name} ran on the event loop")
+
+        return guarded
+
+    monkeypatch.setattr(editor, "_name_in", off_the_loop(editor._name_in, "_name_in"))
+    monkeypatch.setattr(editor, "make_diff", off_the_loop(editor.make_diff, "make_diff"))
+    client = shared.client()
+    for path, extra in (
+        ("/new/metric/check", {}),
+        ("/new/metric/save", {}),
+        ("/edit/metric/disbursement_amount/check", {"expected": "none"}),
+    ):
+        response = form(client, path, own_metric() + "colour: blue\n", **extra)
+        assert response.status_code in (200, 422), (path, response.status_code)
+    assert client.get("/edit/metric/disbursement_amount").status_code == 200
+    assert {"_name_in", "make_diff"} <= set(seen)
+
+
+def test_an_integer_over_the_limit_in_any_base_is_listed_by_the_editor_and_the_text_stays(
+    ctx: Ctx,
+) -> None:
+    client = ctx.client()
+    commits = len(ctx.world.repo.log())
+    for value in ("9" * 5000, "0x" + "f" * 4000, "0" + "7" * 5000, "0b" + "1" * 20000):
+        text = (
+            own_metric()
+            + f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {value}}}\n"
+        )
+        line = text.splitlines().index(next(r for r in text.splitlines() if value in r)) + 1
+        for path, extra in (
+            ("/new/metric/check", {}),
+            ("/edit/metric/disbursement_amount/check", {"expected": "none"}),
+        ):
+            response = form(client, path, text, **extra)
+            assert response.status_code == 200, (value[:6], path)
+            assert ("V01", line) in issues_of(response.text)
+            assert box(response.text) == text
+        for path, extra in (
+            ("/new/metric/save", {}),
+            ("/edit/metric/disbursement_amount/save", {"expected": "none"}),
+        ):
+            response = form(client, path, text, **extra)
+            assert response.status_code in (400, 422), (value[:6], path)
+            assert box(response.text) == text
+    assert len(ctx.world.repo.log()) == commits
+
+
+def test_the_page_for_too_many_open_proposals_keeps_the_text(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import lifecycle
+
+    monkeypatch.setattr(lifecycle, "MAX_OPEN_DRAFTS_PER_USER", 1)
+    client = ctx.client()
+    assert form(client, "/new/metric/save", own_metric(), reason="first").status_code == 303
+    second = own_metric(name="second_metric")
+    commits = len(ctx.world.repo.log())
+    response = form(client, "/new/metric/save", second, reason="second")
+    assert response.status_code == 409 and 'data-code="TOO_MANY_DRAFTS"' in response.text
+    assert "the most one user may have" in response.text and box(response.text) == second
+    assert len(ctx.world.repo.log()) == commits
+
+
+def test_check_names_a_text_that_would_be_too_large_once_approved(shared: Ctx) -> None:
+    from .test_editor_service import stored_description
+
+    client = shared.client()
+    text = stored_description(shared.world, MAX_YAML_BYTES - 100)  # the draft fits
+    assert len(text.encode()) < MAX_YAML_BYTES
+    page = form(client, "/new/metric/check", text).text
+    assert "approved (with its version)" in page and "deprecated (with a reason)" in page
+
+
+# --- withdraw --------------------------------------------------------------------------------
+
+
+def test_the_author_withdraws_a_new_proposal_through_the_page(ctx: Ctx) -> None:
+    client = ctx.client()
+    form(client, "/new/metric/save", own_metric(), reason="draft")
+    page = client.get("/edit/metric/contract_count_total").text
+    assert (
+        'data-field="withdraw"' in page
+        and 'action="/edit/metric/contract_count_total/withdraw"' in page
+    )
+    commits, audits = len(ctx.world.repo.log()), len(sup.audit_rows(ctx.engine))
+    # No reason: refused, nothing changes.
+    refused = post(client, "/edit/metric/contract_count_total/withdraw", reason=" ")
+    assert refused.status_code == 400 and 'data-code="INVALID_INPUT"' in refused.text
+    assert len(ctx.world.repo.log()) == commits
+    done = post(client, "/edit/metric/contract_count_total/withdraw", reason="not needed")
+    assert done.status_code == 303 and done.headers["location"] == "/new?notice=withdrawn"
+    assert "The proposal was withdrawn." in client.get(done.headers["location"]).text
+    made = new_commits(ctx.world, commits)
+    assert [commit_message(ctx.world, c.sha)[0] for c in made] == [f"withdraw({NEW}): not needed"]
+    assert made[0].author_email == client.user.email
+    assert [(r["action"], r["reason"]) for r in audit_after(ctx.world, audits)] == [
+        ("withdraw", "not needed")
+    ]
+    assert client.get("/edit/metric/contract_count_total").status_code == 404
+
+
+def test_withdrawing_a_change_to_an_official_object_goes_back_to_its_editor(ctx: Ctx) -> None:
+    client = ctx.client(teams=("sales-performance",))
+    form(
+        client,
+        "/edit/metric/disbursement_amount/save",
+        changed_text(ctx.world, label="Disbursed"),
+        expected="none",
+    )
+    done = post(client, "/edit/metric/disbursement_amount/withdraw", reason="changed my mind")
+    assert done.status_code == 303
+    assert done.headers["location"] == "/edit/metric/disbursement_amount?notice=withdrawn"
+    page = client.get(done.headers["location"]).text
+    assert "The proposal was withdrawn." in page and 'data-field="withdraw"' not in page
+
+
+def test_only_those_the_lifecycle_allows_may_withdraw(ctx: Ctx) -> None:
+    author, other = ctx.client(), ctx.client()
+    form(author, "/new/metric/save", own_metric(), reason="mine")
+    path = "/edit/metric/contract_count_total"
+    assert 'data-field="withdraw"' not in other.get(path).text  # not offered to a non-author
+    commits = len(ctx.world.repo.log())
+    refused = post(other, path + "/withdraw", reason="mine now")
+    assert refused.status_code == 403 and 'data-code="PERMISSION_DENIED"' in refused.text
+    assert "Only the author of this proposal can change it." in refused.text
+    viewer = ctx.client("viewer", teams=())
+    assert post(viewer, path + "/withdraw", reason="r").status_code == 403
+    assert len(ctx.world.repo.log()) == commits
+    approver = ctx.client("approver", teams=())
+    assert 'data-field="withdraw"' in approver.get(path).text
+    assert post(approver, path + "/withdraw", reason="cleaning up").status_code == 303
+    assert len(ctx.world.repo.log()) == commits + 1
+
+
+def test_a_missing_object_or_proposal_is_not_withdrawn(ctx: Ctx) -> None:
+    client = ctx.client()
+    assert post(client, "/edit/metric/no_such_metric/withdraw", reason="r").status_code == 404
+    response = post(client, "/edit/metric/disbursement_amount/withdraw", reason="r")
+    assert response.status_code == 409 and 'data-code="CONFLICT"' in response.text
+
+
+def test_an_unreadable_proposal_has_a_way_out_and_cannot_be_overwritten_by_a_forged_save(
+    ctx: Ctx,
+) -> None:
+    path = ctx.world.repo.path / "lending" / "metrics" / "huge_one.draft.yaml"
+    path.write_text("# " + "a" * (MAX_YAML_BYTES + 10) + "\n")
+    sup.git(ctx.world.repo, "add", "-A")
+    sup.git(ctx.world.repo, "commit", "-m", "outside huge file")
+    admin = ctx.client("admin", teams=())
+    page = admin.get("/edit/metric/huge_one").text
+    assert 'data-field="withdraw"' in page and "/save" not in page
+    commits = len(ctx.world.repo.log())
+    forged = form(
+        admin,
+        "/edit/metric/huge_one/save",
+        own_metric(name="huge_one"),
+        expected=expected_of(page),  # the fingerprint the page carried
+    )
+    assert forged.status_code == 409 and "cannot be read here" in forged.text
+    assert len(ctx.world.repo.log()) == commits
+    done = post(admin, "/edit/metric/huge_one/withdraw", reason="unreadable")
+    assert done.status_code == 303 and len(ctx.world.repo.log()) == commits + 1
+    assert admin.get("/edit/metric/huge_one").status_code == 404
+
+
+def test_a_too_large_outside_edit_of_an_official_file_can_be_withdrawn_and_restores_it(
+    ctx: Ctx,
+) -> None:
+    official_path = ctx.world.repo.path / "lending" / "metrics" / "penalty_income.yaml"
+    original = official_path.read_text()
+    official_path.write_text(original + "# " + "a" * (MAX_YAML_BYTES + 10) + "\n")
+    sup.git(ctx.world.repo, "add", "-A")
+    sup.git(ctx.world.repo, "commit", "-m", "outside edit of an official file")
+    admin = ctx.client("admin", teams=())
+    page = admin.get("/edit/metric/penalty_income").text
+    assert 'data-field="withdraw"' in page
+    done = post(admin, "/edit/metric/penalty_income/withdraw", reason="restore")
+    assert done.status_code == 303
+    assert official_path.read_text() == original
+    assert (
+        ctx.world.repo.show(sup.head(ctx.world), "lending/metrics/penalty_income.yaml")
+        == original.encode()
+    )

@@ -96,6 +96,7 @@ DIFF_CONTEXT = 3
 NOTICES = {
     "saved": "The draft was saved. It stays a proposal until an approver approves it.",
     "submitted": "The proposal was submitted for review.",
+    "withdrawn": "The proposal was withdrawn.",
 }
 
 HEADLINES: dict[str, str] = {
@@ -107,6 +108,7 @@ HEADLINES: dict[str, str] = {
     str(LifecycleErrorCode.DEFINITION_INVALID): "The definition has errors.",
     str(LifecycleErrorCode.OPEN_REFERENCE_ISSUE): "The definition has a reference issue.",
     str(LifecycleErrorCode.CONFLICT): "The change cannot be made now.",
+    str(LifecycleErrorCode.TOO_MANY_DRAFTS): "You have too many open proposals.",
 }
 """One short sentence for every code a lifecycle call can refuse with (a test checks that none is
 missing). The service's own message follows it on the page."""
@@ -119,6 +121,7 @@ STATUS_OF: dict[str, int] = {
     str(LifecycleErrorCode.DEFINITION_INVALID): 422,
     str(LifecycleErrorCode.OPEN_REFERENCE_ISSUE): 409,
     str(LifecycleErrorCode.CONFLICT): 409,
+    str(LifecycleErrorCode.TOO_MANY_DRAFTS): 409,
 }
 
 
@@ -224,12 +227,17 @@ class Diff:
     identical: bool = False
 
 
+NEW_OBJECT_DIFF = Diff(
+    note="This is a new object, so there is no official version to compare with."
+)
+
+
 def make_diff(official_text: str | None, text: str, version: int | None) -> Diff:
     """Compare the official version with `text`, both in the canonical form of a proposal
     (status `draft`, no deprecation, the version of the official object), so that what Makna sets
     itself does not show as a change. A new object has nothing to compare with."""
     if official_text is None:
-        return Diff(note="This is a new object, so there is no official version to compare with.")
+        return NEW_OBJECT_DIFF
     proposed = as_proposal_text(text, version)
     if proposed is None:
         return Diff(note="The text cannot be read as a definition yet, so it is not compared.")
@@ -329,7 +337,7 @@ def _render(request: Request, page: Page, status: int = 200) -> Response:
     state = _state(request)
     target = page.target
     if page.diff is None and target.is_new:
-        page.diff = make_diff(None, "", None)
+        page.diff = NEW_OBJECT_DIFF
     other_kinds = [(k, KIND_LABELS[k]) for k in KINDS if k != target.kind]
     return state.pages.render(
         request.scope,
@@ -350,6 +358,9 @@ def _render(request: Request, page: Page, status: int = 200) -> Response:
             "facts": page.facts or _facts(target, page.source),
             "blocked": page.source.blocked if page.source is not None else None,
             "show_form": page.show_form,
+            "can_withdraw": (
+                page.source.can_withdraw if page.source is not None and not target.is_new else False
+            ),
             "other_kinds": other_kinds,
             "object_link": (
                 f"{VIEW_PREFIX[target.kind]}/{target.name}" if target.name is not None else None
@@ -480,12 +491,12 @@ async def _diff(official_text: str | None, text: str, version: int | None) -> Di
 
 
 @editor_router.get("/new")
-async def new_index(request: Request) -> Response:
+async def new_index(request: Request, notice: str = "") -> Response:
     _guard(request)
     return _state(request).pages.render(
         request.scope,
         "new.html",
-        {"kinds": [(k, KIND_LABELS[k]) for k in KINDS]},
+        {"kinds": [(k, KIND_LABELS[k]) for k in KINDS], "notice": NOTICES.get(notice)},
     )
 
 
@@ -648,6 +659,33 @@ async def _post(
     return _saved(object_id, "submitted")
 
 
+async def _withdraw(request: Request, target: Target, reason: str) -> Response:
+    """Withdraw proposal: `Lifecycle.withdraw`, which decides who may (the author, an approver or an
+    administrator) and what is put back (an outside edit of an official file is restored). The one
+    way out of a proposal the editor cannot show (over 256 KiB, or not text)."""
+    context = _signed_in(request)  # who may edit was decided by the handler that called this
+    caller, life = context.caller, _lifecycle(request)
+    object_id = str(target.object_id)
+    try:
+        done = await _run("withdraw", life.withdraw, caller, object_id, reason)
+    except ServiceError as error:
+        source = await _source(life, caller, object_id)
+        if source is None and error.code == ServiceErrorCode.NOT_FOUND:
+            raise HTTPException(status_code=404) from None
+        page = Page(target, source.text if source is not None else "", reason=reason)
+        page.source = source
+        page.problem = _problem(error)
+        if source is not None:
+            page.expected = source.proposal_sha256
+            page.diff = await _diff(source.official_text, source.text, source.version)
+        _log("withdraw", context, object_id, str(error.code))
+        return _render(request, page, _status(error))
+    _log("withdraw", context, object_id, "ok")
+    if done.version is not None:  # the object has an official version: back to its editor
+        return _saved(object_id, "withdrawn")
+    return RedirectResponse("/new?notice=withdrawn", status_code=303)
+
+
 def _saved(object_id: str, notice: str) -> Response:
     """After a save or a submit the browser is sent to the editor of the object (so a reload does
     not post again), which loads what was stored."""
@@ -733,6 +771,16 @@ def _register() -> None:
 
         return handler
 
+    async def withdraw(
+        request: Request,
+        kind: str,
+        name: str,
+        reason: Annotated[str, Form()] = "",
+    ) -> Response:
+        _guard(request)
+        return await _withdraw(request, _target(kind, name), reason)
+
+    editor_router.add_api_route("/edit/{kind}/{name}/withdraw", withdraw, methods=["POST"])
     for action in ("check", "save", "submit"):
         editor_router.add_api_route(
             f"/edit/{{kind}}/{{name}}/{action}", edit(action), methods=["POST"]

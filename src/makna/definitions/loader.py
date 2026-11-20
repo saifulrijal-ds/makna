@@ -185,10 +185,6 @@ def load_text(path: str, text: str) -> tuple[DefinitionFile, list[Issue]]:
             for e in error.errors(include_url=False)
         ]
         return DefinitionFile(path, is_proposal, None, lines), _dedupe(issues)
-    except ValueError:
-        return DefinitionFile(path, is_proposal, None, lines), [
-            Issue(path, _long_number_line(text), "V01", "a value in the file is not acceptable")
-        ]
     return DefinitionFile(path, is_proposal, definition, lines), []
 
 

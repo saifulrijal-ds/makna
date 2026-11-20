@@ -356,22 +356,46 @@ def test_a_text_under_the_limit_whose_stored_form_is_over_it_is_refused_before_a
     assert "stored form" in result.issues[0].message
 
 
-def test_a_submit_that_would_grow_the_file_over_the_limit_is_refused_before_any_commit(
+def test_a_proposal_whose_approved_or_deprecated_form_would_be_over_the_limit_is_refused_at_save(
     world: World,
 ) -> None:
+    """A saved proposal can always be submitted and approved: the largest form the file will take
+    (the version, a deprecation note) is measured when it is saved and when it is checked."""
     curator = world.caller("curator")
-    text = stored_description(
-        world, MAX_YAML_BYTES - 2
-    )  # `in_review` is 4 bytes longer than `draft`
-    saved = world.life.create_proposal(curator, NEW, text, "just fits")
-    assert saved.status == "draft"
+    text = stored_description(world, MAX_YAML_BYTES - 5)  # the draft fits, `version:` does not
     before, commits = sup.snapshot(world), len(world.repo.log())
     with pytest.raises(ServiceError) as refused:
-        world.life.submit(curator, NEW, "ready", saved.proposal_sha256)
-    assert (
-        refused.value.code == ServiceErrorCode.INVALID_INPUT and "256 KiB" in refused.value.message
-    )
+        world.life.create_proposal(curator, NEW, text, "just fits as a draft")
+    assert refused.value.code == ServiceErrorCode.INVALID_INPUT
+    assert "approved" in refused.value.message and "deprecated" in refused.value.message
     assert len(world.repo.log()) == commits and sup.snapshot(world) == before
+    result = world.life.check(curator, NEW, text)
+    assert [(i.rule, i.line) for i in result.issues] == [("V01", None)]
+    assert "approved" in result.issues[0].message
+    # A text with room for the version and a long deprecation note is saved, submitted, approved,
+    # and deprecated.
+    roomy = stored_description(world, MAX_YAML_BYTES - 2000)
+    saved = world.life.create_proposal(curator, NEW, roomy, "roomy")
+    world.life.submit(curator, NEW, "ready", saved.proposal_sha256)
+    world.life.approve(world.caller("approver"), NEW, "ok")
+    world.life.deprecate(world.caller("approver"), NEW, "r" * 500)
+
+
+def test_an_official_file_too_close_to_the_limit_gets_a_message_that_fits_deprecate_and_approve(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import lifecycle
+
+    retired = "metric:penalty_income"
+    size = len(sup.official_text(world, retired).encode())
+    monkeypatch.setattr(lifecycle, "MAX_YAML_BYTES", size + 10)
+    before = sup.snapshot(world)
+    with pytest.raises(ServiceError) as refused:
+        world.life.deprecate(world.caller("approver"), retired, "no longer used")
+    message = refused.value.message
+    assert "deprecating adds a note" in message and "through a proposal" in message
+    assert "shorten it" not in message.replace("shorten the definition", "")
+    assert sup.snapshot(world) == before
 
 
 def test_a_refused_text_does_not_take_the_lock(
@@ -438,7 +462,7 @@ def test_an_outside_file_with_a_huge_integer_does_not_stop_sync_or_the_write_pat
     assert synced is not None
     state, _ = synced
     item = state.objects["metric:bigint_metric"]
-    assert item.proposal is None and [i.code for i in item.unreadable] == ["V01"]
+    assert item.proposal is None and {i.code for i in item.unreadable} == {"V01"}
     assert "too many digits" in item.unreadable[0].message
     # The write path still works for everything else.
     curator = world.caller("curator")
@@ -467,3 +491,175 @@ def test_an_unreadable_proposal_is_blocked_and_never_an_empty_box_with_a_shared_
         assert source.text == "" and source.blocked and "cannot be read" in source.blocked
         assert source.proposal_sha256 != sha256(b"")
     assert one.proposal_sha256 != two.proposal_sha256
+
+
+# --- fix round 2 -------------------------------------------------------------------------------
+
+
+def make_proposals(world: World, who: str, count: int, start: int = 0) -> list[str]:
+    """`count` new draft metrics by `who`, named by number."""
+    ids = []
+    for n in range(start, start + count):
+        name = f"extra_metric_{n}"
+        world.life.create_proposal(
+            world.caller(who), f"metric:{name}", sup.metric_text(name=name), f"draft {n}"
+        )
+        ids.append(f"metric:{name}")
+    return ids
+
+
+def test_a_user_may_have_only_so_many_open_proposals(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import lifecycle
+
+    monkeypatch.setattr(lifecycle, "MAX_OPEN_DRAFTS_PER_USER", 3)
+    curator = world.caller("curator")
+    ids = make_proposals(world, "curator", 3)  # exactly at the limit: all three are made
+    commits = len(world.repo.log())
+    with pytest.raises(ServiceError) as over:  # one over
+        make_proposals(world, "curator", 1, start=3)
+    assert over.value.code == LifecycleErrorCode.TOO_MANY_DRAFTS
+    assert over.value.details == {"open": 3, "maximum": 3} and "3" in over.value.message
+    assert len(world.repo.log()) == commits
+    # Updating or submitting what is open is never blocked; an in-review proposal still counts.
+    sha = world.life.editor_source(curator, ids[0]).proposal_sha256
+    world.life.update_proposal(
+        curator, ids[0], sup.metric_text(name="extra_metric_0", label="Edited"), "edit", sha
+    )
+    world.life.submit(curator, ids[1], "ready")
+    with pytest.raises(ServiceError) as still:
+        make_proposals(world, "curator", 1, start=3)
+    assert still.value.code == LifecycleErrorCode.TOO_MANY_DRAFTS
+    # Another user is not affected, and a change of an official object counts like any other.
+    make_proposals(world, "curator2", 1, start=10)
+    # After a withdraw there is room again; after an approval too.
+    world.life.withdraw(curator, ids[2], "not needed")
+    make_proposals(world, "curator", 1, start=3)
+    with pytest.raises(ServiceError):
+        make_proposals(world, "curator", 1, start=4)
+    world.life.approve(world.caller("approver"), ids[1], "ok")
+    make_proposals(world, "curator", 1, start=4)
+
+
+def test_a_proposal_from_an_outside_commit_counts_for_nobody(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import lifecycle
+
+    monkeypatch.setattr(lifecycle, "MAX_OPEN_DRAFTS_PER_USER", 1)
+    path = world.repo.path / "lending" / "metrics" / "outside_metric.draft.yaml"
+    path.write_text(sup.metric_text(name="outside_metric", status="draft"))
+    sup.git(world.repo, "add", "-A")
+    sup.git(world.repo, "commit", "-m", "an outside draft")
+    make_proposals(world, "curator", 1)  # the outside draft is nobody's
+    with pytest.raises(ServiceError) as over:
+        make_proposals(world, "curator", 1, start=1)
+    assert over.value.code == LifecycleErrorCode.TOO_MANY_DRAFTS
+
+
+def test_the_limit_is_twenty() -> None:
+    from makna.services.lifecycle import MAX_OPEN_DRAFTS_PER_USER
+
+    assert MAX_OPEN_DRAFTS_PER_USER == 20
+
+
+def test_an_unreadable_proposal_cannot_be_replaced_or_submitted_but_can_be_withdrawn(
+    world: World,
+) -> None:
+    path = world.repo.path / "lending" / "metrics" / "huge_one.draft.yaml"
+    path.write_text("# " + "a" * (MAX_YAML_BYTES + 10) + "\n")
+    sup.git(world.repo, "add", "-A")
+    sup.git(world.repo, "commit", "-m", "outside huge file")
+    admin = world.caller("admin")
+    source = world.life.editor_source(admin, "metric:huge_one")
+    assert source is not None and source.can_withdraw and source.blocked
+    commits = len(world.repo.log())
+    calls: list[Callable[[], Any]] = [
+        lambda: world.life.update_proposal(
+            admin, "metric:huge_one", sup.metric_text(name="huge_one"), "r", source.proposal_sha256
+        ),
+        lambda: world.life.update_proposal(
+            admin, "metric:huge_one", sup.metric_text(name="huge_one"), "r"
+        ),
+        lambda: world.life.submit(admin, "metric:huge_one", "r"),
+        lambda: world.life.submit(admin, "metric:huge_one", "r", source.proposal_sha256),
+    ]
+    for call in calls:
+        with pytest.raises(ServiceError) as refused:
+            call()
+        assert refused.value.code == LifecycleErrorCode.CONFLICT
+        assert "cannot be read here" in refused.value.message
+    assert len(world.repo.log()) == commits
+    done = world.life.withdraw(admin, "metric:huge_one", "unreadable")
+    assert done.status == "withdrawn"
+    assert world.life.editor_source(admin, "metric:huge_one") is None
+
+
+def test_who_may_withdraw_is_the_lifecycles_rule_and_the_editor_source_says_so(
+    world: World,
+) -> None:
+    world.life.create_proposal(world.caller("curator"), NEW, sup.metric_text(), "mine")
+    assert world.life.editor_source(world.caller("curator"), NEW).can_withdraw
+    assert world.life.editor_source(world.caller("approver"), NEW).can_withdraw
+    other = world.life.editor_source(world.caller("outsider"), NEW)
+    assert other is not None and not other.can_withdraw
+    official = world.life.editor_source(world.caller("curator"), CHANGED)
+    assert official is not None and not official.can_withdraw  # no proposal, nothing to withdraw
+
+
+def test_a_refused_create_with_a_wrong_expectation_stops_before_the_domain_and_the_rest(
+    world: World,
+) -> None:
+    """`_expect` is the first check inside the lock-time plan: a text whose domain does not exist
+    still gets the "already exists" answer for an object that exists, not a domain error."""
+    text = sup.edited(
+        sup.official_text(world, CHANGED), lambda d: d.update(domain="no_such_domain")
+    )
+    with pytest.raises(ServiceError) as refused:
+        world.life.create_proposal(world.caller("curator"), CHANGED, text, "r", NEW_OBJECT)
+    assert refused.value.code == LifecycleErrorCode.CONFLICT
+    assert refused.value.details == {"exists": True}
+
+
+INTEGERS = {
+    "decimal": "9" * 5000,
+    "hex": "0x" + "f" * 4000,
+    "octal": "0" + "7" * 5000,
+    "binary": "0b" + "1" * 20000,
+    "negative hex": "-0x" + "f" * 4000,
+}
+
+
+def metric_with_filter_value(value: str) -> str:
+    return (
+        sup.metric_text()
+        + f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {value}}}\n"
+    )
+
+
+@pytest.mark.parametrize("kind", list(INTEGERS))
+def test_an_integer_over_the_limit_in_any_base_is_a_v01_issue_with_a_line(
+    world: World, kind: str
+) -> None:
+    value = INTEGERS[kind]
+    text = metric_with_filter_value(value)
+    line = text.splitlines().index(next(r for r in text.splitlines() if value in r)) + 1
+    curator = world.caller("curator")
+    result = world.life.check(curator, NEW, text)
+    assert [(i.rule, i.line) for i in result.issues][:1] == [("V01", line)]
+    with pytest.raises(ServiceError) as refused:
+        world.life.create_proposal(curator, NEW, text, "r")
+    assert refused.value.code == LifecycleErrorCode.DEFINITION_INVALID
+    # The same number in an outside file: sync completes, reports the file, the write path works.
+    path = world.repo.path / "lending" / "metrics" / "outside_number.draft.yaml"
+    path.write_text(
+        metric_with_filter_value(value).replace("contract_count_total", "outside_number")
+    )
+    sup.git(world.repo, "add", "-A")
+    sup.git(world.repo, "commit", "-m", "an outside file")
+    synced = world.life.sync()
+    assert synced is not None
+    item = synced[0].objects["metric:outside_number"]
+    assert item.proposal is None and {i.code for i in item.unreadable} == {"V01"}
+    world.life.create_proposal(curator, NEW, sup.metric_text(), "still works")

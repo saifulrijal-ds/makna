@@ -5,6 +5,7 @@ out a shared object."""
 from __future__ import annotations
 
 import itertools
+from pathlib import Path
 import string
 import time
 
@@ -16,6 +17,7 @@ from makna.definitions.render import MAX_YAML_BYTES, parse_text
 from makna.model.definitions import _unique
 from makna.services.store import _decode, _DecodeCache
 
+ROOT = Path(__file__).resolve().parents[2]
 BASE = """\
 apiVersion: makna/v1
 kind: metric
@@ -119,3 +121,58 @@ def test_the_cache_is_bounded() -> None:
     cache.put(("n", "h"), 240, file, issues)
     cache.put(("o", "h"), 240, file, issues)
     assert cache._bytes <= 1000
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["9" * 5000, "0x" + "f" * 4000, "0" + "7" * 5000, "0b" + "1" * 20000, "-0x" + "f" * 4000],
+)
+def test_an_integer_over_64_bits_in_any_base_is_a_v01_issue_with_its_line(value: str) -> None:
+    body = BASE.replace("PLACEHOLDER", "a") + (
+        f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {value}}}\n"
+    )
+    line = body.splitlines().index(next(r for r in body.splitlines() if value in r)) + 1
+    file, issues = load_text("x.yaml", body)
+    assert file.definition is None and issues
+    assert {i.code for i in issues} == {"V01"} and line in {i.line for i in issues}
+
+
+def test_the_largest_integers_the_model_allows_are_64_bit() -> None:
+    for number in (2**63 - 1, -(2**63), 0, 7):
+        body = BASE.replace("PLACEHOLDER", "a") + (
+            f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {number}}}\n"
+        )
+        definition, problems = parse_text(body)
+        assert definition is not None, problems
+    # Past 64 bits a whole number is read as a float; past what a float holds it is refused.
+    for number in (10**400, -(10**400)):
+        body = BASE.replace("PLACEHOLDER", "a") + (
+            f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {number}}}\n"
+        )
+        assert parse_text(body)[0] is None
+
+
+def test_a_filter_constant_is_never_a_reason_for_sync_to_raise() -> None:
+    from makna.index.indexer import _scalar_text
+
+    assert _scalar_text(7) == "7" and _scalar_text("a") == "a"
+    assert _scalar_text(int("9" * 4000)) == "9" * 4000
+    import sys
+
+    sys.set_int_max_str_digits(4300)
+    assert _scalar_text(10**5000) == "<number>"
+
+
+def test_the_decode_cache_counts_the_estimated_memory_not_the_file_bytes() -> None:
+    from makna.services import store
+
+    assert store.PARSED_BYTES_PER_FILE_BYTE == 40
+    assert store.DECODE_CACHE_BYTES == 256 * 1024 * 1024
+    cache = store._DECODED
+    before = cache._bytes
+    data = BASE.replace("PLACEHOLDER", "unique-for-this-test-7f3a").encode()
+    _decode("lending/metrics/contract_count_total.draft.yaml", data)
+    assert cache._bytes - before == len(data) * store.PARSED_BYTES_PER_FILE_BYTE
+    # Twenty files of the largest size (one user at the cap) and the sample's official set fit.
+    sample = sum(p.stat().st_size for p in (ROOT / "semantic" / "definitions").rglob("*.yaml"))
+    assert (20 * MAX_YAML_BYTES + sample) * 40 < store.DECODE_CACHE_BYTES

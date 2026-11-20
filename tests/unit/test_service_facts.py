@@ -271,6 +271,7 @@ def test_create_app_builds_the_services_and_healthz_needs_no_database() -> None:
         "/edit/{kind}/{name}/check",
         "/edit/{kind}/{name}/save",
         "/edit/{kind}/{name}/submit",
+        "/edit/{kind}/{name}/withdraw",
         "/login",
         "/logout",
         "/account",

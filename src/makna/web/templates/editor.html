@@ -66,6 +66,14 @@
     {% endif %}
   </div>
 </form>
+{% if can_withdraw %}
+<form method="post" action="{{ base }}/withdraw" data-field="withdraw">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="withdraw_reason">Withdraw this proposal (deletes the proposal; the official version, if there is one, stays). A reason is needed.</label>
+  <input type="text" name="reason" id="withdraw_reason" maxlength="{{ max_reason }}" autocomplete="off" required>
+  <button type="submit" class="secondary outline">Withdraw proposal</button>
+</form>
+{% endif %}
 {% endif %}
 
 {% if show_form %}

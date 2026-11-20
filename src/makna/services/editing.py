@@ -75,6 +75,9 @@ class EditorSource:
     Makna in the official file, a proposal of another author), or None. Fixed text."""
     external: bool
     """True when the proposal's content came from a commit made outside Makna."""
+    can_withdraw: bool = False
+    """True when there is a proposal and `Lifecycle.withdraw` would allow this caller to withdraw
+    it (its author, or an approver or administrator)."""
 
 
 @dataclass(frozen=True)
