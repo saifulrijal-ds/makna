@@ -347,13 +347,13 @@ def test_a_text_under_the_limit_whose_stored_form_is_over_it_is_refused_before_a
     with pytest.raises(ServiceError) as refused:
         world.life.create_proposal(world.caller("curator"), NEW, text, "big")
     assert refused.value.code == ServiceErrorCode.INVALID_INPUT
-    assert "256 KiB" in refused.value.message and "stored form" in refused.value.message
+    assert "larger than 256 KiB" in refused.value.message
     assert len(world.repo.log()) == commits
     assert sup.snapshot(world) == before  # no intent row, no failed row
     # Check says the same, with the rule and no line.
     result = world.life.check(world.caller("curator"), NEW, text)
     assert [(i.rule, i.line) for i in result.issues] == [("V01", None)]
-    assert "stored form" in result.issues[0].message
+    assert "larger than 256 KiB" in result.issues[0].message
 
 
 def test_a_proposal_whose_approved_or_deprecated_form_would_be_over_the_limit_is_refused_at_save(
@@ -663,3 +663,28 @@ def test_an_integer_over_the_limit_in_any_base_is_a_v01_issue_with_a_line(
     item = synced[0].objects["metric:outside_number"]
     assert item.proposal is None and {i.code for i in item.unreadable} == {"V01"}
     world.life.create_proposal(curator, NEW, sup.metric_text(), "still works")
+
+
+def test_the_last_line_of_defence_for_the_stored_size_words_each_action() -> None:
+    """`_check_stored_size` is what stops an action whose written file is over the limit, whatever
+    the proposal looked like when it was saved; each action gets a message that fits it."""
+    from makna.services import lifecycle
+
+    plan = lifecycle._Plan({"a/b.yaml": b"x" * (MAX_YAML_BYTES + 1)}, "approved", "deprecated", 1)
+    messages = {}
+    for action in (
+        lifecycle.DEPRECATE,
+        lifecycle.APPROVE,
+        lifecycle.SUBMIT,
+        lifecycle.CREATE_PROPOSAL,
+    ):
+        with pytest.raises(ServiceError) as refused:
+            lifecycle._check_stored_size(plan, action)
+        messages[action] = refused.value.message
+    assert "deprecating adds a note" in messages[lifecycle.DEPRECATE]
+    assert "through a proposal" in messages[lifecycle.DEPRECATE]
+    assert "approving adds the version" in messages[lifecycle.APPROVE]
+    assert "stored form" in messages[lifecycle.SUBMIT]
+    lifecycle._check_stored_size(
+        lifecycle._Plan({"a/b.yaml": b"x" * MAX_YAML_BYTES}, None, "draft", None), "submit"
+    )

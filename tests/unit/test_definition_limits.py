@@ -5,9 +5,9 @@ out a shared object."""
 from __future__ import annotations
 
 import itertools
-from pathlib import Path
 import string
 import time
+from pathlib import Path
 
 import pytest
 import yaml
