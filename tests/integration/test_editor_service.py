@@ -374,7 +374,7 @@ def test_a_proposal_whose_approved_or_deprecated_form_would_be_over_the_limit_is
     assert "approved" in result.issues[0].message
     # A text with room for the version and a long deprecation note is saved, submitted, approved,
     # and deprecated.
-    roomy = stored_description(world, MAX_YAML_BYTES - 2000)
+    roomy = stored_description(world, MAX_YAML_BYTES - 4000)
     saved = world.life.create_proposal(curator, NEW, roomy, "roomy")
     world.life.submit(curator, NEW, "ready", saved.proposal_sha256)
     world.life.approve(world.caller("approver"), NEW, "ok")
@@ -688,3 +688,149 @@ def test_the_last_line_of_defence_for_the_stored_size_words_each_action() -> Non
     lifecycle._check_stored_size(
         lifecycle._Plan({"a/b.yaml": b"x" * MAX_YAML_BYTES}, None, "draft", None), "submit"
     )
+
+
+def reject_outside_edits(world: World, ids: list[str]) -> None:
+    """An outside commit edits each official file; an approver rejects each change, which writes
+    the outside content as a draft of the application."""
+    for object_id in ids:
+        name = object_id.partition(":")[2]
+        path = world.repo.path / "lending" / "metrics" / f"{name}.yaml"
+        path.write_text(
+            path.read_text().replace("label: Total Contract Count", "label: Edited outside")
+        )
+        sup.git(world.repo, "add", "-A")
+        sup.git(world.repo, "commit", "-m", f"outside edit of {name}")
+    assert world.life.sync() is not None
+    for object_id in ids:
+        world.life.reject(world.caller("approver"), object_id, "outside change rejected")
+
+
+def test_a_draft_made_by_rejecting_an_outside_change_counts_for_nobody(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap charges a proposal to someone who started it and may withdraw it. The draft a
+    reject makes from an outside change has the outside author and the rejecting approver as its
+    authors, so it is not charged to the creator of the object (who could not withdraw it)."""
+    from makna.services import lifecycle
+
+    monkeypatch.setattr(lifecycle, "MAX_OPEN_DRAFTS_PER_USER", 3)
+    curator, approver = world.caller("curator"), world.caller("approver")
+    ids = make_proposals(world, "curator", 3)
+    for object_id in ids:
+        world.life.submit(curator, object_id, "ready")
+        world.life.approve(approver, object_id, "ok")
+    reject_outside_edits(world, ids)
+    for object_id in ids:
+        source = world.life.editor_source(curator, object_id)
+        assert source is not None and source.loaded == "proposal" and not source.can_withdraw
+    make_proposals(world, "curator", 1, start=10)  # not refused: nothing is charged to the creator
+    make_proposals(world, "approver", 1, start=11)  # nor to the approver who rejected
+
+
+def test_a_failed_attempt_does_not_move_a_proposal_to_another_user(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import func, insert
+
+    from makna.index.tables import audit_event
+    from makna.services import lifecycle
+
+    monkeypatch.setattr(lifecycle, "MAX_OPEN_DRAFTS_PER_USER", 1)
+    ids = make_proposals(world, "curator2", 1)
+    with world.engine.begin() as connection:  # an attempt that was given up, by another user
+        connection.execute(
+            insert(audit_event).values(
+                actor_user_id=world.ids["curator"],
+                actor_label="curator@example.com",
+                action="create_proposal",
+                object_id=ids[0],
+                to_status="draft",
+                reason="given up",
+                commit_sha=None,
+                files={},
+                failed_at=func.now(),
+            )
+        )
+    with pytest.raises(ServiceError) as over:  # the proposal is still curator2's
+        make_proposals(world, "curator2", 1, start=5)
+    assert over.value.code == LifecycleErrorCode.TOO_MANY_DRAFTS
+
+
+def test_the_latest_create_decides_who_a_proposal_counts_for(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import lifecycle
+
+    monkeypatch.setattr(lifecycle, "MAX_OPEN_DRAFTS_PER_USER", 1)
+    first = make_proposals(world, "curator", 1)
+    world.life.withdraw(world.caller("curator"), first[0], "starting over")
+    make_proposals(world, "curator2", 1)  # the same name, made again by someone else
+    make_proposals(world, "curator", 1, start=7)  # the first user is free again
+    with pytest.raises(ServiceError) as over:
+        make_proposals(world, "curator2", 1, start=8)
+    assert over.value.code == LifecycleErrorCode.TOO_MANY_DRAFTS
+
+
+def test_a_withdraw_with_a_stale_fingerprint_keeps_the_newer_draft(world: World) -> None:
+    curator, approver = world.caller("curator"), world.caller("approver")
+    saved = world.life.create_proposal(curator, NEW, sup.metric_text(), "first")
+    shown = saved.proposal_sha256
+    world.life.update_proposal(curator, NEW, sup.metric_text(label="A newer draft"), "newer", shown)
+    commits = len(world.repo.log())
+    with pytest.raises(ServiceError) as stale:
+        world.life.withdraw(approver, NEW, "clean up", shown)
+    assert stale.value.code == LifecycleErrorCode.CONFLICT and stale.value.details == {
+        "changed": True
+    }
+    assert len(world.repo.log()) == commits
+    assert "A newer draft" in (world.life.editor_source(curator, NEW).text)
+    # Without a value (other callers) or with the current one it works.
+    current = world.life.editor_source(curator, NEW).proposal_sha256
+    assert world.life.withdraw(approver, NEW, "clean up", current).status == "withdrawn"
+
+
+def test_headroom_is_checked_when_a_proposal_is_created_and_when_it_is_updated(
+    world: World,
+) -> None:
+    curator = world.caller("curator")
+    too_big = stored_description(world, MAX_YAML_BYTES - 100)  # the draft fits, later forms do not
+    with pytest.raises(ServiceError) as on_create:
+        world.life.create_proposal(curator, NEW, too_big, "r")
+    assert on_create.value.code == ServiceErrorCode.INVALID_INPUT
+    saved = world.life.create_proposal(curator, NEW, sup.metric_text(), "small")
+    commits = len(world.repo.log())
+    with pytest.raises(ServiceError) as on_update:
+        world.life.update_proposal(curator, NEW, too_big, "grow", saved.proposal_sha256)
+    assert on_update.value.code == ServiceErrorCode.INVALID_INPUT
+    assert "approved (with its version)" in on_update.value.message
+    assert len(world.repo.log()) == commits
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["\U0001f600" * 500, "'" * 250 + '"' * 250, "\\" * 500, "'\"" * 250, "a: " * 166, "x" * 500],
+)
+def test_the_largest_allowed_draft_can_still_be_deprecated_with_the_worst_reason(
+    world: World, reason: str
+) -> None:
+    from makna.definitions.render import parse_text
+    from makna.services.lifecycle import _later_forms_too_large
+
+    def fits(k: int) -> bool:
+        definition, problems = parse_text(sup.metric_text(description="x" * k))
+        assert definition is not None, problems
+        return not _later_forms_too_large(definition, None)
+
+    low, high = 20, MAX_YAML_BYTES
+    while low < high:  # the longest description whose later forms still fit
+        middle = (low + high + 1) // 2
+        low, high = (middle, high) if fits(middle) else (low, middle - 1)
+    assert not fits(low + 1)
+    text = sup.metric_text(description="x" * low)
+    curator, approver = world.caller("curator"), world.caller("approver")
+    saved = world.life.create_proposal(curator, NEW, text, "the largest")
+    world.life.submit(curator, NEW, "ready", saved.proposal_sha256)
+    world.life.approve(approver, NEW, "ok")
+    done = world.life.deprecate(approver, NEW, reason)
+    assert done.status == "deprecated"

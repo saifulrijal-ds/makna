@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -74,7 +75,17 @@ BoundedInt = Annotated[int, Field(ge=-MAX_INTEGER - 1, le=MAX_INTEGER)]
 """Integers in a definition are 64-bit. YAML reads `0x...` and `0o...` of any length, and turning
 such a number into text (a log line, the search text of a filter, the canonical file) raises
 `ValueError` above Python's 4300-digit limit; no definition needs a number that large."""
-Scalar = str | BoundedInt | float | bool
+
+
+def _not_a_whole_number(value: Any) -> Any:
+    """A float field does not take an integer: a whole number is read as `BoundedInt` or it is
+    refused, never turned into a float that has lost digits."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        raise ValueError("a whole number must fit in 64 bits")
+    return value
+
+
+Scalar = str | BoundedInt | Annotated[float, BeforeValidator(_not_a_whole_number)] | bool
 
 
 class _Model(BaseModel):

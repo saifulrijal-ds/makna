@@ -39,6 +39,7 @@ or git's output; anything unexpected is mapped to a fixed `INTERNAL` message.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
@@ -75,7 +76,14 @@ from makna.definitions.repo import (
 from makna.index import indexer
 from makna.index.indexer import catalog_sensitivity
 from makna.index.tables import audit_event
-from makna.model.definitions import AnyDefinition, Deprecation, Entity, GlossaryTerm, Metric
+from makna.model.definitions import (
+    AnyDefinition,
+    Deprecation,
+    Entity,
+    GlossaryTerm,
+    Metric,
+    parse_definition,
+)
 from makna.model.governance import GovernancePolicy
 from makna.model.request import QueryError, QueryRequest
 from makna.model.search import EmbeddingProvider
@@ -424,8 +432,19 @@ class Lifecycle:
             caller, REJECT, object_id, reason, expected_proposal_commit=expected_proposal_commit
         )
 
-    def withdraw(self, caller: Caller, object_id: str, reason: str) -> ActionResult:
-        return self._act(caller, WITHDRAW, object_id, reason)
+    def withdraw(
+        self,
+        caller: Caller,
+        object_id: str,
+        reason: str,
+        expected_proposal_sha256: str | None = None,
+    ) -> ActionResult:
+        """Delete the proposal. With `expected_proposal_sha256` (the editor passes the fingerprint
+        of the proposal its page showed) the action is refused with `CONFLICT` if the proposal is
+        not exactly that any more, so a withdraw never removes a change nobody saw."""
+        return self._act(
+            caller, WITHDRAW, object_id, reason, expected_proposal_sha256=expected_proposal_sha256
+        )
 
     def deprecate(
         self, caller: Caller, object_id: str, reason: str, replaced_by: str | None = None
@@ -838,7 +857,7 @@ class Lifecycle:
             decision = approval.may_edit(caller, user.email, None)
         if not decision:
             raise _denied(decision)
-        opened = self._open_drafts(user.id, state)
+        opened = self._open_drafts(user.id, user.email, state)
         if opened >= MAX_OPEN_DRAFTS_PER_USER:
             raise ServiceError(
                 LifecycleErrorCode.TOO_MANY_DRAFTS,
@@ -856,9 +875,12 @@ class Lifecycle:
             {path: text.encode("utf-8")}, official.status if official else None, "draft", version
         )
 
-    def _open_drafts(self, user_id: int, state: RepoState) -> int:
-        """How many open proposals `user_id` started: the objects whose latest `create_proposal`
-        in the audit log is theirs and that still have a proposal made through the application.
+    def _open_drafts(self, user_id: int, email: str, state: RepoState) -> int:
+        """How many open proposals count against `user_id`: the objects whose latest
+        `create_proposal` in the audit log is theirs, that still have a proposal made through the
+        application, and whose proposal they are an author of (so they could withdraw it, as
+        `withdraw` decides). A draft that a reject made from an outside change counts for nobody:
+        its authors are the outside author and the one who rejected, not the object's creator.
         Called under the lock, so the audit and the state are those the action decides on."""
         statement = (
             select(audit_event.c.object_id, audit_event.c.actor_user_id)
@@ -877,6 +899,7 @@ class Lifecycle:
                 and item.proposal_source is not None
                 and item.external_author is None
                 and not item.in_official_file
+                and email.casefold() in item.authors
             ):
                 count += 1
         return count
@@ -946,6 +969,7 @@ class Lifecycle:
             decision = approval.may_edit(caller, user.email, item.authors)
             if not decision:
                 raise _denied(decision)
+            _expect(item, expected_sha)
             files: dict[str, bytes | None] = {}
             if item.proposal_source == item.proposal_path:
                 files[item.proposal_path] = None
@@ -1251,19 +1275,59 @@ def _check_stored_size(plan: _Plan, action: str) -> None:
         raise invalid_input("yaml", problem, maximum=MAX_YAML_BYTES)
 
 
+@functools.cache
+def _deprecation_reserve() -> int:
+    """The most bytes deprecation can add to a file: the `status` change and a `deprecation`
+    block with a reason of `MAX_REASON_LENGTH` characters and a replacement, at the worst size
+    the YAML writer gives such a reason. Computed, not guessed: it dumps a small definition with
+    each kind of reason that can be long (4-byte characters, quotes that are escaped or doubled,
+    backslashes, text that folds at every line width) and takes the largest. `check_reason` allows
+    no control character, so none is tried."""
+    base = parse_definition(
+        {
+            "apiVersion": "makna/v1",
+            "kind": "domain",
+            "name": "reserve",
+            "label": "Reserve",
+            "description": "A definition used to measure what deprecation adds.",
+            "owner": {"team": "reserve"},
+            "status": "approved",
+            "sensitivity": "internal",
+            "version": 2,
+        }
+    )
+    plain = len(to_yaml(base).encode("utf-8"))
+    reasons = [
+        "x" * MAX_REASON_LENGTH,
+        "\U0001f600" * MAX_REASON_LENGTH,
+        "\u20ac" * MAX_REASON_LENGTH,
+        "'" * MAX_REASON_LENGTH,
+        '"' * MAX_REASON_LENGTH,
+        "\\" * MAX_REASON_LENGTH,
+        "'\"" * (MAX_REASON_LENGTH // 2),
+        "a " * (MAX_REASON_LENGTH // 2),
+        "a: " * (MAX_REASON_LENGTH // 3),
+        "# " * (MAX_REASON_LENGTH // 2),
+        "\u00e9\u0301 " * (MAX_REASON_LENGTH // 3),
+    ]
+    worst = 0
+    for reason in reasons:
+        deprecation = Deprecation(reason=reason, replaced_by="glossary_term:" + "x" * 63)
+        form = with_state(base, status="deprecated", version=2, deprecation=deprecation)
+        worst = max(worst, len(to_yaml(form).encode("utf-8")) - plain)
+    return worst
+
+
 def _later_forms_too_large(definition: AnyDefinition, official_version: int | None) -> bool:
     """True when the proposal, once approved (with its version) or later deprecated (with the
-    longest reason and a replacement), would be larger than the store reads back. Checked when a
-    proposal is saved, so a saved proposal can always be submitted, approved, and deprecated."""
+    longest reason at its worst written size, and a replacement), would be larger than the store
+    reads back. Checked when a proposal is saved, so a saved proposal can always be submitted,
+    approved, and deprecated."""
     version = (official_version or 0) + 1
-    deprecation = Deprecation(
-        reason="x" * MAX_REASON_LENGTH, replaced_by=f"{definition.kind}:" + "x" * 63
+    approved = len(
+        to_yaml(with_state(definition, status="approved", version=version)).encode("utf-8")
     )
-    forms = (
-        with_state(definition, status="approved", version=version),
-        with_state(definition, status="deprecated", version=version, deprecation=deprecation),
-    )
-    return any(len(to_yaml(form).encode("utf-8")) > MAX_YAML_BYTES for form in forms)
+    return approved + _deprecation_reserve() > MAX_YAML_BYTES
 
 
 LATER_FORMS_MESSAGE = (

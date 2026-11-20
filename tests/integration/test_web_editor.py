@@ -1329,6 +1329,15 @@ def test_check_names_a_text_that_would_be_too_large_once_approved(shared: Ctx) -
     assert "approved (with its version)" in page and "deprecated (with a reason)" in page
 
 
+def withdraw_post(client: Any, base: str, reason: str, expected: str | None = None) -> Any:
+    """Withdraw as the page does it: with the fingerprint of the proposal the page showed."""
+    if expected is None:
+        page = client.get(base)
+        has = page.status_code == 200 and 'name="expected"' in page.text
+        expected = expected_of(page.text) if has else "none"
+    return post(client, base + "/withdraw", reason=reason, expected=expected)
+
+
 # --- withdraw --------------------------------------------------------------------------------
 
 
@@ -1342,10 +1351,10 @@ def test_the_author_withdraws_a_new_proposal_through_the_page(ctx: Ctx) -> None:
     )
     commits, audits = len(ctx.world.repo.log()), len(sup.audit_rows(ctx.engine))
     # No reason: refused, nothing changes.
-    refused = post(client, "/edit/metric/contract_count_total/withdraw", reason=" ")
+    refused = withdraw_post(client, "/edit/metric/contract_count_total", " ")
     assert refused.status_code == 400 and 'data-code="INVALID_INPUT"' in refused.text
     assert len(ctx.world.repo.log()) == commits
-    done = post(client, "/edit/metric/contract_count_total/withdraw", reason="not needed")
+    done = withdraw_post(client, "/edit/metric/contract_count_total", "not needed")
     assert done.status_code == 303 and done.headers["location"] == "/new?notice=withdrawn"
     assert "The proposal was withdrawn." in client.get(done.headers["location"]).text
     made = new_commits(ctx.world, commits)
@@ -1365,7 +1374,7 @@ def test_withdrawing_a_change_to_an_official_object_goes_back_to_its_editor(ctx:
         changed_text(ctx.world, label="Disbursed"),
         expected="none",
     )
-    done = post(client, "/edit/metric/disbursement_amount/withdraw", reason="changed my mind")
+    done = withdraw_post(client, "/edit/metric/disbursement_amount", "changed my mind")
     assert done.status_code == 303
     assert done.headers["location"] == "/edit/metric/disbursement_amount?notice=withdrawn"
     page = client.get(done.headers["location"]).text
@@ -1378,22 +1387,22 @@ def test_only_those_the_lifecycle_allows_may_withdraw(ctx: Ctx) -> None:
     path = "/edit/metric/contract_count_total"
     assert 'data-field="withdraw"' not in other.get(path).text  # not offered to a non-author
     commits = len(ctx.world.repo.log())
-    refused = post(other, path + "/withdraw", reason="mine now")
+    refused = withdraw_post(other, path, "mine now")
     assert refused.status_code == 403 and 'data-code="PERMISSION_DENIED"' in refused.text
     assert "Only the author of this proposal can change it." in refused.text
     viewer = ctx.client("viewer", teams=())
-    assert post(viewer, path + "/withdraw", reason="r").status_code == 403
+    assert withdraw_post(viewer, path, "r").status_code == 403
     assert len(ctx.world.repo.log()) == commits
     approver = ctx.client("approver", teams=())
     assert 'data-field="withdraw"' in approver.get(path).text
-    assert post(approver, path + "/withdraw", reason="cleaning up").status_code == 303
+    assert withdraw_post(approver, path, "cleaning up").status_code == 303
     assert len(ctx.world.repo.log()) == commits + 1
 
 
 def test_a_missing_object_or_proposal_is_not_withdrawn(ctx: Ctx) -> None:
     client = ctx.client()
-    assert post(client, "/edit/metric/no_such_metric/withdraw", reason="r").status_code == 404
-    response = post(client, "/edit/metric/disbursement_amount/withdraw", reason="r")
+    assert withdraw_post(client, "/edit/metric/no_such_metric", "r").status_code == 404
+    response = withdraw_post(client, "/edit/metric/disbursement_amount", "r")
     assert response.status_code == 409 and 'data-code="CONFLICT"' in response.text
 
 
@@ -1416,7 +1425,7 @@ def test_an_unreadable_proposal_has_a_way_out_and_cannot_be_overwritten_by_a_for
     )
     assert forged.status_code == 409 and "cannot be read here" in forged.text
     assert len(ctx.world.repo.log()) == commits
-    done = post(admin, "/edit/metric/huge_one/withdraw", reason="unreadable")
+    done = withdraw_post(admin, "/edit/metric/huge_one", "unreadable")
     assert done.status_code == 303 and len(ctx.world.repo.log()) == commits + 1
     assert admin.get("/edit/metric/huge_one").status_code == 404
 
@@ -1432,10 +1441,28 @@ def test_a_too_large_outside_edit_of_an_official_file_can_be_withdrawn_and_resto
     admin = ctx.client("admin", teams=())
     page = admin.get("/edit/metric/penalty_income").text
     assert 'data-field="withdraw"' in page
-    done = post(admin, "/edit/metric/penalty_income/withdraw", reason="restore")
+    done = withdraw_post(admin, "/edit/metric/penalty_income", "restore")
     assert done.status_code == 303
     assert official_path.read_text() == original
     assert (
         ctx.world.repo.show(sup.head(ctx.world), "lending/metrics/penalty_income.yaml")
         == original.encode()
     )
+
+
+def test_a_withdraw_from_a_stale_page_is_refused_and_the_newer_draft_survives(ctx: Ctx) -> None:
+    author = ctx.client()
+    approver = ctx.client("approver", teams=())
+    form(author, "/new/metric/save", own_metric(), reason="draft")
+    path = "/edit/metric/contract_count_total"
+    stale = approver.get(path).text  # the approver's page, before the author saves again
+    newer = box(author.get(path).text).replace("label: Total Contract Count", "label: Newer")
+    form(author, path + "/save", newer, reason="newer", expected=expected_of(author.get(path).text))
+    commits = len(ctx.world.repo.log())
+    refused = withdraw_post(approver, path, "clean up", expected=expected_of(stale))
+    assert refused.status_code == 409 and 'data-code="CONFLICT"' in refused.text
+    assert "changed after you opened it" in refused.text
+    assert len(ctx.world.repo.log()) == commits and "label: Newer" in stored_draft(ctx.world)
+    # The page with the current fingerprint withdraws it; a forged form without one is refused.
+    assert withdraw_post(approver, path, "clean up", expected="").status_code == 400
+    assert withdraw_post(approver, path, "clean up").status_code == 303

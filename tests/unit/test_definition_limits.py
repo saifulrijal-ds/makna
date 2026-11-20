@@ -144,12 +144,42 @@ def test_the_largest_integers_the_model_allows_are_64_bit() -> None:
         )
         definition, problems = parse_text(body)
         assert definition is not None, problems
-    # Past 64 bits a whole number is read as a float; past what a float holds it is refused.
-    for number in (10**400, -(10**400)):
+    # Past 64 bits a whole number is refused, never read as a float that has lost digits.
+    for number in (2**63, -(2**63) - 1, 12345678901234567890, 10**400, -(10**400)):
         body = BASE.replace("PLACEHOLDER", "a") + (
             f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {number}}}\n"
         )
-        assert parse_text(body)[0] is None
+        definition, problems = parse_text(body)
+        assert definition is None and {p.code for p in problems} == {"V01"}, number
+    # Real floats, booleans and strings are still values.
+    for value in ("1.5", "1e400", "true", "text", "-0.25"):
+        body = BASE.replace("PLACEHOLDER", "a") + (
+            f"filters:\n  - {{dimension: contract_snapshot.branch, op: '=', value: {value}}}\n"
+        )
+        assert parse_text(body)[0] is not None, value
+
+
+def test_a_version_over_31_bits_is_a_v01_issue() -> None:
+    for number, ok in ((2**31 - 1, True), (2**31, False), (0, False)):
+        body = BASE.replace("PLACEHOLDER", "a").replace(
+            "status: draft", f"status: draft\nversion: {number}"
+        )
+        definition, problems = parse_text(body)
+        assert (definition is not None) is ok, number
+        if not ok:
+            assert {p.code for p in problems} == {"V01"} and any(
+                "version" in p.message for p in problems
+            )
+
+
+def test_a_file_that_failed_its_checks_is_cached_without_its_line_map() -> None:
+    path = "lending/metrics/contract_count_total.draft.yaml"
+    data = (BASE.replace("PLACEHOLDER", "a") + "colour: blue\n" + "unique: 4b1f9\n").encode()
+    first, issues = _decode(path, data)
+    assert first.definition is None and issues and first.lines.lines  # the first read has its lines
+    again, same = _decode(path, data)
+    assert again.definition is None and same == issues and not again.lines.lines
+    assert issues[0].line is not None  # the issues carry their own lines
 
 
 def test_a_filter_constant_is_never_a_reason_for_sync_to_raise() -> None:

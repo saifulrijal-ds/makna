@@ -659,7 +659,7 @@ async def _post(
     return _saved(object_id, "submitted")
 
 
-async def _withdraw(request: Request, target: Target, reason: str) -> Response:
+async def _withdraw(request: Request, target: Target, reason: str, expected: str) -> Response:
     """Withdraw proposal: `Lifecycle.withdraw`, which decides who may (the author, an approver or an
     administrator) and what is put back (an outside edit of an official file is restored). The one
     way out of a proposal the editor cannot show (over 256 KiB, or not text)."""
@@ -667,7 +667,7 @@ async def _withdraw(request: Request, target: Target, reason: str) -> Response:
     caller, life = context.caller, _lifecycle(request)
     object_id = str(target.object_id)
     try:
-        done = await _run("withdraw", life.withdraw, caller, object_id, reason)
+        done = await _run("withdraw", life.withdraw, caller, object_id, reason, expected)
     except ServiceError as error:
         source = await _source(life, caller, object_id)
         if source is None and error.code == ServiceErrorCode.NOT_FOUND:
@@ -776,9 +776,10 @@ def _register() -> None:
         kind: str,
         name: str,
         reason: Annotated[str, Form()] = "",
+        expected: Annotated[str, Form()] = "",
     ) -> Response:
         _guard(request)
-        return await _withdraw(request, _target(kind, name), reason)
+        return await _withdraw(request, _target(kind, name), reason, expected)
 
     editor_router.add_api_route("/edit/{kind}/{name}/withdraw", withdraw, methods=["POST"])
     for action in ("check", "save", "submit"):

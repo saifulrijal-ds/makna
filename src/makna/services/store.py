@@ -402,6 +402,11 @@ class _DecodeCache:
     ) -> None:
         if size > self._max_bytes // 4:
             return
+        if file.definition is None:
+            # A file that failed its checks is kept without its line map (its issues carry the
+            # lines): the map is one tuple per node, which outweighs the estimate for a hostile
+            # file that is deeply nested.
+            file = DefinitionFile(file.path, file.is_proposal, None)
         stored = (size, _copy_file(file), tuple(issues))
         with self._lock:
             old = self._items.pop(key, None)
