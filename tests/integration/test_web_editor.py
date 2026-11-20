@@ -1333,8 +1333,10 @@ def withdraw_post(client: Any, base: str, reason: str, expected: str | None = No
     """Withdraw as the page does it: with the fingerprint of the proposal the page showed."""
     if expected is None:
         page = client.get(base)
-        has = page.status_code == 200 and 'name="expected"' in page.text
-        expected = expected_of(page.text) if has else "none"
+        # The fingerprint the withdraw form itself carries, not the main form's.
+        found = re.search(r'<form[^>]*data-field="withdraw".*?</form>', page.text, re.S)
+        own = found.group(0) if found else ""
+        expected = expected_of(own) if 'name="expected"' in own else "none"
     return post(client, base + "/withdraw", reason=reason, expected=expected)
 
 
