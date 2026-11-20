@@ -33,7 +33,11 @@ _CSRF_FIELD = re.compile(r'name="csrf_token" value="([^"]+)"')
 
 
 def make_settings(
-    url: URL | str, *, development: bool = False, secret_key: str = SECRET_KEY
+    url: URL | str,
+    *,
+    development: bool = False,
+    secret_key: str = SECRET_KEY,
+    definitions_repo: str | None = None,
 ) -> Settings:
     text = url if isinstance(url, str) else url.render_as_string(hide_password=False)
     return Settings.model_validate(
@@ -43,12 +47,17 @@ def make_settings(
             "embedding_provider": "hash",
             "mcp": {"allowed_hosts": [HOST]},
             "web": {"development": development},
+            **({"definitions_repo": definitions_repo} if definitions_repo else {}),
         }
     )
 
 
-def make_app(url: URL | str, *, development: bool = False) -> FastAPI:
-    return create_app(make_settings(url, development=development))
+def make_app(
+    url: URL | str, *, development: bool = False, definitions_repo: str | None = None
+) -> FastAPI:
+    return create_app(
+        make_settings(url, development=development, definitions_repo=definitions_repo)
+    )
 
 
 def make_client(app: FastAPI, *, development: bool = False) -> TestClient:

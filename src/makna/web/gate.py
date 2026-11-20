@@ -54,7 +54,8 @@ HSTS = "max-age=31536000"
 MAX_BODY = 1024 * 1024
 """Bytes of a request body the gate reads to find the CSRF field (a form, not an upload)."""
 
-# One place for the policy. The editor (WP-19) will have to allow what Ace needs here.
+# One place for the policy. The editor (WP-19) needs no change to it: Ace is told not to inject
+# `<style>` elements (`useStrictCSP`), and its styles are two vendored files the page links.
 SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),

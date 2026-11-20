@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}New definition{% endblock %}
+{% block content %}
+<h1>New definition</h1>
+{% if notice %}<p role="status" data-field="notice"><ins>{{ notice }}</ins></p>{% endif %}
+<p>Pick the kind of definition to write. Each starts from a template; the fields you must fill in are empty, and Check tells you which. A new definition is saved as a draft proposal and becomes official only when an approver approves it.</p>
+<ul>
+  {% for kind, label in kinds %}
+  <li><a href="/new/{{ kind }}">New {{ label }}</a></li>
+  {% endfor %}
+</ul>
+{% endblock %}

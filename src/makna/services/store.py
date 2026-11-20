@@ -34,8 +34,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -357,18 +358,95 @@ class RepoState:
         return objects
 
 
+PARSED_BYTES_PER_FILE_BYTE = 40
+"""What a parsed definition costs in memory per byte of its file, measured on the worst files an
+editor accepts (tracemalloc, one `load_text` result): 34 times for 44,000 unique synonyms, 39
+times for 27,000 unknown keys, 18 times for a mix, about 1 for long text. The cache counts this
+estimate, not the file's bytes."""
+DECODE_CACHE_BYTES = 256 * 1024 * 1024
+"""The memory budget of the decode cache, per process: 256 MiB of estimated parsed size, which is
+25 files of the largest size (256 KiB, 10 MiB each), or about 50,000 files of the sample's size.
+It holds `MAX_OPEN_DRAFTS_PER_USER` near-limit drafts of one user (200 MiB) and the official set.
+Several users who all keep near-limit drafts can exceed it; every read then parses the drafts that
+do not fit again (WP-23: rate limits)."""
+
+
+class _DecodeCache:
+    """A bounded LRU of `load_text` results (by the estimated memory of what it holds, and at most
+    4096 files), keyed by the path and the SHA-256 of the file's
+    bytes. A git blob is content-addressed, so the same bytes at the same path always decode the
+    same; reading the repository again (every action, Check, and editor page does) then parses only
+    the files that changed. What is stored is never handed out: a hit returns a deep copy of the
+    definition, so a caller that changes it cannot change what later reads get."""
+
+    def __init__(self, entries: int = 4096, max_bytes: int = DECODE_CACHE_BYTES) -> None:
+        self._items: OrderedDict[tuple[str, str], tuple[int, DefinitionFile, tuple[Issue, ...]]] = (
+            OrderedDict()
+        )
+        self._bytes = 0
+        self._entries = entries
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[str, str]) -> tuple[DefinitionFile, list[Issue]] | None:
+        with self._lock:
+            found = self._items.get(key)
+            if found is None:
+                return None
+            self._items.move_to_end(key)
+            _, file, issues = found
+        return _copy_file(file), list(issues)
+
+    def put(
+        self, key: tuple[str, str], size: int, file: DefinitionFile, issues: list[Issue]
+    ) -> None:
+        if size > self._max_bytes // 4:
+            return
+        if file.definition is None:
+            # A file that failed its checks is kept without its line map (its issues carry the
+            # lines): the map is one tuple per node, which outweighs the estimate for a hostile
+            # file that is deeply nested.
+            file = DefinitionFile(file.path, file.is_proposal, None)
+        stored = (size, _copy_file(file), tuple(issues))
+        with self._lock:
+            old = self._items.pop(key, None)
+            if old is not None:
+                self._bytes -= old[0]
+            self._items[key] = stored
+            self._bytes += size
+            while self._items and (
+                len(self._items) > self._entries or self._bytes > self._max_bytes
+            ):
+                _, (dropped, _, _) = self._items.popitem(last=False)
+                self._bytes -= dropped
+
+
+def _copy_file(file: DefinitionFile) -> DefinitionFile:
+    definition = file.definition.model_copy(deep=True) if file.definition is not None else None
+    return DefinitionFile(file.path, file.is_proposal, definition, file.lines)
+
+
+_DECODED = _DecodeCache()
+
+
 def _decode(path: str, data: bytes | TooLarge) -> tuple[DefinitionFile, list[Issue]]:
     if isinstance(data, TooLarge):
         return DefinitionFile(path, path.endswith(PROPOSAL_SUFFIX), None), [
             Issue(path, None, "V01", f"file is larger than {MAX_YAML_BYTES // 1024} KiB")
         ]
+    key = (path, sha256(data))
+    cached = _DECODED.get(key)
+    if cached is not None:
+        return cached
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return DefinitionFile(path, path.endswith(PROPOSAL_SUFFIX), None), [
             Issue(path, None, "V01", "not valid UTF-8 text")
         ]
-    return load_text(path, text)
+    file, issues = load_text(path, text)
+    _DECODED.put(key, len(data) * PARSED_BYTES_PER_FILE_BYTE, file, issues)
+    return file, issues
 
 
 def _force_proposal(

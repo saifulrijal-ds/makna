@@ -1,0 +1,20 @@
+# A new metric. Fill in every field that is empty (""). The comments help you here; Makna
+# stores the definition in its own canonical form, so comments and key order are not kept.
+apiVersion: makna/v1
+kind: metric
+name: ""          # lowercase letters, digits and underscores, starting with a letter
+label: ""         # the name people use in a sentence
+description: ""   # what the number means in plain language (at least 20 characters)
+domain: ""        # the name of an existing domain
+owner:
+  team: ""        # the team that owns this metric
+status: draft
+sensitivity: internal
+synonyms:
+  en: []          # other English names people use for it
+  id: []          # other Indonesian names people use for it
+type: simple
+measure: ""       # <entity>.<measure>, the measure this metric reads
+format: {kind: number, decimals: 0}
+time_grains: [month, quarter, year]
+default_grain: month

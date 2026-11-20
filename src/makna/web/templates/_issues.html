@@ -1,0 +1,16 @@
+{% macro issues_table(issues) %}
+<table class="issues" data-field="issues">
+  <thead>
+    <tr><th>Rule</th><th>Line</th><th>Problem</th></tr>
+  </thead>
+  <tbody>
+    {% for issue in issues %}
+    <tr data-rule="{{ issue.rule }}" data-line="{{ issue.line if issue.line is not none else '' }}" data-own="{{ 'yes' if issue.own else 'no' }}">
+      <td><code>{{ issue.rule }}</code></td>
+      <td>{{ issue.line if issue.line is not none else "-" }}</td>
+      <td>{{ issue.message }}{% if not issue.own %} <small>(in <code>{{ issue.file }}</code>)</small>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}

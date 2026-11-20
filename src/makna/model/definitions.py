@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -34,11 +35,19 @@ LANGUAGE_PATTERN = r"^[a-z]{2}$"
 
 
 def _unique[T](items: list[T]) -> list[T]:
-    seen: list[T] = []
+    """`items` if no item appears twice. Linear in the number of items (a set of those seen; an
+    item that cannot be hashed is compared with the others instead)."""
+    seen: set[Any] = set()
+    unhashable: list[T] = []
     for item in items:
-        if item in seen:
-            raise ValueError(f"items must be unique, {item!r} appears twice")
-        seen.append(item)
+        try:
+            if item in seen:
+                raise ValueError(f"items must be unique, {item!r} appears twice")
+            seen.add(item)
+        except TypeError:
+            if item in unhashable:
+                raise ValueError(f"items must be unique, {item!r} appears twice") from None
+            unhashable.append(item)
     return items
 
 
@@ -61,7 +70,22 @@ Tags = Annotated[list[str], AfterValidator(_unique)]
 Status = Literal["draft", "in_review", "approved", "deprecated"]
 Sensitivity = Literal["public", "internal", "confidential", "personal"]
 Grain = Literal["day", "week", "month", "quarter", "year"]
-Scalar = str | int | float | bool
+MAX_INTEGER = 2**63 - 1
+BoundedInt = Annotated[int, Field(ge=-MAX_INTEGER - 1, le=MAX_INTEGER)]
+"""Integers in a definition are 64-bit. YAML reads `0x...` and `0o...` of any length, and turning
+such a number into text (a log line, the search text of a filter, the canonical file) raises
+`ValueError` above Python's 4300-digit limit; no definition needs a number that large."""
+
+
+def _not_a_whole_number(value: Any) -> Any:
+    """A float field does not take an integer: a whole number is read as `BoundedInt` or it is
+    refused, never turned into a float that has lost digits."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        raise ValueError("a whole number must fit in 64 bits")
+    return value
+
+
+Scalar = str | BoundedInt | Annotated[float, BeforeValidator(_not_a_whole_number)] | bool
 
 
 class _Model(BaseModel):
@@ -123,7 +147,7 @@ class _Object(_Model):
     status: Status
     sensitivity: Sensitivity
     tags: Tags | None = None
-    version: Annotated[int, Field(ge=1)] | None = None
+    version: Annotated[int, Field(ge=1, le=2**31 - 1)] | None = None
     deprecation: Deprecation | None = None
 
 

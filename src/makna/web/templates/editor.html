@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% from "_issues.html" import issues_table %}
+{% block title %}{% if target.is_new %}New {{ kind_label }}{% else %}Edit {{ target.name }}{% endif %}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/editor.css">
+<link rel="stylesheet" href="/static/vendor/ace/css/ace.css">
+<link rel="stylesheet" href="/static/vendor/ace/css/theme/textmate.css">
+<h1>{% if target.is_new %}New {{ kind_label }}{% else %}Edit {{ kind_label }} <code>{{ target.name }}</code>{% endif %}</h1>
+{% if object_link %}<p><a href="{{ object_link }}">Open the page of this {{ kind_label }}</a></p>{% endif %}
+
+{% if notice %}
+<p role="status" data-field="notice"><ins>{{ notice }}</ins></p>
+{% endif %}
+
+{% if problem %}
+<article role="alert" data-field="problem" data-code="{{ problem.code }}">
+  <header>{{ problem.headline }} <small><code>{{ problem.code }}</code></small></header>
+  {% if problem.message %}<p>{{ problem.message }}</p>{% endif %}
+  {% if stored %}<p><strong>{{ stored }}</strong></p>{% endif %}
+  {% if problem.issues %}{{ issues_table(problem.issues) }}{% endif %}
+  {% if problem.link %}<p><a href="{{ problem.link }}">{{ problem.link_text }}</a></p>{% endif %}
+</article>
+{% endif %}
+
+{% if check %}
+<section data-field="check">
+  <h2>Check</h2>
+  {% if check.ok %}
+  <p data-field="check-ok"><ins>No problems found.</ins> The definition passes the checks that approval runs (rules V01 to V23). Nothing was saved.</p>
+  {% else %}
+  <p>{{ check.count }} problem{{ "" if check.count == 1 else "s" }} found, sorted by line. Nothing was saved.</p>
+  {{ issues_table(check.issues) }}
+  {% if check.count > check.issues | length %}
+  <p><small>Only the first {{ check.issues | length }} are shown.</small></p>
+  {% endif %}
+  {% if check.issues | selectattr("own", "false") | list %}
+  <p><small>A problem marked with a file is in another definition. Approval checks every official definition, so a change that breaks another one cannot be approved until that is fixed too.</small></p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
+{% for fact in facts %}<p data-field="fact">{{ fact }}</p>{% endfor %}
+{% if show_form %}
+<p><small>Makna stores the definition in its own canonical form: comments and the order of keys are not kept, and Makna sets <code>status</code> and <code>version</code> itself.</small></p>
+{% if blocked %}
+<p role="alert" data-field="blocked"><mark>{{ blocked }}</mark> You can still use Check; saving and submitting are not offered.</p>
+{% endif %}
+{% endif %}
+
+{% if show_form %}
+<form method="post" action="{{ base }}/check" id="editor-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% if not target.is_new %}<input type="hidden" name="expected" value="{{ expected }}">{% endif %}
+  <label for="yaml_text">Definition (YAML)</label>
+  <p><small>In the editor, Tab indents. To leave the editor with the keyboard, press Esc and then Tab.</small></p>
+  <textarea name="yaml_text" id="yaml_text" rows="28" spellcheck="false" wrap="off" class="yaml-text">
+{{ text }}</textarea>
+  <label for="reason">Reason (needed to save a draft or submit; at most {{ max_reason }} characters)</label>
+  <input type="text" name="reason" id="reason" maxlength="{{ max_reason }}" value="{{ reason }}" autocomplete="off">
+  <div class="buttons">
+    <button type="submit" formaction="{{ base }}/check" class="secondary" formnovalidate>Check</button>
+    {% if not blocked %}
+    <button type="submit" formaction="{{ base }}/save" class="secondary">Save draft</button>
+    <button type="submit" formaction="{{ base }}/submit">Submit for review</button>
+    {% endif %}
+  </div>
+</form>
+{% if can_withdraw %}
+<form method="post" action="{{ base }}/withdraw" data-field="withdraw">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="expected" value="{{ expected }}">
+  <label for="withdraw_reason">Withdraw this proposal (deletes the proposal; the official version, if there is one, stays). A reason is needed.</label>
+  <input type="text" name="reason" id="withdraw_reason" maxlength="{{ max_reason }}" autocomplete="off" required>
+  <button type="submit" class="secondary outline">Withdraw proposal</button>
+</form>
+{% endif %}
+{% endif %}
+
+{% if show_form %}
+<section data-field="difference">
+  <h2>Difference</h2>
+  {% if diff is none %}
+  <p>Use Check, Save draft, or Submit to compare the text with the official version.</p>
+  {% elif diff.note %}
+  <p>{{ diff.note }}</p>
+  {% elif diff.identical %}
+  <p>The text is the same as the official version.</p>
+  {% else %}
+  <p><small>Left: the official version. Right: the text in the box. Both are shown in the form Makna stores, so what Makna sets itself (status, version) does not count as a change.</small></p>
+  <table class="diff" data-field="diff">
+    <colgroup><col class="diff-no"><col><col class="diff-no"><col></colgroup>
+    <thead>
+      <tr><th>Line</th><th>Official version</th><th>Line</th><th>Text in the box</th></tr>
+    </thead>
+    <tbody>
+      {% for row in diff.rows %}
+      {% if row.kind == "skipped" %}
+      <tr data-kind="skipped"><td colspan="4"><small>{{ row.skipped }} unchanged line{{ "" if row.skipped == 1 else "s" }}</small></td></tr>
+      {% else %}
+      <tr data-kind="{{ row.kind }}">
+        <td class="diff-no">{{ row.left_no if row.left_no is not none else "" }}</td>
+        <td class="diff-text">{{ row.left }}</td>
+        <td class="diff-no">{{ row.right_no if row.right_no is not none else "" }}</td>
+        <td class="diff-text">{{ row.right }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if target.is_new and show_form %}
+<p><small>Other kinds of definition:
+  {% for kind, label in other_kinds %}<a href="/new/{{ kind }}">New {{ label }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.</small></p>
+{% endif %}
+{% if show_form %}
+<script src="/static/vendor/ace/ace.js" defer></script>
+<script src="/static/vendor/ace/mode-yaml.js" defer></script>
+<script src="/static/vendor/ace/theme-textmate.js" defer></script>
+<script src="/static/editor.js" defer></script>
+{% endif %}
+{% endblock %}
