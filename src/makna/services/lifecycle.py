@@ -1276,6 +1276,7 @@ def _check_stored_size(plan: _Plan, action: str) -> None:
 
 
 @functools.cache
+@functools.cache
 def _deprecation_reserve() -> int:
     """The most bytes deprecation can add to a file: the `status` change and a `deprecation`
     block with a reason of `MAX_REASON_LENGTH` characters and a replacement, at the worst size

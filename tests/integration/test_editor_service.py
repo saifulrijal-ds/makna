@@ -4,6 +4,7 @@ temporary git repository)."""
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -807,13 +808,10 @@ def test_headroom_is_checked_when_a_proposal_is_created_and_when_it_is_updated(
     assert len(world.repo.log()) == commits
 
 
-@pytest.mark.parametrize(
-    "reason",
-    ["\U0001f600" * 500, "'" * 250 + '"' * 250, "\\" * 500, "'\"" * 250, "a: " * 166, "x" * 500],
-)
-def test_the_largest_allowed_draft_can_still_be_deprecated_with_the_worst_reason(
-    world: World, reason: str
-) -> None:
+@functools.cache
+def _longest_description_that_fits() -> int:
+    """The longest description whose later forms (approved, deprecated) still fit, found once by
+    a binary search (it does not depend on the reason, and each step parses about 256 KiB)."""
     from makna.definitions.render import parse_text
     from makna.services.lifecycle import _later_forms_too_large
 
@@ -823,11 +821,21 @@ def test_the_largest_allowed_draft_can_still_be_deprecated_with_the_worst_reason
         return not _later_forms_too_large(definition, None)
 
     low, high = 20, MAX_YAML_BYTES
-    while low < high:  # the longest description whose later forms still fit
+    while low < high:
         middle = (low + high + 1) // 2
         low, high = (middle, high) if fits(middle) else (low, middle - 1)
     assert not fits(low + 1)
-    text = sup.metric_text(description="x" * low)
+    return low
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["\U0001f600" * 500, "'" * 250 + '"' * 250, "\\" * 500, "'\"" * 250, "a: " * 166, "x" * 500],
+)
+def test_the_largest_allowed_draft_can_still_be_deprecated_with_the_worst_reason(
+    world: World, reason: str
+) -> None:
+    text = sup.metric_text(description="x" * _longest_description_that_fits())
     curator, approver = world.caller("curator"), world.caller("approver")
     saved = world.life.create_proposal(curator, NEW, text, "the largest")
     world.life.submit(curator, NEW, "ready", saved.proposal_sha256)
