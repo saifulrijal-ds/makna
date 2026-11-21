@@ -28,7 +28,7 @@
 {% endmacro %}
 
 {% macro rule_uses_list(entry) %}
-{% if entry.rule_uses %}
+{% if entry.rule_uses or entry.measure_changes %}
 <section data-field="rule-uses">
   <h3>Rules that change, and who uses them</h3>
   {% for use in entry.rule_uses %}
@@ -38,6 +38,15 @@
       {% for m in use.measures %}<code data-field="rule-measure">{{ m | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% if use.measures_total > use.measures | length %} <small>and {{ use.measures_total - use.measures | length }} more</small>{% endif %}</li>
     <li>Metrics that use it ({{ use.metrics_total }}):
       {% for m in use.metrics %}<code data-field="rule-metric">{{ m | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% if use.metrics_total > use.metrics | length %} <small>and {{ use.metrics_total - use.metrics | length }} more</small>{% endif %}</li>
+  </ul>
+  {% endfor %}
+  {% for change in entry.measure_changes %}
+  <p data-field="measure-change"><strong>Measure <code>{{ change.measure | visible }}</code></strong> changes its rules: from
+    {% for r in change.before %}<code>{{ r | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} to
+    {% for r in change.after %}<code>{{ r | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}.</p>
+  <ul data-measure="{{ change.measure | visible }}">
+    <li>Metrics built on it ({{ change.metrics_total }}):
+      {% for m in change.metrics %}<code data-field="measure-metric">{{ m | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% if change.metrics_total > change.metrics | length %} <small>and {{ change.metrics_total - change.metrics | length }} more</small>{% endif %}</li>
   </ul>
   {% endfor %}
   {% if entry.rule_uses_total > entry.rule_uses | length %}<p><small>{{ entry.rule_uses_total - entry.rule_uses | length }} more rules change; they are not listed.</small></p>{% endif %}
@@ -77,9 +86,9 @@
     {% else %}
     <tr data-kind="{{ row.kind }}">
       <td class="diff-no">{{ row.left_no if row.left_no is not none else "" }}</td>
-      <td class="diff-text">{{ row.left | visible }}</td>
+      <td class="diff-text">{% if row.left_parts %}{% for text, differs in row.left_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% else %}{{ row.left | visible }}{% endif %}</td>
       <td class="diff-no">{{ row.right_no if row.right_no is not none else "" }}</td>
-      <td class="diff-text">{{ row.right | visible }}</td>
+      <td class="diff-text">{% if row.right_parts %}{% for text, differs in row.right_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% else %}{{ row.right | visible }}{% endif %}</td>
     </tr>
     {% endif %}
     {% endfor %}

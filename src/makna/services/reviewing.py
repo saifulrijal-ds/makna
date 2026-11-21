@@ -37,6 +37,7 @@ from makna.model.definitions import (
     RuleRef,
 )
 from makna.model.expressions import ExpressionError, dimension_columns
+from makna.services.difference import DiffRow
 from makna.services.editing import CheckIssue
 
 MAX_QUEUE = 100
@@ -61,8 +62,8 @@ MAX_AUDIT_PAGE = 100
 
 UNREADABLE_NOTE = (
     "This proposal cannot be read as a definition here (it is larger than 256 KiB, is not text, "
-    "or does not parse), so there is no difference to show and it cannot be approved or "
-    "rejected. It can only be withdrawn."
+    "does not parse, or names another object or kind than its file does), so there is no "
+    "difference to show and it cannot be approved or rejected. It can only be withdrawn."
 )
 
 
@@ -110,6 +111,18 @@ class RuleUse:
 
 
 @dataclass(frozen=True)
+class MeasureRuleChange:
+    """A measure whose rules the proposal changes, and the official metrics built on it."""
+
+    measure: str
+    """`<entity>.<measure>`."""
+    before: tuple[str, ...]
+    after: tuple[str, ...]
+    metrics: tuple[str, ...]
+    metrics_total: int
+
+
+@dataclass(frozen=True)
 class Mark:
     """One fact a reviewer must look at that the YAML difference alone may not make obvious
     (I-4, I-4b, WP-15C M-4). `kind` is a fixed word; `text` holds names and expressions from the
@@ -147,7 +160,7 @@ class ReviewEntry:
     lines_added: int | None
     lines_removed: int | None
     """Lines of the canonical form added and removed against the official version (a changed
-    line counts as one of each); both None when the texts are too long to compare."""
+    line counts as one of each); both None for an unreadable proposal."""
     error_count: int
     errors: tuple[CheckIssue, ...]
     needs_governance: bool
@@ -157,8 +170,12 @@ class ReviewEntry:
     """`(official owner team, proposed owner team)` when the proposal changes the owner."""
     rule_uses: tuple[RuleUse, ...]
     rule_uses_total: int
+    measure_changes: tuple[MeasureRuleChange, ...]
+    measure_changes_total: int
     decision: DecisionView
-    """Whether this caller may decide the object (`approval.may_decide` for approve)."""
+    """Whether this caller may approve the object (`approval.may_decide` for approve)."""
+    reject_decision: DecisionView
+    """Whether this caller may reject it (the same function for reject: no two-person rule)."""
 
 
 @dataclass(frozen=True)
@@ -190,6 +207,10 @@ class ReviewItem:
     version number): the left side of the difference. None for a new object."""
     proposal_text: str | None
     """The proposal in the same form: the right side. None when it cannot be read."""
+    rows: tuple[DiffRow, ...] | None
+    """The difference of the two texts, made once, in worker-thread cost bounded by
+    `difference.MAX_MATCH_CELLS`. Every line of both texts is in a row (long unchanged runs are
+    collapsed). None when the proposal cannot be read."""
     marks: tuple[Mark, ...]
     marks_total: int
     reference_issues: tuple[str, ...]
@@ -282,6 +303,14 @@ def rules_by_metric(
                 if isinstance(item, RuleRef):
                     used.add(f"rule:{item.rule}")
         direct[name] = used
+    return _through_inputs(metrics, direct)
+
+
+def _through_inputs(
+    metrics: Mapping[str, Metric], direct: Mapping[str, set[str]]
+) -> dict[str, set[str]]:
+    """For each metric, what it uses itself or through the metrics it is built from (a cycle,
+    which a definition cannot have but a reader must survive, is read once)."""
     inputs = {
         name: [i.removeprefix("metric:") for i in metric_inputs(m) if i.startswith("metric:")]
         for name, m in metrics.items()
@@ -300,6 +329,16 @@ def rules_by_metric(
             stack.extend(inputs[current])
         result[name] = reached
     return result
+
+
+def metrics_by_measure(metrics: Mapping[str, Metric]) -> dict[str, set[str]]:
+    """For each metric, the measures (`<entity>.<measure>`) it is computed from, itself or
+    through the metrics it is built from."""
+    direct = {
+        name: {m.measure} if m.type == "simple" and m.measure else set()
+        for name, m in metrics.items()
+    }
+    return _through_inputs(metrics, direct)
 
 
 def rule_uses(
@@ -339,6 +378,39 @@ def rule_uses(
             )
         )
     return tuple(listed), len(changes)
+
+
+def measure_rule_changes(
+    officials: Mapping[str, AnyDefinition],
+    official: AnyDefinition | None,
+    proposal: AnyDefinition,
+) -> tuple[tuple[MeasureRuleChange, ...], int]:
+    """The measures of an entity whose set of rules the proposal changes (a rule added to it or
+    taken from it), with the official metrics built on each of them, for the same reason D-17
+    lists the users of a changed rule: the number a metric gives changes with the rules of its
+    measure. Measures that are new or removed are not listed here (a removed one is a definition
+    error where a metric still names it). At most `MAX_RULES`, users cut at `MAX_RULE_USERS`."""
+    if not isinstance(proposal, Entity) or not isinstance(official, Entity):
+        return (), 0
+    before, after = _measure_rules(official), _measure_rules(proposal)
+    changed = sorted(n for n in before.keys() & after.keys() if before[n] != after[n])
+    if not changed:
+        return (), 0
+    metrics = {o.name: o for o in officials.values() if isinstance(o, Metric)}
+    reach = metrics_by_measure(metrics)
+    listed: list[MeasureRuleChange] = []
+    for name in changed[:MAX_RULES]:
+        users = sorted(m for m, measures in reach.items() if f"{proposal.name}.{name}" in measures)
+        listed.append(
+            MeasureRuleChange(
+                f"{proposal.name}.{name}",
+                tuple(sorted(before[name])),
+                tuple(sorted(after[name])),
+                tuple(users[:MAX_RULE_USERS]),
+                len(users),
+            )
+        )
+    return tuple(listed), len(changed)
 
 
 # --- what to look at beyond the YAML difference ---------------------------------------------
@@ -383,7 +455,7 @@ def definition_marks(official: AnyDefinition | None, proposal: AnyDefinition) ->
     marks: list[Mark] = []
     if official is None:
         return marks
-    if official.owner.team != proposal.owner.team:
+    if official.owner.team.casefold() != proposal.owner.team.casefold():
         marks.append(
             Mark(
                 "owner",

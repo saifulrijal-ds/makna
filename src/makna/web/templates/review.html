@@ -56,10 +56,15 @@
         {{ rule_uses_list(e) }}
       </td>
       <td data-field="decision">
-        {% if e.decision.allowed %}
+        {% if e.decision.allowed and e.reject_decision.allowed %}
         <a href="{{ row.href }}" role="button" class="secondary">Review and decide</a>
+        {% elif e.reject_decision.allowed %}
+        <a href="{{ row.href }}" role="button" class="secondary">Review (you may reject)</a>
+        <small data-field="cannot">You cannot approve this: {{ e.decision.message | visible }}</small>
+        {% elif e.decision.allowed %}
+        <a href="{{ row.href }}" role="button" class="secondary">Review (you may approve)</a>
         {% else %}
-        <small data-field="cannot">You cannot decide this: {{ e.decision.message | visible }}</small>
+        <small data-field="cannot">You can neither approve nor reject this: {{ e.reject_decision.message | visible }}</small>
         {% endif %}
       </td>
     </tr>

@@ -90,7 +90,7 @@ from makna.model.search import EmbeddingProvider
 from makna.services import accounts, approval, permissions, store
 from makna.services.approval import ApprovalSettings, Decision
 from makna.services.caller import Caller
-from makna.services.difference import MAX_DIFF_LINES, count_changes
+from makna.services.difference import DiffRow, build_diff, count_changes, count_rows
 from makna.services.editing import (
     MAX_CHECK_ISSUES,
     NEW_OBJECT,
@@ -122,6 +122,7 @@ from makna.services.reviewing import (
     AuditPage,
     AuditRow,
     DecisionView,
+    MeasureRuleChange,
     OutsideChange,
     ReviewEntry,
     ReviewItem,
@@ -129,6 +130,7 @@ from makna.services.reviewing import (
     RuleUse,
     ServiceRefusal,
     definition_marks,
+    measure_rule_changes,
     rule_uses,
 )
 from makna.services.store import ObjectState, RepoState
@@ -188,6 +190,23 @@ REPOSITORY_MOVED = (
 
 
 REVIEW_FAILED = "The review page could not be read."
+
+
+def _canonical_texts(item: ObjectState) -> tuple[str | None, str | None]:
+    """The official version and the proposal in the canonical form of a proposal (status
+    `draft`, the official version number): what the two sides of the difference are made of."""
+    version = item.official.version if item.official is not None else None
+    official = (
+        to_yaml(_as_proposal(item.official, "draft", version))
+        if item.official is not None
+        else None
+    )
+    proposal = (
+        to_yaml(_as_proposal(item.proposal, "draft", version))
+        if item.proposal is not None
+        else None
+    )
+    return official, proposal
 
 
 def _in_queue(item: ObjectState) -> bool:
@@ -676,8 +695,16 @@ class Lifecycle:
             officials = {k: o.official for k, o in state.objects.items() if o.official is not None}
             entries = tuple(
                 self._review_entry(
-                    actor, user, state, item, notes, officials, repo, MAX_QUEUE_ERRORS
-                )
+                    actor,
+                    user,
+                    state,
+                    item,
+                    notes,
+                    officials,
+                    repo,
+                    MAX_QUEUE_ERRORS,
+                    *_canonical_texts(item),
+                )  # fmt: skip
                 for item in shown
             )
         except ServiceError:
@@ -707,19 +734,24 @@ class Lifecycle:
         try:
             notes = self._review_notes([item])
             officials = {k: o.official for k, o in state.objects.items() if o.official is not None}
-            entry = self._review_entry(
-                actor, user, state, item, notes, officials, self._repo(), MAX_ITEM_ISSUES
-            )
             official, proposal = item.official, item.proposal
-            version = official.version if official is not None else None
-            official_text = (
-                to_yaml(_as_proposal(official, "draft", version)) if official is not None else None
+            official_text, proposal_text = _canonical_texts(item)
+            # The two texts are compared once: the rows are the page's, and the counts of the
+            # entry are counted from them.
+            rows = (
+                build_diff(official_text or "", proposal_text)
+                if proposal_text is not None
+                else None
             )
+            entry = self._review_entry(
+                actor, user, state, item, notes, officials, self._repo(), MAX_ITEM_ISSUES,
+                official_text, proposal_text, rows,
+            )  # fmt: skip
             can_withdraw = bool(approval.may_edit(actor, user.email, item.authors))
             if proposal is None:
                 unreadable = DecisionView(False, "unreadable", UNREADABLE_NOTE)
                 return ReviewItem(
-                    entry, official_text, None, (), 0, (), 0, None, unreadable, can_withdraw
+                    entry, official_text, None, None, (), 0, (), 0, None, unreadable, can_withdraw
                 )
             marks = definition_marks(official, proposal)
             with self._engine.connect() as connection:
@@ -730,21 +762,18 @@ class Lifecycle:
                 _check_stored_size(plan, APPROVE)
             except ServiceError as error:
                 refusal = ServiceRefusal(str(error.code), error.message, _refusal_issues(error))
-            reject = _decision_view(
-                approval.may_decide(
-                    actor, user.email, official, proposal, item.authors, self._settings, REJECT
-                )
-            )
+            assert proposal_text is not None and rows is not None
             return ReviewItem(
                 entry,
                 official_text,
-                to_yaml(_as_proposal(proposal, "draft", version)),
+                proposal_text,
+                tuple(rows),
                 tuple(marks[:MAX_MARKS]),
                 len(marks),
                 tuple(reference[:MAX_REFERENCE_ISSUES]),
                 len(reference),
                 refusal,
-                reject,
+                entry.reject_decision,
                 can_withdraw,
             )
         except ServiceError:
@@ -878,6 +907,9 @@ class Lifecycle:
         officials: Mapping[str, AnyDefinition],
         repo: GitRepo,
         max_errors: int,
+        official_text: str | None,
+        proposal_text: str | None,
+        rows: list[DiffRow] | None = None,
     ) -> ReviewEntry:
         official, proposal = item.official, item.proposal
         version = official.version if official is not None else None
@@ -887,22 +919,29 @@ class Lifecycle:
         owner_change: tuple[str, str] | None = None
         uses: tuple[RuleUse, ...] = ()
         uses_total = 0
+        measure_changes: tuple[MeasureRuleChange, ...] = ()
+        measure_total = 0
+        reject_decision = DecisionView(False, "unreadable", UNREADABLE_NOTE)
         if proposal is None:
-            decision = DecisionView(False, "unreadable", UNREADABLE_NOTE)
+            decision = reject_decision
         else:
-            proposal_text = to_yaml(_as_proposal(proposal, "draft", version))
-            if official is None:
-                lines = len(proposal_text.splitlines())
-                added, removed = (lines, 0) if lines <= MAX_DIFF_LINES else (None, None)
-            else:
-                counted = count_changes(
-                    to_yaml(_as_proposal(official, "draft", version)), proposal_text
+            reject_decision = _decision_view(
+                approval.may_decide(
+                    actor, user.email, official, proposal, item.authors, self._settings, REJECT
                 )
-                added, removed = counted if counted is not None else (None, None)
-                if official.owner.team.casefold() != proposal.owner.team.casefold():
-                    owner_change = (official.owner.team, proposal.owner.team)
+            )
+            if rows is not None:  # the page has compared the texts already: count those rows
+                added, removed = count_rows(rows)
+            else:
+                added, removed = count_changes(official_text or "", proposal_text or "")
+            if (
+                official is not None
+                and official.owner.team.casefold() != proposal.owner.team.casefold()
+            ):
+                owner_change = (official.owner.team, proposal.owner.team)
             needs = approval.loosenings(official, proposal)
             uses, uses_total = rule_uses(officials, official, proposal)
+            measure_changes, measure_total = measure_rule_changes(officials, official, proposal)
             decision = _decision_view(
                 approval.may_decide(
                     actor, user.email, official, proposal, item.authors, self._settings, APPROVE
@@ -950,7 +989,10 @@ class Lifecycle:
             owner_change,
             uses,
             uses_total,
+            measure_changes,
+            measure_total,
             decision,
+            reject_decision,
         )
 
     @staticmethod
@@ -1641,7 +1683,7 @@ def _check_stored_size(plan: _Plan, action: str) -> None:
         elif action == APPROVE:
             problem = (
                 f"approving adds the version to the file, which would make it larger than {limit}, "
-                "the most Makna reads back; shorten the proposal"
+                "the most Makna reads back; reject it, or ask its author to shorten it"
             )
         else:
             problem = (

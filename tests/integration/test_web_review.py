@@ -1320,7 +1320,7 @@ def test_the_parsing_and_the_difference_of_the_review_run_off_the_event_loop(
     from makna.services.lifecycle import Lifecycle
 
     for owner, name in (
-        (review, "build_diff"),
+        (lifecycle, "build_diff"),
         (Lifecycle, "review_queue"),
         (Lifecycle, "review_item"),
         (Lifecycle, "audit_events"),
@@ -1377,15 +1377,18 @@ def test_the_queue_the_authors_and_the_errors_are_bounded_and_counted(
     assert rows_of(queue) and "definition error" in queue
 
 
-def test_the_difference_is_not_shown_when_it_is_too_long_and_approve_is_not_offered(
+def test_a_difference_too_big_to_pair_still_shows_every_line_and_approve_is_offered(
     ctx: Ctx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from makna.services import difference
+
     propose(ctx, ctx.client("curator", SALES))
-    monkeypatch.setattr(review, "build_diff", lambda *a, **k: None)
+    monkeypatch.setattr(difference, "MAX_MATCH_CELLS", 0)  # nothing is paired by matching
     approver = ctx.client("approver", ())
     page = approver.get("/review/metric/disbursement_amount").text
-    assert 'data-field="too-long"' in page and 'data-field="diff"' not in page
-    assert 'data-action="approve"' not in page and 'data-action="reject"' in page
+    assert 'data-field="diff"' in page and "Reviewed." in page
+    assert 'data-action="approve"' in page and "too-long" not in page
+    assert "shorten" not in page.lower()
 
 
 # --- a new object, and what the index and the repository say ---------------------------------

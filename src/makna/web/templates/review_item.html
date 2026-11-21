@@ -20,7 +20,7 @@
     </tbody>
   </table>
   {% endif %}
-  {% if gone %}<p>The proposal is no longer in review, so there is nothing more to show. If it was approved, the metric, entity or term now shows the new version.</p>{% endif %}
+  {% if gone %}<p>The proposal is no longer in review, so there is nothing more to show. If it was approved, the page of the object shows the new version.</p>{% endif %}
 </article>
 {% endif %}
 
@@ -86,9 +86,7 @@
 
 <section data-field="difference">
   <h2>Difference</h2>
-  {% if too_long %}
-  <p data-field="too-long"><mark>{{ too_long_text }}</mark></p>
-  {% elif rows is none %}
+  {% if rows is none %}
   <p>No difference to show.</p>
   {% elif not rows %}
   <p data-field="identical">The proposal is the same as the official version.</p>
@@ -104,11 +102,11 @@
   <form method="post" action="{{ base }}/reject" id="decide-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected" value="{{ entry.proposal_commit or '' }}">
-    <label for="reason">Reason (needed to approve or reject; at most {{ max_reason }} characters)</label>
-    <input type="text" name="reason" id="reason" maxlength="{{ max_reason }}" value="{{ reason | visible }}" autocomplete="off" required>
+    <label for="reason">Reason (needed to approve or reject; one line of plain text, at most {{ max_reason }} characters; pressing Enter decides nothing)</label>
+    <textarea name="reason" id="reason" rows="3" maxlength="{{ max_reason }}" autocomplete="off" required>{{ reason | visible }}</textarea>
     <div class="buttons">
-      {% if can_approve %}<button type="submit" formaction="{{ base }}/approve" data-action="approve">Approve</button>{% endif %}
       {% if can_reject %}<button type="submit" formaction="{{ base }}/reject" class="secondary" data-action="reject">Reject</button>{% endif %}
+      {% if can_approve %}<button type="submit" formaction="{{ base }}/approve" data-action="approve">Approve</button>{% endif %}
     </div>
   </form>
   {% endif %}
@@ -116,8 +114,6 @@
   <p data-field="cannot-approve">You cannot approve this proposal: {{ entry.decision.message | visible }}</p>
   {% elif item.approve_refusal %}
   <p data-field="approve-not-offered">Approve is not offered, because approval would be refused (see above).</p>
-  {% elif too_long %}
-  <p data-field="approve-not-offered">Approve is not offered, because the difference cannot be shown here.</p>
   {% endif %}
   {% if not item.reject_decision.allowed %}
   <p data-field="cannot-reject">You cannot reject this proposal: {{ item.reject_decision.message | visible }}</p>

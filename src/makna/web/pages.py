@@ -18,7 +18,7 @@ from starlette.responses import HTMLResponse
 from starlette.types import Scope
 
 from makna.services import Caller, permissions
-from makna.web.common import visible
+from makna.web.common import codepoints, visible
 from makna.web.security import Session
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -92,6 +92,7 @@ class Pages:
             lstrip_blocks=True,
         )
         self._env.filters["visible"] = visible
+        self._env.filters["codepoints"] = codepoints
 
     def render(
         self,

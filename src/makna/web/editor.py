@@ -40,7 +40,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from starlette.responses import RedirectResponse, Response
 
 from makna.services import Caller, LifecycleErrorCode, ServiceError, ServiceErrorCode, permissions
-from makna.services.difference import MAX_DIFF_LINES, DiffRow, build_diff
+from makna.services.difference import DiffRow, build_diff
 from makna.services.editing import (
     KINDS,
     MAX_CHECK_ISSUES,
@@ -148,10 +148,6 @@ def make_diff(official_text: str | None, text: str, version: int | None) -> Diff
     if proposed is None:
         return Diff(note="The text cannot be read as a definition yet, so it is not compared.")
     rows = build_diff(official_text, proposed)
-    if rows is None:
-        return Diff(
-            note=f"The text is longer than {MAX_DIFF_LINES} lines, so it is not compared here."
-        )
     return Diff(tuple(rows), identical=not rows)
 
 

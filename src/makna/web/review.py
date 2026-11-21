@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote, urlencode
 
@@ -36,9 +37,8 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from starlette.responses import RedirectResponse, Response
 
 from makna.services import LifecycleErrorCode, ServiceError, ServiceErrorCode, permissions
-from makna.services.difference import MAX_DIFF_LINES, DiffRow, build_diff
 from makna.services.editing import KINDS, is_object_id
-from makna.services.lifecycle import MAX_REASON_LENGTH, REJECT, Lifecycle
+from makna.services.lifecycle import COMMITTED_NOT_INDEXED, MAX_REASON_LENGTH, REJECT, Lifecycle
 from makna.services.reviewing import (
     DEFAULT_AUDIT_PAGE,
     MAX_AUDIT_PAGE,
@@ -71,11 +71,6 @@ SHOWN_ACTIONS = (
 """The actions the audit page offers as a filter (the ones `audit_event` holds)."""
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 BAD_FORM = "The form did not carry the commit of the proposal it showed. Reload the page."
-TOO_LONG_TO_COMPARE = (
-    f"The proposal or the official version is longer than {MAX_DIFF_LINES} lines, so the "
-    "difference is not shown here and Approve is not offered: a reviewer must see what is "
-    "approved. Reject it, or shorten it in the editor."
-)
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -128,17 +123,6 @@ def _log(action: str, context: WebContext, object_id: str | None, outcome: str) 
     )
 
 
-async def _compare(item: ReviewItem) -> tuple[list[DiffRow] | None, bool]:
-    """The rows of the difference, off the event loop, and whether it is too long to compare. A
-    new object is compared with an empty text, so the reviewer reads all of it."""
-    if item.proposal_text is None:
-        return None, False
-    rows = await run_in_thread(
-        "review", "diff", build_diff, item.official_text or "", item.proposal_text
-    )
-    return rows, rows is None
-
-
 def _problem_page(
     request: Request, problem: Problem, status: int, *, gone: bool = False, back: str = "/review"
 ) -> Response:
@@ -161,14 +145,10 @@ async def _render_item(
     status: int = 200,
     notice: str | None = None,
 ) -> Response:
-    rows, too_long = await _compare(item)
     entry = item.entry
     caller = _signed_in(request).caller
     can_approve = (
-        item.entry.decision.allowed
-        and item.approve_refusal is None
-        and not entry.unreadable
-        and not too_long
+        item.entry.decision.allowed and item.approve_refusal is None and not entry.unreadable
     )
     return _state(request).pages.render(
         request.scope,
@@ -180,9 +160,7 @@ async def _render_item(
             "notice": notice,
             "reason": reason[:MAX_REASON_LENGTH],
             "max_reason": MAX_REASON_LENGTH,
-            "rows": rows,
-            "too_long": too_long,
-            "too_long_text": TOO_LONG_TO_COMPARE,
+            "rows": item.rows,
             "can_approve": can_approve,
             "can_reject": item.reject_decision.allowed and not entry.unreadable,
             "base": _item_path(entry.kind, entry.name),
@@ -302,7 +280,14 @@ async def _refused(
     except ServiceError:
         item = None
     if item is None:
-        return _problem_page(request, problem, status_of(error), gone=True)
+        # After `COMMITTED_NOT_INDEXED` the proposal is gone because it was approved, and the
+        # pages show the new version only after the next index sync.
+        return _problem_page(
+            request,
+            problem,
+            status_of(error),
+            gone=error.message != COMMITTED_NOT_INDEXED,
+        )
     return await _render_item(
         request, item, problem=problem, reason=reason, status=status_of(error)
     )
@@ -398,7 +383,7 @@ async def audit(
                 "r": row,
                 "object_page": _object_page(kind, name),
                 "external": row.actor_label.startswith("external:"),
-                "when": row.at.strftime("%Y-%m-%d %H:%M:%S"),
+                "when": _utc(row.at),
                 "filter": _audit_link(row.object_id, "", None)
                 if is_object_id(kind, name)
                 else None,
@@ -427,6 +412,13 @@ async def audit(
         },
         status=status,
     )
+
+
+def _utc(moment: datetime) -> str:
+    """A time of the database as UTC text, whatever time zone the database session used."""
+    if moment.tzinfo is None:  # a time without a zone is read as UTC (the column keeps zones)
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _bad_filter(field: str) -> Problem:

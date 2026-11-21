@@ -44,3 +44,25 @@ aside.outside ul {
 [data-field="outside-subject"] {
   overflow-wrap: anywhere;
 }
+
+mark.part {
+  background: #ffe08a;
+  color: inherit;
+  padding: 0 0.1em;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) mark.part {
+    background: #7a5c00;
+    color: #fff3d0;
+  }
+}
+
+:root[data-theme="dark"] mark.part {
+  background: #7a5c00;
+  color: #fff3d0;
+}
+
+#decide-form textarea {
+  min-height: 4rem;
+}

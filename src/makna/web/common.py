@@ -108,21 +108,48 @@ async def run_in_thread[T](
         raise HTTPException(status_code=500) from None
 
 
+_NOT_SHOWN = frozenset({"Cf", "Cc", "Cs", "Co", "Zl", "Zp", "Zs"})
+_IGNORABLE = (
+    (0x034F, 0x034F),  # combining grapheme joiner
+    (0x115F, 0x1160),  # Hangul choseong and jungseong fillers
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),  # Mongolian free variation selectors
+    (0x2800, 0x2800),  # braille blank
+    (0x3164, 0x3164),  # Hangul filler
+    (0xFE00, 0xFE0F),  # variation selectors
+    (0xFFA0, 0xFFA0),  # halfwidth Hangul filler
+    (0xE0000, 0xE0FFF),  # tags and the variation selectors supplement
+)
+
+
+def _hidden(char: str) -> bool:
+    if char == "\t":
+        return False
+    if char == " ":
+        return False
+    if unicodedata.category(char) in _NOT_SHOWN:
+        return True
+    code = ord(char)
+    return any(low <= code <= high for low, high in _IGNORABLE)
+
+
 def visible(value: object) -> str:
-    """`value` as text with every character that does not show made visible, as `<U+202E>`: the
-    format characters (bidirectional controls, zero-width characters, the soft hyphen, tags), the
-    control characters except a tab, the line and paragraph separators, and the characters that
-    are not text at all (a lone surrogate, a private-use character). Text of a definition, a
-    reason, a commit or an actor can hold them, and a reviewer must not be shown what is not
-    there, or not be shown what is. The template engine escapes the result, so the mark is plain
-    text. It is the filter `visible` of the page templates."""
+    """`value` as text with every character that does not show, or shows as a space, made
+    visible as `<U+202E>`: the format characters (bidirectional controls, zero-width characters,
+    the soft hyphen, tags), the default-ignorable characters that are not format characters
+    (Hangul fillers, variation selectors, the grapheme joiner, the braille blank), every space
+    but U+0020 (no-break and ideographic spaces), the control characters except a tab, the line
+    and paragraph separators, and the characters that are not text at all (a lone surrogate, a
+    private-use character). Text of a definition, a reason, a commit or an actor can hold them,
+    and a reviewer must not be shown what is not there, or not be shown what is. The template
+    engine escapes the result, so the mark is plain text. It is the filter `visible` of the page
+    templates."""
     text = value if isinstance(value, str) else str(value)
-    return "".join(
-        f"<U+{ord(char):04X}>"
-        if unicodedata.category(char) in _NOT_SHOWN and char != "\t"
-        else char
-        for char in text
-    )
+    return "".join(f"<U+{ord(char):04X}>" if _hidden(char) else char for char in text)
 
 
-_NOT_SHOWN = frozenset({"Cf", "Cc", "Cs", "Co", "Zl", "Zp"})
+def codepoints(value: str) -> str:
+    """`value` with the code point written after each character that is not ASCII
+    (`а<U+0430>`), for the part of a changed line that differs: a Cyrillic letter in a Latin
+    word looks the same, so the page says what it is. Run it after `visible`."""
+    return "".join(char if ord(char) < 0x80 else f"{char}<U+{ord(char):04X}>" for char in value)

@@ -15,7 +15,7 @@ import pytest
 from makna.definitions.repo import GitRepo
 from makna.model.definitions import AnyDefinition, Entity, Metric, parse_definition
 from makna.services import difference, reviewing
-from makna.web.common import visible
+from makna.web.common import codepoints, visible
 
 ENTITY: dict[str, Any] = {
     "apiVersion": "makna/v1",
@@ -311,9 +311,8 @@ def test_count_changes_counts_a_changed_line_as_one_removed_and_one_added() -> N
     assert difference.count_changes("a\nb\nc\n", "a\nB\nc\nd\n") == (2, 1)
     assert difference.count_changes("a\n", "a\n") == (0, 0)
     assert difference.count_changes("", "a\nb\n") == (2, 0)
-    big = "line\n" * (difference.MAX_DIFF_LINES + 1)
-    assert difference.count_changes(big, "x\n") is None
-    assert difference.build_diff(big, "x\n") is None
+    rows = difference.build_diff("a\nb\nc\n", "a\nB\nc\nd\n")
+    assert difference.count_rows(rows) == (2, 1)
 
 
 def test_the_rows_of_a_difference_are_plain_strings_and_unchanged_runs_collapse() -> None:
@@ -372,3 +371,135 @@ def test_the_subject_is_the_first_line_cut_with_control_characters_replaced(
     assert repo.subject(sha, 5) == "Fix‮ "[:5]
     with pytest.raises(ValueError):
         repo.subject("not-a-sha")
+
+
+# --- the cost of a difference (fix round 1) ---------------------------------------------------
+
+
+def _dimensions(count: int, tag: str) -> str:
+    """YAML-shaped lines that repeat, the worst shape for the line matching: `count` dimensions
+    with all names changed and the other three lines the same."""
+    lines: list[str] = []
+    for index in range(count):
+        lines += [
+            f"  - name: {tag}{index}",
+            "    type: categorical",
+            "    description: A dimension of the entity.",
+            "    sensitivity: internal",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("dimensions", [125, 150, 400])
+def test_the_worst_case_at_and_above_the_bound_is_fast_and_shows_every_line(
+    dimensions: int,
+) -> None:
+    """125 dimensions of 4 lines on each side are 500 x 500 lines, the bound itself (250,000
+    cells); 150 and 400 dimensions are above it (the middle is one removed block beside one added
+    block)."""
+    import time
+
+    before, after = _dimensions(dimensions, "x"), _dimensions(dimensions, "y")
+    started = time.perf_counter()
+    rows = difference.build_diff(before, after)
+    counted = difference.count_changes(before, after)
+    assert time.perf_counter() - started < 5  # about 0.25 s here; the limit is generous for CI
+    left = [r.left for r in rows if r.left_no is not None]
+    right = [r.right for r in rows if r.right_no is not None]
+    # Every line of both sides is on the page (only long unchanged runs are collapsed).
+    unchanged = sum(r.skipped for r in rows)
+    assert len(left) + unchanged == len(before.splitlines())
+    assert len(right) + unchanged == len(after.splitlines())
+    changed_left = [r.left for r in rows if r.kind in ("changed", "removed")]
+    assert [x for x in before.splitlines() if "name: x" in x] == [
+        x for x in changed_left if "name: x" in x
+    ]
+    assert counted == difference.count_rows(rows)
+
+
+def test_a_middle_above_the_bound_is_one_block_and_the_common_ends_are_cut_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(difference, "MAX_MATCH_CELLS", 4)
+    before = "top\na\nb\nc\nd\ne\nbottom\n"
+    after = "top\nA\nB\nC\nD\nE\nbottom\n"
+    rows = difference.build_diff(before, after)
+    assert [r.kind for r in rows if r.kind != "same"] == ["changed"] * 5
+    assert rows[0].left == "top" and rows[-1].left == "bottom"
+    # One side longer: the extra lines are removed or added rows.
+    rows = difference.build_diff("top\na\nb\nc\nd\nbottom\n", "top\nA\nbottom\n")
+    assert [r.kind for r in rows if r.kind != "same"] == [
+        "changed",
+        "removed",
+        "removed",
+        "removed",
+    ]
+    assert difference.count_changes("top\na\nb\nc\nd\nbottom\n", "top\nA\nbottom\n") == (1, 4)
+
+
+def test_a_changed_line_is_cut_into_the_parts_that_differ() -> None:
+    rows = difference.build_diff("level: mass\n", "level: mаss\n")
+    (row,) = [r for r in rows if r.kind == "changed"]
+    assert row.left_parts == (("level: m", False), ("a", True), ("ss", False))
+    assert row.right_parts == (("level: m", False), ("а", True), ("ss", False))
+
+
+# --- characters that do not show --------------------------------------------------------------
+
+
+def test_visible_marks_default_ignorable_characters_and_spaces_that_are_not_a_plain_space() -> None:
+    for code in (0x115F, 0x1160, 0x3164, 0xFFA0, 0xFE0F, 0xFE00, 0xE0100, 0xE01EF, 0x034F, 0x2800):
+        assert visible(f"a{chr(code)}b") == f"a<U+{code:04X}>b", hex(code)
+    assert visible("a b　c d") == "a<U+00A0>b<U+3000>c<U+2003>d"
+    assert visible("a b\tc") == "a b\tc"  # a plain space and a tab are what they look like
+
+
+def test_codepoints_names_a_non_ascii_character_and_leaves_ascii_alone() -> None:
+    assert codepoints("mass") == "mass"
+    assert codepoints("mаss") == "mа<U+0430>ss"
+
+
+def test_the_audit_time_is_shown_in_utc_whatever_zone_the_session_used() -> None:
+    from datetime import UTC, datetime, timedelta, timezone
+
+    from makna.web.review import _utc
+
+    jakarta = datetime(2026, 11, 21, 19, 47, 51, tzinfo=timezone(timedelta(hours=7)))
+    assert _utc(jakarta) == "2026-11-21 12:47:51"
+    assert _utc(datetime(2026, 11, 21, 12, 47, 51, tzinfo=UTC)) == "2026-11-21 12:47:51"
+    assert _utc(datetime(2026, 11, 21, 12, 47, 51)) == "2026-11-21 12:47:51"
+
+
+# --- the measures of an entity that start or stop using a rule --------------------------------
+
+
+def test_a_measure_that_stops_using_a_rule_is_listed_with_the_metrics_built_on_it() -> None:
+    official = entity()
+    proposal = edited(lambda d: d["measures"][0].pop("rules"))  # `people` drops the rule `adult`
+    direct = parsed_metric("direct")  # measure person.people
+    ratio = parsed_metric(
+        "ratio", type="ratio", numerator="direct", denominator="plain", measure=None
+    )
+    plain = parsed_metric("plain", measure="person.all_people")
+    officials: dict[str, AnyDefinition] = {
+        "entity:person": official,
+        "metric:direct": direct,
+        "metric:ratio": ratio,
+        "metric:plain": plain,
+    }
+    changes, total = reviewing.measure_rule_changes(officials, official, proposal)
+    assert total == 1
+    (change,) = changes
+    assert (change.measure, change.before, change.after) == ("person.people", ("adult",), ())
+    assert change.metrics == ("direct", "ratio") and change.metrics_total == 2
+    # A measure that gains one is listed the same way, and an unchanged proposal has none.
+    gains = edited(lambda d: d["measures"][1].update(rules=["active"]))
+    (gain,) = reviewing.measure_rule_changes(officials, official, gains)[0]
+    assert (gain.before, gain.after, gain.metrics) == ((), ("active",), ("plain", "ratio"))
+    assert reviewing.measure_rule_changes(officials, official, entity()) == ((), 0)
+
+
+def test_the_owner_team_mark_ignores_case_as_the_lifecycle_does() -> None:
+    official = entity()
+    assert "owner" not in kinds(official, edited(lambda d: d.update(owner={"team": "Credit-Risk"})))
+    assert "owner" in kinds(official, edited(lambda d: d.update(owner={"team": "sales"})))
