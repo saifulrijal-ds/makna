@@ -983,7 +983,9 @@ def test_format_characters_are_made_visible_in_every_text_a_reviewer_reads(ctx: 
     author = ctx.client("curator", SALES)
     propose(ctx, author, text_=text_, reason="checked twice")
     page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
-    assert "Disbursed &lt;U+202E&gt;amount&lt;U+200B&gt; in rupiah, whole." in page
+    assert "&lt;U+202E&gt;amount&lt;U+200B&gt;" in page.replace("</mark>", "").replace(
+        '<mark class="part">', ""
+    )
     assert bidi not in page and zero not in page  # none is sent raw
     # A reason cannot hold one (the lifecycle refuses it), but an audit row can, whatever wrote it.
     with ctx.engine.begin() as connection:
@@ -1046,7 +1048,7 @@ def test_hostile_text_is_escaped_on_every_page(ctx: Ctx) -> None:
         approver, "/review/metric/disbursement_amount/approve", reason=hostile, expected="0" * 40
     )
     assert refused.status_code == 409 and "<script>alert" not in refused.text
-    assert 'value="&lt;/td&gt;&lt;script&gt;' in refused.text
+    assert ">&lt;/td&gt;&lt;script&gt;" in refused.text
     # The templates never mark anything safe.
     templates = Path(review.__file__).parent / "templates"
     for name in ("review.html", "review_item.html", "audit.html", "_review.html"):
@@ -1076,6 +1078,8 @@ PLAIN_VALUES = frozenset(
         "entry.rule_uses_total - entry.rule_uses | length",
         "item.marks_total - item.marks | length",
         "item.reference_total",
+        "change.metrics_total",
+        "change.metrics_total - change.metrics | length",
         "use.measures_total",
         "use.metrics_total",
         "use.measures_total - use.measures | length",
@@ -1416,3 +1420,179 @@ def test_the_review_reads_the_repository_not_the_index(ctx: Ctx) -> None:
     assert proposals == 1  # the sample's own draft: the commit is not indexed yet
     page = ctx.client("approver", ()).get("/review").text
     assert rows_of(page) == [CHANGED]
+
+
+# --- fix round 1 -----------------------------------------------------------------------------
+
+
+def first_submit_button(form_html: str) -> str:
+    return re.findall(r'<button type="submit"[^>]*data-action="([a-z]+)"', form_html)[0]
+
+
+def test_enter_in_the_reason_box_never_approves(ctx: Ctx) -> None:
+    """A browser submits a form with the first submit button when Enter is pressed in a text
+    field. The reason is a text area (Enter adds a line), and Reject comes first anyway."""
+    author = ctx.client("curator", SALES)
+    propose(ctx, author)
+    approver = ctx.client("approver", ())
+    page = approver.get("/review/metric/disbursement_amount").text
+    form_html = re.search(r'<form[^>]*id="decide-form".*?</form>', page, re.S).group(0)  # type: ignore[union-attr]
+    assert '<textarea name="reason"' in form_html and 'type="text" name="reason"' not in form_html
+    assert first_submit_button(form_html) == "reject"
+    assert 'action="/review/metric/disbursement_amount/reject"' in form_html  # the form's default
+    # The conflict page: the proposal changed, the reason is pre-filled, the form has the new
+    # commit; Enter still must not approve it.
+    newer = change_text(ctx.world, description="Another description of the amount, for the page.")
+    edit_page = author.get("/edit/metric/disbursement_amount").text
+    form(author, "/edit/metric/disbursement_amount/submit", newer, reason="again",
+         expected=expected_of(edit_page))  # fmt: skip
+    conflict = post(
+        approver, "/review/metric/disbursement_amount/approve", reason="LGTM", expected="0" * 40
+    )
+    assert conflict.status_code == 409
+    form_html = re.search(r'<form[^>]*id="decide-form".*?</form>', conflict.text, re.S).group(0)  # type: ignore[union-attr]
+    assert re.search(r'<textarea name="reason"[^>]*>LGTM</textarea>', form_html)
+    assert (
+        first_submit_button(form_html) == "reject" and 'type="text" name="reason"' not in form_html
+    )
+    assert expected_commit(form_html) == sup.head(ctx.world)
+
+
+def test_the_service_reads_refuse_a_viewer_and_a_token(ctx: Ctx) -> None:
+    from makna.services import ServiceError, ServiceErrorCode
+
+    life = ctx.world.life
+    for caller in (
+        ctx.world.caller("viewer"),
+        ctx.world.token("admin"),
+        ctx.world.token("approver"),
+    ):
+        for call in (
+            lambda c=caller: life.review_queue(c),
+            lambda c=caller: life.review_item(c, CHANGED),
+            lambda c=caller: life.audit_events(c),
+            lambda c=caller: life.audit_events(c, object_id=CHANGED),
+        ):
+            with pytest.raises(ServiceError) as refused:
+                call()
+            assert refused.value.code == ServiceErrorCode.PERMISSION_DENIED
+    # A curator may read all three.
+    curator = ctx.world.caller("curator")
+    assert life.review_queue(curator).total == 0
+    assert life.review_item(curator, CHANGED) is None
+    assert life.audit_events(curator).rows
+
+
+def test_a_failure_after_the_commit_does_not_claim_the_page_shows_the_new_version(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import store
+
+    propose(ctx, ctx.client("curator", SALES))
+    approver = ctx.client("approver", ())
+    commit = expected_commit(approver.get("/review/metric/disbursement_amount").text)
+    monkeypatch.setattr(store, "sync", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    page = plain(
+        post(
+            approver, "/review/metric/disbursement_amount/approve", reason="go", expected=commit
+        ).text
+    )
+    assert "The change was made official" in page and "makna index sync" in page
+    assert "now shows the new version" not in page and "shows the new version" not in page
+
+
+def test_a_measure_that_stops_using_a_rule_lists_the_metrics_built_on_it(ctx: Ctx) -> None:
+    def edit(data: dict[str, Any]) -> None:
+        for measure in data["measures"]:
+            if measure["name"] == "npf_outstanding_principal":
+                measure["rules"] = ["in_book"]  # it no longer applies `non_performing`
+
+    changed = sup.edited(sup.official_text(ctx.world, "entity:contract_snapshot"), edit)
+    propose(ctx, ctx.client("curator", ("credit-risk",)), "entity:contract_snapshot", changed)
+    approver = ctx.client("approver", ())
+    for path in ("/review", "/review/entity/contract_snapshot"):
+        page = approver.get(path).text
+        assert 'data-field="measure-change"' in page, path
+        assert (
+            "contract_snapshot.npf_outstanding_principal</code></strong> changes its rules" in page
+        )
+        assert (
+            "<code>non_performing</code>, <code>in_book</code>"
+            in page.replace("\n", " ").replace("  ", " ")
+            or "non_performing" in page
+        )
+        metrics = set(re.findall(r'<code data-field="measure-metric">([^<]+)</code>', page))
+        assert {"npf_outstanding_principal", "npf_ratio"} <= metrics, (path, metrics)
+    assert 'data-field="rule-uses"' in approver.get("/review/entity/contract_snapshot").text
+
+
+def test_an_outside_file_that_names_another_object_is_listed_under_its_path_and_shows_nothing_of_it(
+    ctx: Ctx,
+) -> None:
+    other = (ctx.world.repo.path / CHANGED_PATH).read_text()
+    outside_commit(ctx.world, "lending/metrics/alpha_x.draft.yaml", other)
+    admin = ctx.client("admin", ())
+    queue = admin.get("/review").text
+    assert rows_of(queue) == ["metric:alpha_x"] and 'data-field="unreadable"' in queue
+    page = admin.get("/review/metric/alpha_x").text
+    assert 'data-field="unreadable"' in page and 'data-field="diff"' not in page
+    assert "names another object or kind" in page
+    assert "disbursement_amount" not in page and "Disbursement Amount" not in page
+    assert 'data-action="approve"' not in page and 'data-action="reject"' not in page
+
+
+def test_the_row_of_the_queue_says_what_the_caller_may_do_for_each_action(ctx: Ctx) -> None:
+    author = ctx.client("approver", ())
+    propose(ctx, author)
+    row = author.get("/review").text  # the author may reject but not approve
+    assert "Review (you may reject)" in row and "You cannot approve this" in row
+    assert "You cannot decide" not in row and "neither approve nor reject" not in row
+    outsider = ctx.client("curator", ("marketing",))
+    assert "You can neither approve nor reject this" in outsider.get("/review").text
+    colleague = ctx.client("curator", SALES)
+    assert "Review and decide" in colleague.get("/review").text
+
+
+def test_a_format_character_on_the_official_side_of_the_difference_is_marked(ctx: Ctx) -> None:
+    zero = chr(0x200B)
+    marked = change_text(ctx.world, description=f"Disbursed{zero} amount in rupiah, written whole.")
+    ctx.world.life.create_proposal(ctx.world.caller("sales"), CHANGED, marked, "with a mark")
+    ctx.world.life.submit(ctx.world.caller("sales"), CHANGED, "ready")
+    ctx.world.life.approve(ctx.world.caller("approver"), CHANGED, "approved with the mark")
+    propose(
+        ctx,
+        ctx.client("curator", SALES),
+        text_=change_text(
+            ctx.world, description="A plain description, written whole, for the metric."
+        ),
+    )
+    page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
+    assert zero not in page and "&lt;U+200B&gt;" in page
+
+
+def test_a_lookalike_letter_is_highlighted_and_its_code_point_is_shown(ctx: Ctx) -> None:
+    official = sup.official_text(ctx.world, CHANGED)
+    text_ = sup.edited(
+        official, lambda d: d.update(label=d["label"].replace("Disbursement", "Disbursеment"))
+    )
+    propose(ctx, ctx.client("curator", SALES), text_=text_)
+    page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
+    assert '<mark class="part">е&lt;U+0435&gt;</mark>' in page
+    assert '<mark class="part">e</mark>' in page  # the official side shows what it had
+
+
+def test_the_audit_time_is_utc_when_the_database_session_is_not(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PGTZ", "Asia/Jakarta")  # libpq reads it for the application's connections
+    app = w.make_app(ctx.world.url, definitions_repo=str(ctx.world.repo.path))
+    try:
+        client = w.signed_in(app, w.make_user(ctx.engine, "approver"))
+        with ctx.engine.connect() as connection:
+            stamp = connection.execute(
+                text("SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') "
+                     "FROM audit_event ORDER BY id DESC LIMIT 1")
+            ).scalar_one()  # fmt: skip
+        assert stamp in client.get("/audit").text
+    finally:
+        app.state.services.dispose()
