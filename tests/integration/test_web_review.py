@@ -458,7 +458,7 @@ def test_a_missing_or_too_long_reason_is_refused_with_the_form_kept(ctx: Ctx) ->
     response = decide(approver, "metric", "disbursement_amount", "reject", reason=long)
     assert response.status_code == 400 and "at most 500 characters" in response.text
     assert f">{long[: lifecycle.MAX_REASON_LENGTH]}</textarea>" in response.text  # kept, cut to fit
-    response = decide(approver, "metric", "disbursement_amount", "approve", reason="a\nb")
+    response = decide(approver, "metric", "disbursement_amount", "approve", reason="a\x07b")
     assert response.status_code == 400
     assert sup.head(ctx.world) == head
 
