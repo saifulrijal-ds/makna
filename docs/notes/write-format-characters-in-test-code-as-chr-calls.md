@@ -1,4 +1,4 @@
-# Write bidirectional and zero-width characters in test code as `chr(0x202E)`, never as an escape or a raw character
+Write bidirectional and zero-width characters in test code as `chr(0x202E)`, never as an escape or a raw character
 
 A `"‮"` written through a tool or formatter can land in the file as the raw character, which a reader cannot see and a code review cannot trust (the "trojan source" problem). In WP-19B the first draft of `tests/integration/test_web_review.py` held two raw format characters this way. Build them with `chr(0x202E)` and `chr(0x200B)` instead, and check a new test file with `grep -c $'‮' <file>` (or a scan for category `Cf`) before committing.
 
