@@ -13,7 +13,7 @@ import html
 import logging
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -1432,7 +1432,7 @@ def test_the_review_reads_the_repository_not_the_index(ctx: Ctx) -> None:
 
 
 def first_submit_button(form_html: str) -> str:
-    return re.findall(r'<button type="submit"[^>]*data-action="([a-z]+)"', form_html)[0]
+    return str(re.findall(r'<button type="submit"[^>]*data-action="([a-z]+)"', form_html)[0])
 
 
 def test_enter_in_the_reason_box_never_approves(ctx: Ctx) -> None:
@@ -1473,12 +1473,13 @@ def test_the_service_reads_refuse_a_viewer_and_a_token(ctx: Ctx) -> None:
         ctx.world.token("admin"),
         ctx.world.token("approver"),
     ):
-        for call in (
+        calls: list[Callable[[], Any]] = [
             lambda c=caller: life.review_queue(c),
             lambda c=caller: life.review_item(c, CHANGED),
             lambda c=caller: life.audit_events(c),
             lambda c=caller: life.audit_events(c, object_id=CHANGED),
-        ):
+        ]
+        for call in calls:
             with pytest.raises(ServiceError) as refused:
                 call()
             assert refused.value.code == ServiceErrorCode.PERMISSION_DENIED
