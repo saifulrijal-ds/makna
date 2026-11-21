@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "_review.html" import outside_box, governance_mark, rule_uses_list, errors_list, authors_line %}
+{% block title %}Review{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/review.css">
+<h1>Review queue</h1>
+
+{% if notice %}
+<p role="status" data-field="notice"><ins>{{ notice }}</ins>
+  {% if decided_page %}<a href="{{ decided_page }}" data-field="decided-link">Open the {{ decided_kind }} <code>{{ decided_name | visible }}</code></a>{% endif %}</p>
+{% endif %}
+
+{% if problem %}
+<article role="alert" data-field="problem" data-code="{{ problem.code }}">
+  <header>{{ problem.headline }} <small><code>{{ problem.code }}</code></small></header>
+  {% if problem.message %}<p>{{ problem.message }}</p>{% endif %}
+  {% if read_only %}<p>Writes are off, so there is no review queue: every proposal here is a file of a plain directory, not a commit.</p>{% endif %}
+</article>
+{% elif queue %}
+<p data-field="count">{{ queue.total }} proposal{{ "" if queue.total == 1 else "s" }} in review{% if queue.total > rows | length %}; the first {{ rows | length }} are listed{% endif %}.
+  Each row shows a summary of the difference; the page of the proposal shows all of it, and the buttons.</p>
+{% if not rows %}
+<p data-field="empty">Nothing is waiting for review.</p>
+{% else %}
+<table class="queue" data-field="queue">
+  <thead>
+    <tr><th>Object</th><th>Who and why</th><th>Changes and checks</th><th>You</th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    {% set e = row.e %}
+    <tr data-object="{{ e.object_id | visible }}">
+      <td>
+        <a href="{{ row.href }}" data-field="open">{{ row.kind_label }} <code>{{ e.name | visible }}</code></a><br>
+        <small>in review{% if e.is_new %}, a new object{% elif e.version is not none %}, changes version {{ e.version }}{% endif %}</small>
+        {% if e.unreadable %}<br><mark data-field="unreadable">cannot be read</mark>{% endif %}
+        {% if e.outside %}<br><mark data-field="outside-mark">changed outside Makna</mark>{% endif %}
+      </td>
+      <td>
+        {% if e.outside %}
+        {{ outside_box(e.outside) }}
+        {% else %}
+        <p data-field="submitted">{% if e.submitted_by %}Submitted by <code>{{ e.submitted_by | visible }}</code>{% else %}Submitted{% endif %}{% if e.reason %}: <span data-field="reason">{{ e.reason | visible }}</span>{% endif %}</p>
+        {% endif %}
+        {{ authors_line(e) }}
+      </td>
+      <td>
+        {% if e.unreadable %}
+        <p>No difference: the proposal cannot be read as a definition.</p>
+        {% else %}
+        <p data-field="summary">{% if e.lines_added is none %}Not compared (too long){% else %}+{{ e.lines_added }} &minus;{{ e.lines_removed }} lines{% endif %}
+          <small><a href="{{ row.href }}">full difference</a></small></p>
+        {% endif %}
+        {{ errors_list(e) }}
+        {{ governance_mark(e) }}
+        {{ rule_uses_list(e) }}
+      </td>
+      <td data-field="decision">
+        {% if e.decision.allowed %}
+        <a href="{{ row.href }}" role="button" class="secondary">Review and decide</a>
+        {% else %}
+        <small data-field="cannot">You cannot decide this: {{ e.decision.message | visible }}</small>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+{% endblock %}

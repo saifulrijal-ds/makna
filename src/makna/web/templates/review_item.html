@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% from "_review.html" import outside_box, governance_mark, rule_uses_list, errors_list, authors_line, diff_table %}
+{% block title %}{% if entry %}Review {{ entry.name | visible }}{% else %}Review{% endif %}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/editor.css">
+<link rel="stylesheet" href="/static/review.css">
+<p><a href="{{ back }}">Back to the review queue</a></p>
+
+{% if problem %}
+<article role="alert" data-field="problem" data-code="{{ problem.code }}">
+  <header>{{ problem.headline }} <small><code>{{ problem.code }}</code></small></header>
+  {% if problem.message %}<p>{{ problem.message }}</p>{% endif %}
+  {% if problem.issues %}
+  <table class="issues" data-field="issues">
+    <thead><tr><th>Rule</th><th>Line</th><th>Problem</th></tr></thead>
+    <tbody>
+      {% for issue in problem.issues %}
+      <tr data-rule="{{ issue.rule | visible }}"><td><code>{{ issue.rule | visible }}</code></td><td>{{ issue.line if issue.line is not none else "-" }}</td><td>{{ issue.message | visible }}{% if not issue.own %} <small>(in <code>{{ issue.file | visible }}</code>)</small>{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if not item %}<p>The proposal is no longer in review, so there is nothing more to show. If it was approved, the metric, entity or term now shows the new version.</p>{% endif %}
+</article>
+{% endif %}
+
+{% if item %}
+<h1>Review {{ kind_label }} <code>{{ entry.name | visible }}</code></h1>
+{% if notice %}<p role="status" data-field="notice"><ins>{{ notice }}</ins></p>{% endif %}
+<p data-field="object">
+  {% if object_page %}<a href="{{ object_page }}">Open the page of this {{ kind_label }}</a>{% endif %}
+  {% if edit_href %} &middot; <a href="{{ edit_href }}">Open it in the editor</a>{% endif %}
+</p>
+<p data-field="status"><strong>Status:</strong> in review
+  {% if entry.is_new %}(a new object, no official version yet){% elif entry.version is not none %}(a change to official version {{ entry.version }}){% endif %}</p>
+{% if entry.proposal_commit %}<p><small>Proposal commit <code data-field="commit">{{ entry.proposal_commit[:12] }}</code>. The decision is made on exactly this version of the proposal.</small></p>{% endif %}
+
+{{ outside_box(entry.outside) }}
+{% if not entry.outside %}
+<p data-field="submitted">{% if entry.submitted_by %}Submitted by <code>{{ entry.submitted_by | visible }}</code>{% else %}Submitted{% endif %}{% if entry.reason %} with the reason: <span data-field="reason">{{ entry.reason | visible }}</span>{% endif %}</p>
+{% endif %}
+{{ authors_line(entry) }}
+
+{% if entry.unreadable %}
+<article role="alert" data-field="unreadable">
+  <header>This proposal cannot be read here.</header>
+  <p>{{ item.reject_decision.message | visible }}</p>
+  {% if item.can_withdraw and edit_href %}<p>It can be withdrawn in the editor: <a href="{{ edit_href }}" data-field="withdraw-link">open the editor and use Withdraw proposal</a>.</p>
+  {% elif not item.can_withdraw %}<p>You may not withdraw it. An approver or an administrator can.</p>{% endif %}
+</article>
+{% else %}
+
+{{ governance_mark(entry) }}
+{% if item.marks %}
+<section data-field="marks">
+  <h2>Look at these</h2>
+  <p><small>Facts that the difference below may not make obvious.</small></p>
+  <ul>
+    {% for mark in item.marks %}<li data-mark="{{ mark.kind }}">{{ mark.text | visible }}</li>{% endfor %}
+  </ul>
+  {% if item.marks_total > item.marks | length %}<p><small>{{ item.marks_total - item.marks | length }} more are not listed.</small></p>{% endif %}
+</section>
+{% endif %}
+{{ rule_uses_list(entry) }}
+
+<section data-field="validation">
+  <h2>Checks that approval runs</h2>
+  {{ errors_list(entry) }}
+  {% if item.reference_issues %}
+  <p data-field="reference-issues"><mark>{{ item.reference_total }} open reference issue{{ "" if item.reference_total == 1 else "s" }}</mark> against the catalog as it is now:</p>
+  <ul>
+    {% for text in item.reference_issues %}<li><code>{{ text | visible }}</code></li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if item.approve_refusal %}
+  <p data-field="approve-refused" data-code="{{ item.approve_refusal.code }}"><mark>Approval would be refused now.</mark> {{ item.approve_refusal.message | visible }}</p>
+  {% if item.approve_refusal.issues %}
+  <ul>
+    {% for issue in item.approve_refusal.issues %}<li><code>{{ issue.rule | visible }}</code> <small>(<code>{{ issue.file | visible }}</code>{% if issue.line is not none %}, line {{ issue.line }}{% endif %})</small> {{ issue.message | visible }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% else %}
+  <p data-field="approve-ok"><ins>Approval would go ahead.</ins> No definition errors, no open reference issue, and the official definitions still pass the build checks with this change.</p>
+  {% endif %}
+</section>
+
+<section data-field="difference">
+  <h2>Difference</h2>
+  {% if too_long %}
+  <p data-field="too-long"><mark>{{ too_long_text }}</mark></p>
+  {% elif rows is none %}
+  <p>No difference to show.</p>
+  {% elif not rows %}
+  <p data-field="identical">The proposal is the same as the official version.</p>
+  {% else %}
+  <p><small>Left: the official version{% if entry.is_new %} (none: this is a new object, so all of the proposal is new){% endif %}. Right: the proposal. Both are shown in the form Makna stores, so what Makna sets itself (status, version) does not count as a change. Characters that do not show, such as a right-to-left mark, are written as <code>&lt;U+202E&gt;</code>.</small></p>
+  {{ diff_table(rows) }}
+  {% endif %}
+</section>
+
+<section data-field="decide">
+  <h2>Decide</h2>
+  {% if can_approve or can_reject %}
+  <form method="post" action="{{ base }}/reject" id="decide-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected" value="{{ entry.proposal_commit or '' }}">
+    <label for="reason">Reason (needed to approve or reject; at most {{ max_reason }} characters)</label>
+    <input type="text" name="reason" id="reason" maxlength="{{ max_reason }}" value="{{ reason | visible }}" autocomplete="off" required>
+    <div class="buttons">
+      {% if can_approve %}<button type="submit" formaction="{{ base }}/approve" data-action="approve">Approve</button>{% endif %}
+      {% if can_reject %}<button type="submit" formaction="{{ base }}/reject" class="secondary" data-action="reject">Reject</button>{% endif %}
+    </div>
+  </form>
+  {% endif %}
+  {% if not item.entry.decision.allowed %}
+  <p data-field="cannot-approve">You cannot approve this proposal: {{ entry.decision.message | visible }}</p>
+  {% elif item.approve_refusal %}
+  <p data-field="approve-not-offered">Approve is not offered, because approval would be refused (see above).</p>
+  {% elif too_long %}
+  <p data-field="approve-not-offered">Approve is not offered, because the difference cannot be shown here.</p>
+  {% endif %}
+  {% if not item.reject_decision.allowed %}
+  <p data-field="cannot-reject">You cannot reject this proposal: {{ item.reject_decision.message | visible }}</p>
+  {% endif %}
+  {% if item.can_withdraw and edit_href %}<p><small>Withdrawing the proposal is done in the <a href="{{ edit_href }}">editor</a>.</small></p>{% endif %}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

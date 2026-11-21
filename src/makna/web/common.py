@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -92,14 +93,36 @@ def status_of(error: ServiceError) -> int:
     return STATUS_OF.get(str(error.code), 400)
 
 
-async def run_in_thread[T](area: str, name: str, function: Callable[..., T], *args: Any) -> T:
+async def run_in_thread[T](
+    area: str, name: str, function: Callable[..., T], *args: Any, **kwargs: Any
+) -> T:
     """Run a service call in a worker thread. A `ServiceError` passes through; anything else (a
     database error, a repository error, a recursion error) becomes the fixed 500 page, and only
     the class of the exception is logged, never its text (it can hold a value of the request)."""
     try:
-        return await anyio.to_thread.run_sync(functools.partial(function, *args))
+        return await anyio.to_thread.run_sync(functools.partial(function, *args, **kwargs))
     except ServiceError:
         raise
     except Exception as error:
         logger.error("web: %s %s failed: error=%s", area, name, type(error).__name__)
         raise HTTPException(status_code=500) from None
+
+
+def visible(value: object) -> str:
+    """`value` as text with every character that does not show made visible, as `<U+202E>`: the
+    format characters (bidirectional controls, zero-width characters, the soft hyphen, tags), the
+    control characters except a tab, the line and paragraph separators, and the characters that
+    are not text at all (a lone surrogate, a private-use character). Text of a definition, a
+    reason, a commit or an actor can hold them, and a reviewer must not be shown what is not
+    there, or not be shown what is. The template engine escapes the result, so the mark is plain
+    text. It is the filter `visible` of the page templates."""
+    text = value if isinstance(value, str) else str(value)
+    return "".join(
+        f"<U+{ord(char):04X}>"
+        if unicodedata.category(char) in _NOT_SHOWN and char != "\t"
+        else char
+        for char in text
+    )
+
+
+_NOT_SHOWN = frozenset({"Cf", "Cc", "Cs", "Co", "Zl", "Zp"})

@@ -1,0 +1,46 @@
+/* The review queue, the review page and the audit page of WP-19B. */
+table.queue td,
+table.audit td {
+  vertical-align: top;
+}
+
+table.queue ul,
+table.queue p {
+  margin-bottom: 0.5rem;
+}
+
+table.audit {
+  font-size: 0.875rem;
+}
+
+table.audit td[data-field="reason"] {
+  overflow-wrap: anywhere;
+  max-width: 24rem;
+}
+
+aside.outside {
+  border-left: 0.25rem solid var(--pico-del-color, #c0392b);
+  padding-left: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+aside.outside p,
+aside.outside ul {
+  margin-bottom: 0.25rem;
+}
+
+#decide-form .buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#decide-form .buttons button {
+  width: auto;
+}
+
+[data-field="subject"],
+[data-field="reason"],
+[data-field="outside-subject"] {
+  overflow-wrap: anywhere;
+}
