@@ -13,7 +13,7 @@
 {% if problem %}
 <article role="alert" data-field="problem" data-code="{{ problem.code }}">
   <header>{{ problem.headline }} <small><code>{{ problem.code }}</code></small></header>
-  {% if problem.message %}<p>{{ problem.message }}</p>{% endif %}
+  {% if problem.message %}<p>{{ problem.message | visible }}</p>{% endif %}
   {% if read_only %}<p>Writes are off, so there is no review queue: every proposal here is a file of a plain directory, not a commit.</p>{% endif %}
 </article>
 {% elif queue %}

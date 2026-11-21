@@ -9,7 +9,7 @@
 {% if problem %}
 <article role="alert" data-field="problem" data-code="{{ problem.code }}">
   <header>{{ problem.headline }} <small><code>{{ problem.code }}</code></small></header>
-  {% if problem.message %}<p>{{ problem.message }}</p>{% endif %}
+  {% if problem.message %}<p>{{ problem.message | visible }}</p>{% endif %}
   {% if problem.issues %}
   <table class="issues" data-field="issues">
     <thead><tr><th>Rule</th><th>Line</th><th>Problem</th></tr></thead>

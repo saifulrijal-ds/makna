@@ -20,7 +20,7 @@
 {% if problem %}
 <article role="alert" data-field="problem" data-code="{{ problem.code }}">
   <header>{{ problem.headline }}</header>
-  {% if problem.message %}<p>{{ problem.message }}</p>{% endif %}
+  {% if problem.message %}<p>{{ problem.message | visible }}</p>{% endif %}
 </article>
 {% else %}
 {% if not rows %}

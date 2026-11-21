@@ -331,10 +331,12 @@ async def reject(
 # --- the audit page --------------------------------------------------------------------------
 
 
-def _audit_link(object_id: str, action: str, before: int | None) -> str:
+def _audit_link(object_id: str, action: str, before: int | None, size: int | None = None) -> str:
     fields = {k: v for k, v in (("object", object_id), ("action", action)) if v}
     if before is not None:
         fields["before"] = str(before)
+    if size is not None and size != DEFAULT_AUDIT_PAGE:
+        fields["size"] = str(size)
     return "/audit" + (f"?{urlencode(fields)}" if fields else "")
 
 
@@ -414,6 +416,7 @@ async def audit(
                 keep["object"] if problem is None else "",
                 keep["action"] if chosen in SHOWN_ACTIONS else "",
                 page.older if page is not None else None,
+                limit,
             )
             if page is not None and page.older is not None
             else None,

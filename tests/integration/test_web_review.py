@@ -10,6 +10,7 @@ governance mark (D-17, D-20), format characters, escaping, bounds, and the audit
 from __future__ import annotations
 
 import html
+import logging
 import re
 import uuid
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ from sqlalchemy.engine import URL
 from makna.definitions.render import MAX_YAML_BYTES
 from makna.index.tables import audit_event
 from makna.services import accounts, lifecycle, reviewing
+from makna.web import review
 
 from . import lifecycle_support as sup
 from . import web_support as w
@@ -88,7 +90,10 @@ def propose(
     commit (what the review page sends back as `expected`)."""
     kind, _, name = object_id.partition(":")
     body = text_ if text_ is not None else change_text(ctx.world, object_id)
-    done = form(client, f"/edit/{kind}/{name}/submit", body, reason=reason, expected="none")
+    if sup.has_object(ctx.world, object_id):
+        done = form(client, f"/edit/{kind}/{name}/submit", body, reason=reason, expected="none")
+    else:  # a new object: its name is the text's own
+        done = form(client, f"/new/{kind}/submit", body, reason=reason)
     assert done.status_code == 303, done.text
     return sup.head(ctx.world)
 
@@ -682,7 +687,8 @@ def test_the_audit_page_is_bounded_and_older_rows_are_a_keyset_link(ctx: Ctx) ->
         found = re.search(r'href="([^"]+)" data-field="older"', page)
         if not found:
             break
-        path = html.unescape(found.group(1)) + "&size=2"
+        path = html.unescape(found.group(1))
+        assert "size=2" in path
     assert seen == everything
     # The page size is bounded (100 at most, whatever is asked).
     assert len(audit_ids(approver.get("/audit?size=100000").text)) <= reviewing.MAX_AUDIT_PAGE
@@ -727,3 +733,664 @@ def test_a_failed_attempt_and_an_open_intent_are_marked_and_an_outside_actor_is_
         f"<mark>external:{OUTSIDE_EMAIL}</mark> <small>(named by a commit, not verified)"
         in plain(page)
     )
+
+
+# --- criterion 5: the users of a rule (D-17) -------------------------------------------------
+
+
+def contract_with_rule_change(world: World) -> str:
+    """The `contract` entity with its rule `restructured` changed and a measure that uses it."""
+
+    def edit(data: dict[str, Any]) -> None:
+        for rule in data["rules"]:
+            if rule["name"] == "restructured":
+                rule["expr"] = "is_restructured = TRUE"
+        for measure in data["measures"]:
+            if measure["name"] == "disbursed_contracts":
+                measure["rules"] = ["restructured"]
+
+    return sup.edited(sup.official_text(world, "entity:contract"), edit)
+
+
+def listed(page: str, field: str) -> set[str]:
+    return set(re.findall(rf'<code data-field="{field}">([^<]+)</code>', page))
+
+
+def test_a_proposal_that_changes_a_rule_lists_every_measure_and_metric_that_uses_it(
+    ctx: Ctx,
+) -> None:
+    author = ctx.client("curator", ("credit-risk",))
+    propose(ctx, author, "entity:contract", contract_with_rule_change(ctx.world), "Rule edit")
+    approver = ctx.client("approver", ())
+    for path in ("/review", "/review/entity/contract"):
+        page = approver.get(path).text
+        assert 'data-field="rule-uses"' in page, path
+        assert "<code>contract.restructured</code></strong> is changed" in page
+        # A measure of the entity that uses it (in the proposal), and the metrics that use it
+        # through a filter (`restructured_outstanding_principal`), through that filter's metric
+        # (`restructured_ratio`, built on it), and through the measure (`disbursed_contract_count`).
+        assert listed(page, "rule-measure") == {"contract.disbursed_contracts"}, path
+        assert listed(page, "rule-metric") == {
+            "restructured_outstanding_principal",
+            "restructured_ratio",
+            "disbursed_contract_count",
+            "average_ticket_size",  # a ratio built on `disbursed_contract_count`
+        }, path
+    # A rule the proposal does not touch is not listed.
+    assert "contract_snapshot.in_book" not in approver.get("/review/entity/contract").text
+
+
+def test_a_rule_used_by_measures_lists_them_and_the_metrics_built_on_them(ctx: Ctx) -> None:
+    def edit(data: dict[str, Any]) -> None:
+        for rule in data["rules"]:
+            if rule["name"] == "in_book":
+                rule["expr"] = "COALESCE(days_past_due, 0) <= 200"
+
+    changed = sup.edited(sup.official_text(ctx.world, "entity:contract_snapshot"), edit)
+    propose(ctx, ctx.client("curator", ("credit-risk",)), "entity:contract_snapshot", changed)
+    page = ctx.client("approver", ()).get("/review/entity/contract_snapshot").text
+    assert listed(page, "rule-measure") == {
+        "contract_snapshot.outstanding_principal",
+        "contract_snapshot.npf_outstanding_principal",
+        "contract_snapshot.par30_outstanding_principal",
+        "contract_snapshot.active_contracts",
+    }
+    # The metrics are those the index says use the rule, through measures, filters and inputs.
+    from makna.services import objects
+
+    with ctx.engine.connect() as connection:
+        edges = objects.edges(connection, ("input_of", "uses_rule"))
+        official = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT name FROM semantic_object WHERE kind='metric' AND official IS NOT NULL"
+                )
+            )
+        }
+    expected = {
+        name
+        for name in official
+        if "rule:contract_snapshot.in_book" in objects.rules_of_metric(edges, f"metric:{name}")
+    }
+    assert len(expected) >= 6 and listed(page, "rule-metric") == expected
+
+
+def test_a_removed_rule_is_listed_with_the_use_it_loses(ctx: Ctx) -> None:
+    def edit(data: dict[str, Any]) -> None:
+        data["rules"] = [r for r in data["rules"] if r["name"] != "restructured"]
+
+    # The proposal fails Check (a metric still names the rule), but it can be saved as a draft;
+    # the review page of a submitted one needs no errors, so read the service directly.
+    text_ = sup.edited(sup.official_text(ctx.world, "entity:contract"), edit)
+    caller = ctx.world.caller("curator")
+    ctx.world.life.create_proposal(caller, "entity:contract", text_, "drop the rule")
+    state = ctx.world.life._read_for_editor(ctx.world.life._repo())
+    item = state.objects["entity:contract"]
+    assert item.proposal is not None and item.official is not None
+    uses, total = reviewing.rule_uses(
+        {k: o.official for k, o in state.objects.items() if o.official is not None},
+        item.official,
+        item.proposal,
+    )
+    assert total == 1 and uses[0].change == "removed" and uses[0].rule == "contract.restructured"
+    assert "restructured_outstanding_principal" in uses[0].metrics
+
+
+def test_the_users_of_a_rule_are_bounded_and_counted(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(reviewing, "MAX_RULE_USERS", 2)
+    propose(
+        ctx,
+        ctx.client("curator", ("credit-risk",)),
+        "entity:contract",
+        contract_with_rule_change(ctx.world),
+    )
+    page = ctx.client("approver", ()).get("/review/entity/contract").text
+    assert len(listed(page, "rule-metric")) == 2 and "Metrics that use it (4)" in page
+    assert "and 2 more" in page
+
+
+# --- criterion 5: the governance team (D-20) -------------------------------------------------
+
+
+def unmask_birth_year(data: dict[str, Any]) -> None:
+    for dimension in data["dimensions"]:
+        if dimension["name"] == "birth_year":
+            dimension.pop("masking")
+
+
+def test_a_loosening_is_marked_and_only_the_governance_team_may_approve_it(ctx: Ctx) -> None:
+    text_ = sup.edited(sup.official_text(ctx.world, CUSTOMER), unmask_birth_year)
+    author = ctx.client("curator", ("data-governance",))
+    propose(ctx, author, CUSTOMER, text_, "Show the full date")
+    approver = ctx.client("approver", ())  # an approver, and not in the governance team
+    for path in ("/review", "/review/entity/customer"):
+        page = approver.get(path).text
+        assert "Needs the governance team (data-governance)" in page, path
+        assert 'data-field="loosenings"' in page and "removed or finer masking rule" in page, path
+    item = approver.get("/review/entity/customer").text
+    assert 'data-action="approve"' not in item and 'data-field="cannot-approve"' in item
+    assert "member of the governance team must approve it" in item
+    # Reject needs no governance team, so that button is there.
+    assert 'data-action="reject"' in item
+    head, audits = sup.head(ctx.world), len(sup.audit_rows(ctx.engine))
+    forged = decide(approver, "entity", "customer", "approve", expected=head)
+    assert forged.status_code == 403 and 'data-code="PERMISSION_DENIED"' in forged.text
+    assert "governance team" in forged.text
+    admin = ctx.client("admin", ())
+    assert decide(admin, "entity", "customer", "approve", expected=head).status_code == 403
+    assert 'data-action="approve"' not in admin.get("/review/entity/customer").text
+    assert (sup.head(ctx.world), len(sup.audit_rows(ctx.engine))) == (head, audits)
+    # A member of the governance team (an approver) may decide it.
+    governance = ctx.client("approver", ("data-governance",))
+    page = governance.get("/review/entity/customer").text
+    assert 'data-action="approve"' in page and "Needs the governance team" in page
+    assert decide(governance, "entity", "customer", "approve").status_code == 303
+
+
+def test_a_change_that_does_not_loosen_has_no_governance_mark(ctx: Ctx) -> None:
+    propose(ctx, ctx.client("curator", SALES))
+    page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
+    assert "governance team" not in page and 'data-field="loosenings"' not in page
+
+
+# --- what the difference shows beyond the YAML -----------------------------------------------
+
+
+def test_the_review_lists_removed_dimensions_changed_masking_siblings_and_the_owner(
+    ctx: Ctx,
+) -> None:
+    def edit(data: dict[str, Any]) -> None:
+        data["dimensions"] = [d for d in data["dimensions"] if d["name"] != "occupation_group"]
+        for dimension in data["dimensions"]:
+            if dimension["name"] == "birth_year":
+                dimension["masking"] = {"method": "truncate_date", "grain": "month"}
+            if dimension["name"] == "registered_date":
+                dimension["expr"] = "CAST(registered_at AS TIMESTAMP)"
+        data["dimensions"].append(
+            {
+                "name": "birth_month",
+                "type": "time",
+                "expr": "birth_date",
+                "description": "Month of birth, read from the same column as the year.",
+                "sensitivity": "personal",
+                "masking": {"method": "truncate_date", "grain": "month"},
+            }
+        )
+        data["relationships"].append(
+            {
+                "name": "registration_branch",
+                "to": "branch",
+                "keys": [{"from": "home_branch_id", "to": "branch_id"}],
+                "description": "The branch where the customer registered, read as a second role.",
+            }
+        )
+        data["owner"] = {"team": "credit-risk"}
+
+    text_ = sup.edited(sup.official_text(ctx.world, CUSTOMER), edit)
+    ctx.world.life.create_proposal(ctx.world.caller("curator2"), CUSTOMER, text_, "many changes")
+    # `curator2` is of credit-risk, so the entity of data-governance is another team's to change;
+    # an approver wrote it, and submits it.
+    ctx.world.life.submit(ctx.world.caller("approver"), CUSTOMER, "ready")
+    page = ctx.client("admin", ()).get("/review/entity/customer").text
+    marks = dict(re.findall(r'<li data-mark="([a-z_]+)">([^<]*)</li>', page))
+    assert marks["dimension_removed"] == "dimension occupation_group was removed"
+    assert (
+        "masking changed from truncate_date(year) to truncate_date(month)"
+        in marks["dimension_masking"]
+    )
+    assert (
+        "expr changed from CAST(registered_at AS DATE) to CAST(registered_at AS TIMESTAMP)"
+        in marks["dimension_expr"]
+    )
+    assert (
+        "birth_month reads the column birth_date, which the personal dimension"
+        in marks["same_column_as_personal"]
+    )
+    assert marks["relationship_added"] == "relationship registration_branch was added"
+    assert marks["owner"] == "owner team changes from data-governance to credit-risk"
+    assert 'data-field="owner-change"' in page
+
+
+# --- bidirectional and zero-width characters, and escaping -----------------------------------
+
+
+def test_format_characters_are_made_visible_in_every_text_a_reviewer_reads(ctx: Ctx) -> None:
+    bidi, zero = chr(0x202E), chr(0x200B)
+    # The description is the proposal's text; the reason, a commit's subject, and a name come too.
+    text_ = change_text(ctx.world, description=f"Disbursed {bidi}amount{zero} in rupiah, whole.")
+    author = ctx.client("curator", SALES)
+    propose(ctx, author, text_=text_, reason="checked twice")
+    page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
+    assert "Disbursed &lt;U+202E&gt;amount&lt;U+200B&gt; in rupiah, whole." in page
+    assert bidi not in page and zero not in page  # none is sent raw
+    # A reason cannot hold one (the lifecycle refuses it), but an audit row can, whatever wrote it.
+    with ctx.engine.begin() as connection:
+        connection.execute(
+            insert(audit_event).values(
+                actor_label=f"ev{bidi}il@example.com",
+                action="submit",
+                object_id=CHANGED,
+                reason=f"checked{bidi} twice{zero}",
+                commit_sha="f" * 40,
+                files={},
+            )
+        )
+    queue = ctx.client("approver", ()).get("/review").text
+    assert bidi not in queue
+    # An outside commit: its subject keeps the character (the committer wrote it), the name and
+    # the email of a commit author are cleaned of such characters when they are read.
+    outside_edit_of_official(
+        ctx.world,
+        object_path="lending/metrics/penalty_income.yaml",
+        message=f"fix{bidi} it{zero}",
+        name=f"Eve{bidi} <b>Outside</b>",
+    )
+    queue = ctx.client("approver", ()).get("/review").text
+    assert bidi not in queue and zero not in queue
+    assert "fix&lt;U+202E&gt; it&lt;U+200B&gt;" in queue
+    assert "Eve bOutside/b" in queue or "Eve" in queue
+    assert "<b>Outside</b>" not in queue
+    audit = ctx.client("approver", ()).get("/audit").text
+    assert bidi not in audit and zero not in audit
+    assert "checked&lt;U+202E&gt; twice&lt;U+200B&gt;" in audit
+    assert "ev&lt;U+202E&gt;il@example.com" in audit
+
+
+def test_hostile_text_is_escaped_on_every_page(ctx: Ctx) -> None:
+    hostile = '</td><script>alert("x")</script>\'"&'
+    author = ctx.client("curator", SALES)
+    text_ = change_text(ctx.world, description=f"Disbursed {hostile} amount in rupiah, whole.")
+    propose(ctx, author, text_=text_, reason=hostile)
+    outside_edit_of_official(
+        ctx.world,
+        object_path="lending/metrics/penalty_income.yaml",
+        message=hostile,
+        name="<script>alert(1)</script>",
+    )
+    ctx.world.life.sync()
+    approver = ctx.client("approver", ())
+    pages = [
+        approver.get("/review").text,
+        approver.get("/review/metric/disbursement_amount").text,
+        approver.get("/review/metric/penalty_income").text,
+        approver.get("/audit").text,
+        approver.get("/audit?object=metric:disbursement_amount").text,
+    ]
+    for page in pages:
+        assert "<script>alert" not in page and "</td><script>" not in page
+        assert "&lt;script&gt;alert" in page or "alert" not in page
+    # The reason of the form, kept after a refusal, is escaped too.
+    refused = post(
+        approver, "/review/metric/disbursement_amount/approve", reason=hostile, expected="0" * 40
+    )
+    assert refused.status_code == 409 and "<script>alert" not in refused.text
+    assert 'value="&lt;/td&gt;&lt;script&gt;' in refused.text
+    # The templates never mark anything safe.
+    templates = Path(review.__file__).parent / "templates"
+    for name in ("review.html", "review_item.html", "audit.html", "_review.html"):
+        source = (templates / name).read_text()
+        assert "|safe" not in source and "| safe" not in source and "Markup" not in source
+    assert "Markup" not in Path(review.__file__).read_text().replace("never `Markup`", "")
+    assert "HtmlDiff(" not in Path(review.__file__).read_text()
+
+
+# What a review template may print without the filter `visible`: numbers, plural endings, the
+# hex of a commit, fixed words of the code, and addresses the code built itself (autoescaped).
+PLAIN_VALUES = frozenset(
+    {
+        '"" if queue.total == 1 else "s"',
+        '"" if item.reference_total == 1 else "s"',
+        '"" if entry.error_count == 1 else "s"',
+        '"" if row.skipped == 1 else "s"',
+        "e.lines_added",
+        "e.lines_removed",
+        "e.version",
+        "entry.version",
+        "queue.total",
+        "rows | length",
+        "entry.error_count",
+        "entry.errors | length",
+        "entry.authors_total - entry.authors | length",
+        "entry.rule_uses_total - entry.rule_uses | length",
+        "item.marks_total - item.marks | length",
+        "item.reference_total",
+        "use.measures_total",
+        "use.metrics_total",
+        "use.measures_total - use.measures | length",
+        "use.metrics_total - use.metrics | length",
+        "issue.line",
+        'issue.line if issue.line is not none else "-"',
+        "row.skipped",
+        'row.left_no if row.left_no is not none else ""',
+        'row.right_no if row.right_no is not none else ""',
+        "r.id",
+        "row.when",
+        "entry.proposal_commit[:12]",
+        "outside.commit[:12]",
+        "entry.proposal_commit or ''",
+        "max_reason",
+        "csrf_token",
+        "mark.kind",
+        "use.change",
+        "row.kind",
+        "problem.code",
+        "item.approve_refusal.code",
+        "notice",
+        "too_long_text",
+        "kind_label",
+        "row.kind_label",
+        "decided_kind",
+        "decided_page",
+        "object_page",
+        "row.object_page",
+        "row.filter",
+        "row.href",
+        "edit_href",
+        "base",
+        "back",
+        "all_link",
+        "older",
+        "a",
+        "problem.headline",
+        # macros (they escape what they print)
+        "authors_line(e)",
+        "authors_line(entry)",
+        "errors_list(e)",
+        "errors_list(entry)",
+        "governance_mark(e)",
+        "governance_mark(entry)",
+        "outside_box(e.outside)",
+        "outside_box(entry.outside)",
+        "rule_uses_list(e)",
+        "rule_uses_list(entry)",
+        "diff_table(rows)",
+    }
+)
+
+
+def test_every_value_of_a_review_template_is_escaped_and_shown_through_visible() -> None:
+    """Each `{{ ... }}` of the review pages goes through the filter `visible` (so no format or
+    control character is sent raw) or is one of the values of `PLAIN_VALUES`: numbers, fixed
+    words and addresses the code built. A new value must be added there on purpose."""
+    templates = Path(review.__file__).parent / "templates"
+    for name in ("review.html", "review_item.html", "audit.html", "_review.html"):
+        for expression in re.findall(r"\{\{\s*(.*?)\s*\}\}", (templates / name).read_text()):
+            assert "| visible" in expression or expression in PLAIN_VALUES, (name, expression)
+
+
+# --- what approval would refuse --------------------------------------------------------------
+
+
+def test_an_open_reference_issue_is_shown_and_approve_is_not_offered(ctx: Ctx) -> None:
+    def edit(data: dict[str, Any]) -> None:
+        data["dimensions"].append(
+            {
+                "name": "ghost",
+                "type": "categorical",
+                "expr": "no_such_column",
+                "description": "A dimension on a column the catalog does not have.",
+            }
+        )
+
+    text_ = sup.edited(sup.official_text(ctx.world, "entity:branch"), edit)
+    author = ctx.client("curator", ("credit-risk",))
+    propose(ctx, author, "entity:branch", text_, "Add a dimension")
+    approver = ctx.client("approver", ())
+    page = approver.get("/review/entity/branch").text
+    assert 'data-field="reference-issues"' in page and "open reference issue" in page
+    assert "no_such_column" in page or "R0" in page
+    assert 'data-field="approve-refused"' in page and 'data-code="OPEN_REFERENCE_ISSUE"' in page
+    assert 'data-action="approve"' not in page and 'data-action="reject"' in page
+    assert 'data-field="approve-not-offered"' in page
+    # A forged approve is the lifecycle's refusal, with the page of the proposal again.
+    head = sup.head(ctx.world)
+    forged = decide(approver, "entity", "branch", "approve", expected=head)
+    assert forged.status_code == 409 and 'data-code="OPEN_REFERENCE_ISSUE"' in forged.text
+    assert sup.head(ctx.world) == head
+    # The list says what approval does not need to be told twice: no definition errors.
+    assert 'data-field="errors-none"' in approver.get("/review").text
+
+
+def test_definition_errors_of_an_outside_change_are_listed_and_approve_is_not_offered(
+    ctx: Ctx,
+) -> None:
+    path = "lending/metrics/disbursement_amount.yaml"
+    original = (ctx.world.repo.path / path).read_text()
+    broken = sup.edited(original, lambda d: d.update(measure="contract.no_such_measure"))
+    outside_commit(ctx.world, path, broken)
+    approver = ctx.client("approver", ())
+    queue = approver.get("/review").text
+    assert 'data-field="errors"' in queue and "definition error" in queue
+    assert "Review and decide" in queue
+    page = approver.get("/review/metric/disbursement_amount").text
+    assert 'data-field="error-list"' in page and 'data-field="approve-refused"' in page
+    assert 'data-code="DEFINITION_INVALID"' in page
+    assert 'data-action="approve"' not in page and 'data-action="reject"' in page
+    head = sup.head(ctx.world)
+    forged = decide(approver, "metric", "disbursement_amount", "approve", expected=head)
+    assert forged.status_code == 422 and 'data-code="DEFINITION_INVALID"' in forged.text
+    assert sup.head(ctx.world) == head
+    # Rejecting it is possible and restores the official file.
+    assert decide(approver, "metric", "disbursement_amount", "reject").status_code == 303
+
+
+# --- errors, the plain directory, and the 500 page -------------------------------------------
+
+
+def test_a_plain_directory_says_writes_are_off_on_the_queue_and_still_shows_the_audit(
+    empty_database: URL, tmp_path: Path
+) -> None:
+    plain_dir = Path(__file__).resolve().parents[2] / "semantic" / "definitions"  # inside a repo
+    world = sup.build_world(empty_database, tmp_path / "definitions")
+    app = w.make_app(empty_database, definitions_repo=str(plain_dir))
+    try:
+        client = w.signed_in(app, w.make_user(world.engine, "approver"))
+        page = client.get("/review")
+        assert page.status_code == 409 and "Writes are off" in page.text
+        assert 'data-code="CONFLICT"' in page.text and "<table" not in page.text
+        assert client.get("/review/metric/disbursement_amount").status_code == 409
+        audit = client.get("/audit")
+        assert audit.status_code == 200 and "seed" in audit.text
+    finally:
+        app.state.services.dispose()
+        world.services.dispose()
+
+
+def test_a_failure_after_the_commit_says_the_change_is_official(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import store
+
+    propose(ctx, ctx.client("curator", SALES))
+    approver = ctx.client("approver", ())
+    page = approver.get("/review/metric/disbursement_amount").text
+    commit = expected_commit(page)
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("secret-index-error")
+
+    monkeypatch.setattr(store, "sync", broken)
+    commits = len(ctx.world.repo.log())
+    response = post(
+        approver, "/review/metric/disbursement_amount/approve", reason="go", expected=commit
+    )
+    assert response.status_code == 500
+    assert len(ctx.world.repo.log()) == commits + 1  # the commit was made
+    text_ = plain(response.text)
+    assert "The change was made official, but the index has not caught up yet." in text_
+    assert "makna index sync" in text_ and "secret-index-error" not in text_
+    assert "Nothing was changed" not in text_
+
+
+def test_an_unexpected_error_is_the_500_page_and_its_text_goes_nowhere(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from makna.definitions.repo import RepoError
+    from makna.services.lifecycle import Lifecycle
+
+    secret = "secret-" + uuid.uuid4().hex
+
+    def broken(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise RepoError(secret, 1)
+
+    approver = ctx.client("approver", ())
+    for name in ("review_queue", "review_item", "audit_events", "approve"):
+        monkeypatch.setattr(Lifecycle, name, broken)
+    caplog.set_level(logging.INFO)
+    for method, path in (
+        ("get", "/review"),
+        ("get", "/review/metric/disbursement_amount"),
+        ("get", "/audit"),
+        ("post", "/review/metric/disbursement_amount/approve"),
+    ):
+        if method == "get":
+            response = approver.get(path)
+        else:
+            response = post(approver, path, reason="r", expected="0" * 40)
+        assert response.status_code == 500, path
+        assert secret not in response.text
+    assert not any(secret in r.getMessage() for r in caplog.records)
+    assert any("error=RepoError" in r.getMessage() for r in caplog.records)
+
+
+def test_the_log_names_the_user_and_the_object_but_never_the_reason_or_an_email(
+    ctx: Ctx, caplog: pytest.LogCaptureFixture
+) -> None:
+    author = ctx.client("curator", SALES)
+    propose(ctx, author)
+    outside_edit_of_official(ctx.world, object_path="lending/metrics/penalty_income.yaml")
+    approver = ctx.client("approver", ())
+    caplog.set_level(logging.DEBUG)
+    reason = "a reason " + uuid.uuid4().hex
+    assert (
+        decide(approver, "metric", "disbursement_amount", "approve", reason=reason).status_code
+        == 303
+    )
+    assert decide(approver, "metric", "penalty_income", "reject", reason=reason).status_code == 303
+    approver.get("/review")
+    approver.get("/audit")
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("web: review")]
+    assert len(lines) == 2
+    assert f"user={approver.user.id} object={CHANGED} outcome=ok" in lines[0]
+    everything = "\n".join(r.getMessage() for r in caplog.records)
+    for secret in (reason, approver.user.email, author.user.email, OUTSIDE_EMAIL, "Reviewed."):
+        assert secret not in everything, secret
+
+
+def test_the_parsing_and_the_difference_of_the_review_run_off_the_event_loop(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    seen: list[str] = []
+
+    def off_the_loop(real: Any, name: str) -> Any:
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:  # a worker thread, as it must be
+                seen.append(name)
+                return real(*args, **kwargs)
+            raise AssertionError(f"{name} ran on the event loop")
+
+        return guarded
+
+    from makna.services.lifecycle import Lifecycle
+
+    for owner, name in (
+        (review, "build_diff"),
+        (Lifecycle, "review_queue"),
+        (Lifecycle, "review_item"),
+        (Lifecycle, "audit_events"),
+        (Lifecycle, "approve"),
+    ):
+        monkeypatch.setattr(owner, name, off_the_loop(getattr(owner, name), name))
+    propose(ctx, ctx.client("curator", SALES))
+    approver = ctx.client("approver", ())
+    assert approver.get("/review").status_code == 200
+    assert approver.get("/review/metric/disbursement_amount").status_code == 200
+    assert approver.get("/audit").status_code == 200
+    assert decide(approver, "metric", "disbursement_amount", "approve").status_code == 303
+    assert {"build_diff", "review_queue", "review_item", "audit_events", "approve"} <= set(seen)
+
+
+# --- bounds ----------------------------------------------------------------------------------
+
+
+def test_the_queue_the_authors_and_the_errors_are_bounded_and_counted(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(reviewing, "MAX_QUEUE", 1)
+    monkeypatch.setattr(lifecycle, "MAX_QUEUE", 1)
+    outside_edit_of_official(ctx.world)
+    outside_edit_of_official(ctx.world, object_path="lending/metrics/penalty_income.yaml")
+    approver = ctx.client("approver", ())
+    page = approver.get("/review").text
+    assert len(rows_of(page)) == 1 and "2 proposals in review; the first 1 are listed" in page
+    # The authors of one proposal: more than the bound are counted and not listed.
+    monkeypatch.setattr(lifecycle, "MAX_AUTHORS", 1)
+    path = "lending/metrics/penalty_income.yaml"
+    original = (ctx.world.repo.path / path).read_text()
+    outside_commit(
+        ctx.world,
+        path,
+        sup.edited(original, lambda d: d.update(caveats="Another one.")),
+        email="other@example.com",
+    )
+    item = approver.get("/review/metric/penalty_income").text
+    assert "and 1 more" in item
+    # The errors of one proposal: the queue row shows MAX_QUEUE_ERRORS of them with the count.
+    monkeypatch.setattr(lifecycle, "MAX_QUEUE_ERRORS", 1)
+    outside_commit(
+        ctx.world,
+        CHANGED_PATH,
+        sup.edited(
+            (ctx.world.repo.path / CHANGED_PATH).read_text(),
+            lambda d: d.update(
+                measure="contract.no_such_measure", numerator=None, join_paths={"branch": ["x.y"]}
+            ),
+        ),
+    )
+    queue = approver.get("/review").text
+    assert rows_of(queue) and "definition error" in queue
+
+
+def test_the_difference_is_not_shown_when_it_is_too_long_and_approve_is_not_offered(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    propose(ctx, ctx.client("curator", SALES))
+    monkeypatch.setattr(review, "build_diff", lambda *a, **k: None)
+    approver = ctx.client("approver", ())
+    page = approver.get("/review/metric/disbursement_amount").text
+    assert 'data-field="too-long"' in page and 'data-field="diff"' not in page
+    assert 'data-action="approve"' not in page and 'data-action="reject"' in page
+
+
+# --- a new object, and what the index and the repository say ---------------------------------
+
+
+def test_a_new_object_is_shown_whole_and_can_be_approved(ctx: Ctx) -> None:
+    author = ctx.client("curator", ("credit-risk",))
+    propose(ctx, author, "metric:contract_count_total", sup.metric_text(), "A new metric")
+    approver = ctx.client("approver", ())
+    page = approver.get("/review/metric/contract_count_total").text
+    assert "a new object" in page and 'data-kind="added"' in page
+    assert "name: contract_count_total" in page
+    assert "+" in approver.get("/review").text
+    assert decide(approver, "metric", "contract_count_total", "approve").status_code == 303
+    assert "version 1" in approver.get("/metrics/contract_count_total").text
+
+
+def test_the_review_reads_the_repository_not_the_index(ctx: Ctx) -> None:
+    """An outside commit that `index sync` has not seen is on the page anyway."""
+    outside_edit_of_official(ctx.world)
+    with ctx.engine.connect() as connection:
+        proposals = connection.execute(
+            text("SELECT count(*) FROM semantic_object WHERE has_proposal")
+        ).scalar_one()
+    assert proposals == 1  # the sample's own draft: the commit is not indexed yet
+    page = ctx.client("approver", ()).get("/review").text
+    assert rows_of(page) == [CHANGED]
