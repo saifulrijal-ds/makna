@@ -90,6 +90,7 @@ from makna.model.search import EmbeddingProvider
 from makna.services import accounts, approval, permissions, store
 from makna.services.approval import ApprovalSettings, Decision
 from makna.services.caller import Caller
+from makna.services.difference import MAX_DIFF_LINES, count_changes
 from makna.services.editing import (
     MAX_CHECK_ISSUES,
     NEW_OBJECT,
@@ -107,6 +108,29 @@ from makna.services.errors import (
     invalid_input,
 )
 from makna.services.examples import validate_for_build
+from makna.services.reviewing import (
+    DEFAULT_AUDIT_PAGE,
+    MAX_AUDIT_PAGE,
+    MAX_AUTHORS,
+    MAX_ITEM_ISSUES,
+    MAX_MARKS,
+    MAX_QUEUE,
+    MAX_QUEUE_ERRORS,
+    MAX_REFERENCE_ISSUES,
+    MAX_SUBJECT,
+    UNREADABLE_NOTE,
+    AuditPage,
+    AuditRow,
+    DecisionView,
+    OutsideChange,
+    ReviewEntry,
+    ReviewItem,
+    ReviewQueue,
+    RuleUse,
+    ServiceRefusal,
+    definition_marks,
+    rule_uses,
+)
 from makna.services.store import ObjectState, RepoState
 
 logger = logging.getLogger(__name__)
@@ -161,6 +185,49 @@ REPOSITORY_MOVED = (
     "The definitions repository changed while this change was being made, so nothing was saved. "
     "Try again."
 )
+
+
+REVIEW_FAILED = "The review page could not be read."
+
+
+def _in_queue(item: ObjectState) -> bool:
+    """True for a proposal the review page lists: one that is in review, and one that cannot be
+    read as a definition (an outside change that is too large, not text, or does not parse), which
+    the page shows as unreadable so that it can be dealt with."""
+    if item.proposal_source is None:
+        return False
+    return item.proposal is None or item.proposal.status == "in_review"
+
+
+def _decision_view(decision: Decision) -> DecisionView:
+    return DecisionView(
+        decision.allowed,
+        str(decision.refusal) if decision.refusal is not None else None,
+        decision.message,
+        decision.needs,
+    )
+
+
+def _refusal_issues(error: ServiceError) -> tuple[CheckIssue, ...]:
+    """The definition issues of a `DEFINITION_INVALID` refusal, as the page lists them."""
+    raw = (
+        error.details.get("issues") if error.code == LifecycleErrorCode.DEFINITION_INVALID else None
+    )
+    found: list[CheckIssue] = []
+    if isinstance(raw, list):
+        for entry in raw[:MAX_ISSUES_SHOWN]:
+            if isinstance(entry, dict):
+                line = entry.get("line")
+                found.append(
+                    CheckIssue(
+                        str(entry.get("rule", "")),
+                        line if isinstance(line, int) else None,
+                        str(entry.get("file", "")),
+                        str(entry.get("message", ""))[:MAX_MESSAGE_SHOWN],
+                        True,
+                    )
+                )
+    return tuple(found)
 
 
 @dataclass(frozen=True)
@@ -583,6 +650,317 @@ class Lifecycle:
             for i in ordered[:MAX_CHECK_ISSUES]
         )
         return CheckResult(shown, len(ordered), exists)
+
+    # --- reads for the review pages (WP-19B) ---------------------------------------------
+
+    def review_queue(self, caller: Caller) -> ReviewQueue:
+        """Every proposal that is in review, for the review page: made through the application or
+        outside it, keyed by the object's path (its id). Reads the repository state without the
+        lock, as `editor_source` does, and writes nothing. Needs a caller who may see drafts
+        (`PERMISSION_DENIED` otherwise) and a repository the application writes (`CONFLICT` with
+        `details.read_only` for a plain directory). At most `MAX_QUEUE` entries are returned, with
+        the total.
+
+        The queue reads the repository state, not the index: the index holds only what the last
+        write indexed, and an outside commit that `index sync` has not seen yet (or that it could
+        not index) would be missing from the very page that exists to show it. The price is one
+        read of the repository per call (the decode cache keeps parsed files), and a window of
+        milliseconds in which a write in progress can make the page show one proposal in its
+        previous state; the decision is made again under the lock."""
+        user, actor, state = self._review_start(caller)
+        repo = self._repo()
+        try:
+            queued = [item for _, item in sorted(state.objects.items()) if _in_queue(item)]
+            shown = queued[:MAX_QUEUE]
+            notes = self._review_notes(shown)
+            officials = {k: o.official for k, o in state.objects.items() if o.official is not None}
+            entries = tuple(
+                self._review_entry(
+                    actor, user, state, item, notes, officials, repo, MAX_QUEUE_ERRORS
+                )
+                for item in shown
+            )
+        except ServiceError:
+            raise
+        except Exception as error:
+            logger.error("lifecycle: the review queue failed (%s)", type(error).__name__)
+            raise ServiceError(ServiceErrorCode.INTERNAL, REVIEW_FAILED) from None
+        return ReviewQueue(entries, len(queued), self._settings.governance_team)
+
+    def review_item(self, caller: Caller, object_id: str) -> ReviewItem | None:
+        """One proposal in review with everything the review page shows: the two texts to compare,
+        what stands out beyond the text (`definition_marks`), the checks approval would run, and
+        whether this caller may approve or reject. None when the object has no proposal in review.
+        Same reads and same limits as `review_queue`.
+
+        `approve_refusal` is `_plan_approve`, the code approval itself runs, called on the state
+        read here: the definition errors, the build gate on the official files with this file
+        replaced, the reference issues against the catalog as it is now, and the stored size. When
+        it is not None the page shows why and no Approve button."""
+        ref = layout.parse_object_id(object_id) if isinstance(object_id, str) else None
+        if ref is None:
+            raise invalid_input("id", "an id of the form kind:name, for example metric:npf_ratio")
+        user, actor, state = self._review_start(caller)
+        item = state.objects.get(ref.id)
+        if item is None or not _in_queue(item):
+            return None
+        try:
+            notes = self._review_notes([item])
+            officials = {k: o.official for k, o in state.objects.items() if o.official is not None}
+            entry = self._review_entry(
+                actor, user, state, item, notes, officials, self._repo(), MAX_ITEM_ISSUES
+            )
+            official, proposal = item.official, item.proposal
+            version = official.version if official is not None else None
+            official_text = (
+                to_yaml(_as_proposal(official, "draft", version)) if official is not None else None
+            )
+            can_withdraw = bool(approval.may_edit(actor, user.email, item.authors))
+            if proposal is None:
+                unreadable = DecisionView(False, "unreadable", UNREADABLE_NOTE)
+                return ReviewItem(
+                    entry, official_text, None, (), 0, (), 0, None, unreadable, can_withdraw
+                )
+            marks = definition_marks(official, proposal)
+            with self._engine.connect() as connection:
+                reference = self._proposal_reference_issues(connection, state, item, proposal)
+            refusal: ServiceRefusal | None = None
+            try:
+                plan = self._plan_approve(item, ref, state, proposal)
+                _check_stored_size(plan, APPROVE)
+            except ServiceError as error:
+                refusal = ServiceRefusal(str(error.code), error.message, _refusal_issues(error))
+            reject = _decision_view(
+                approval.may_decide(
+                    actor, user.email, official, proposal, item.authors, self._settings, REJECT
+                )
+            )
+            return ReviewItem(
+                entry,
+                official_text,
+                to_yaml(_as_proposal(proposal, "draft", version)),
+                tuple(marks[:MAX_MARKS]),
+                len(marks),
+                tuple(reference[:MAX_REFERENCE_ISSUES]),
+                len(reference),
+                refusal,
+                reject,
+                can_withdraw,
+            )
+        except ServiceError:
+            raise
+        except Exception as error:
+            logger.error("lifecycle: the review item failed (%s)", type(error).__name__)
+            raise ServiceError(ServiceErrorCode.INTERNAL, REVIEW_FAILED) from None
+
+    def audit_events(
+        self,
+        caller: Caller,
+        *,
+        object_id: str | None = None,
+        action: str | None = None,
+        before: int | None = None,
+        limit: int = DEFAULT_AUDIT_PAGE,
+    ) -> AuditPage:
+        """Rows of `audit_event`, newest first (`id` descending), for the audit page. Needs a
+        caller who may see the audit log (`PERMISSION_DENIED` otherwise). `object_id` (an id that
+        `parse_object_id` accepts) and `action` (one of the actions the log holds) narrow the
+        rows; anything else is `INVALID_INPUT` and is not echoed. `before` is a row id: only older
+        rows come back (keyset paging, so a page is stable while rows are added). At most
+        `MAX_AUDIT_PAGE` rows; `AuditPage.older` is the `before` of the next page, or None.
+        Reads the table only, so it works with a plain directory too."""
+        permissions.require(caller, permissions.Permission.SEE_AUDIT_LOG)
+        if caller.is_token:  # `require` reads the token column; this is the same rule, stated
+            raise _denied(Decision(False, approval.Refusal.TOKEN, "A token cannot see the log."))
+        wanted: str | None = None
+        if object_id is not None:
+            ref = layout.parse_object_id(object_id) if isinstance(object_id, str) else None
+            if ref is None:
+                raise invalid_input("object", "an id of the form kind:name")
+            wanted = ref.id
+        if action is not None and action not in (
+            *ACTIONS,
+            store.EXTERNAL_ACTION,
+            store.SEED_ACTION,
+        ):
+            raise invalid_input("action", "one of the actions the audit log holds")
+        if before is not None and (
+            isinstance(before, bool) or not isinstance(before, int) or not 1 <= before < 2**62
+        ):
+            raise invalid_input("before", "the id of a row")
+        size = max(1, min(int(limit), MAX_AUDIT_PAGE))
+        statement = select(
+            audit_event.c.id,
+            audit_event.c.at,
+            audit_event.c.actor_label,
+            audit_event.c.action,
+            audit_event.c.object_id,
+            audit_event.c.from_status,
+            audit_event.c.to_status,
+            audit_event.c.reason,
+            audit_event.c.commit_sha,
+            audit_event.c.failed_at,
+        )
+        if wanted is not None:
+            statement = statement.where(audit_event.c.object_id == wanted)
+        if action is not None:
+            statement = statement.where(audit_event.c.action == action)
+        if before is not None:
+            statement = statement.where(audit_event.c.id < before)
+        try:
+            with self._engine.connect() as connection:
+                found = connection.execute(
+                    statement.order_by(audit_event.c.id.desc()).limit(size + 1)
+                ).all()
+        except SQLAlchemyError as error:
+            logger.error("lifecycle: the audit log cannot be read (%s)", type(error).__name__)
+            raise ServiceError(ServiceErrorCode.INTERNAL, "The audit log cannot be read.") from None
+        rows = tuple(
+            AuditRow(
+                row.id,
+                row.at,
+                row.actor_label,
+                row.action,
+                row.object_id,
+                row.from_status,
+                row.to_status,
+                row.reason,
+                row.commit_sha or None,
+                row.failed_at is not None,
+                not row.commit_sha and row.failed_at is None,
+            )
+            for row in found[:size]
+        )
+        return AuditPage(rows, rows[-1].id if len(found) > size and rows else None)
+
+    def _review_start(self, caller: Caller) -> tuple[accounts.User, Caller, RepoState]:
+        """The common start of the two review reads: the permission, the user row, and the state."""
+        permissions.require(caller, permissions.Permission.SEE_DRAFTS)
+        repo = self._repo()
+        user = self._user(caller)
+        actor = Caller(user_id=user.id, role=user.role, channel=caller.channel, teams=user.teams)
+        permissions.require(actor, permissions.Permission.SEE_DRAFTS)
+        return user, actor, self._read_for_editor(repo)
+
+    def _review_notes(
+        self, items: list[ObjectState]
+    ) -> dict[tuple[str, str, str], tuple[str, str | None]]:
+        """`(action, object id, commit) -> (actor label, reason)` of the `submit` and
+        `external_change` rows that belong to the proposals' latest commits."""
+        shas = sorted({i.proposal_commit for i in items if i.proposal_commit})
+        if not shas:
+            return {}
+        try:
+            with self._engine.connect() as connection:
+                rows = connection.execute(
+                    select(
+                        audit_event.c.action,
+                        audit_event.c.object_id,
+                        audit_event.c.commit_sha,
+                        audit_event.c.actor_label,
+                        audit_event.c.reason,
+                    ).where(
+                        audit_event.c.commit_sha.in_(shas),
+                        audit_event.c.action.in_((SUBMIT, store.EXTERNAL_ACTION)),
+                        audit_event.c.failed_at.is_(None),
+                    )
+                ).all()
+        except SQLAlchemyError as error:
+            logger.error("lifecycle: the audit log cannot be read (%s)", type(error).__name__)
+            raise ServiceError(ServiceErrorCode.INTERNAL, "The audit log cannot be read.") from None
+        return {(r.action, r.object_id, r.commit_sha): (r.actor_label, r.reason) for r in rows}
+
+    def _review_entry(
+        self,
+        actor: Caller,
+        user: accounts.User,
+        state: RepoState,
+        item: ObjectState,
+        notes: Mapping[tuple[str, str, str], tuple[str, str | None]],
+        officials: Mapping[str, AnyDefinition],
+        repo: GitRepo,
+        max_errors: int,
+    ) -> ReviewEntry:
+        official, proposal = item.official, item.proposal
+        version = official.version if official is not None else None
+        added: int | None = None
+        removed: int | None = None
+        needs: list[str] = []
+        owner_change: tuple[str, str] | None = None
+        uses: tuple[RuleUse, ...] = ()
+        uses_total = 0
+        if proposal is None:
+            decision = DecisionView(False, "unreadable", UNREADABLE_NOTE)
+        else:
+            proposal_text = to_yaml(_as_proposal(proposal, "draft", version))
+            if official is None:
+                lines = len(proposal_text.splitlines())
+                added, removed = (lines, 0) if lines <= MAX_DIFF_LINES else (None, None)
+            else:
+                counted = count_changes(
+                    to_yaml(_as_proposal(official, "draft", version)), proposal_text
+                )
+                added, removed = counted if counted is not None else (None, None)
+                if official.owner.team.casefold() != proposal.owner.team.casefold():
+                    owner_change = (official.owner.team, proposal.owner.team)
+            needs = approval.loosenings(official, proposal)
+            uses, uses_total = rule_uses(officials, official, proposal)
+            decision = _decision_view(
+                approval.may_decide(
+                    actor, user.email, official, proposal, item.authors, self._settings, APPROVE
+                )
+            )
+        commit = item.proposal_commit or ""
+        submitted = notes.get((SUBMIT, item.id, commit))
+        outside: OutsideChange | None = None
+        if item.external_author is not None:
+            change = next(
+                (c for c in state.externals if c.sha == commit and c.object_id == item.id), None
+            )
+            recorded = notes.get((store.EXTERNAL_ACTION, item.id, commit))
+            outside = OutsideChange(
+                commit,
+                change.author_name if change is not None else "",
+                change.author_email if change is not None else item.external_author,
+                self._subject(repo, commit),
+                recorded[1] if recorded is not None else None,
+            )
+        errors = item.errors
+        return ReviewEntry(
+            item.id,
+            item.ref.kind,
+            item.ref.name,
+            proposal is None,
+            official is None,
+            version,
+            item.proposal_commit,
+            item.authors[:MAX_AUTHORS],
+            len(item.authors),
+            submitted[0] if submitted is not None and outside is None else None,
+            submitted[1] if submitted is not None and outside is None else None,
+            outside,
+            added,
+            removed,
+            len(errors),
+            tuple(
+                CheckIssue(i.code, i.line, i.file, i.message[:MAX_MESSAGE_SHOWN], True)
+                for i in errors[:max_errors]
+            ),
+            bool(needs),
+            tuple(needs),
+            self._settings.governance_team,
+            owner_change,
+            uses,
+            uses_total,
+            decision,
+        )
+
+    @staticmethod
+    def _subject(repo: GitRepo, commit: str) -> str:
+        try:
+            return repo.subject(commit, MAX_SUBJECT) if commit else ""
+        except (RepoError, ValueError):
+            return ""
 
     # --- the common flow -----------------------------------------------------------------
 

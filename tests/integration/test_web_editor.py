@@ -25,7 +25,7 @@ from sqlalchemy.engine import URL
 from makna.definitions.loader import parse_yaml
 from makna.definitions.render import MAX_YAML_BYTES
 from makna.services import accounts
-from makna.web import editor
+from makna.web import common, editor
 from makna.web.gate import SECURITY_HEADERS
 
 from . import lifecycle_support as sup
@@ -1034,8 +1034,8 @@ def test_every_code_a_lifecycle_call_can_refuse_with_has_a_message_and_a_status(
     from makna.services import LifecycleErrorCode, ServiceErrorCode
 
     codes = {str(c) for c in ServiceErrorCode} | {str(c) for c in LifecycleErrorCode}
-    assert codes <= set(editor.HEADLINES) and codes <= set(editor.STATUS_OF)
-    assert all(editor.HEADLINES[c].endswith(".") for c in codes)
+    assert codes <= set(common.HEADLINES) and codes <= set(common.STATUS_OF)
+    assert all(common.HEADLINES[c].endswith(".") for c in codes)
 
 
 # --- logging ---------------------------------------------------------------------------------
