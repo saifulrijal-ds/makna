@@ -18,6 +18,7 @@ from starlette.responses import HTMLResponse
 from starlette.types import Scope
 
 from makna.services import Caller, permissions
+from makna.web.common import codepoints, visible
 from makna.web.security import Session
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -69,6 +70,10 @@ def navigation(caller: Caller | None) -> list[tuple[str, str]]:
         links.append(("Bench", "/bench"))
     if permissions.can_edit_proposals(caller):
         links.append(("New", "/new"))
+    if permissions.can_see_drafts(caller):
+        links.append(("Review", "/review"))
+    if permissions.can_see_audit_log(caller):
+        links.append(("Audit", "/audit"))
     links.append(("Account", "/account"))
     if permissions.can_manage(caller):
         links += [("Users", "/admin/users"), ("Tokens", "/admin/tokens")]
@@ -86,6 +91,8 @@ class Pages:
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        self._env.filters["visible"] = visible
+        self._env.filters["codepoints"] = codepoints
 
     def render(
         self,

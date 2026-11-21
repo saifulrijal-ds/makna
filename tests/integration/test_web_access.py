@@ -51,6 +51,14 @@ def test_every_route_but_login_healthz_and_static_redirects_to_login_when_signed
         "/edit/{kind}/{name}",
         "/edit/{kind}/{name}/submit",
     } <= paths
+    # The review and audit routes (WP-19B) too.
+    assert {
+        "/review",
+        "/review/{kind}/{name}",
+        "/review/{kind}/{name}/approve",
+        "/review/{kind}/{name}/reject",
+        "/audit",
+    } <= paths
     public = {"/login", "/healthz", "/static"}
     checked = 0
     for path, methods in routes:
@@ -555,6 +563,8 @@ def test_the_navigation_depends_on_the_role_and_links_only_to_pages_that_exist(
         assert ("/admin/tokens" in links) == (role == "admin")
         assert "/account" in links
         assert ("/new" in links) == (role != "viewer")
+        assert ("/review" in links) == (role != "viewer")
+        assert ("/audit" in links) == (role != "viewer")
 
 
 # --- fix round 1 ---

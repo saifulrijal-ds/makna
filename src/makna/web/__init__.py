@@ -25,6 +25,7 @@ from makna.web.discovery import router as discovery
 from makna.web.editor import editor_router
 from makna.web.gate import SECURITY_HEADERS, WebGate, is_mcp
 from makna.web.pages import Pages
+from makna.web.review import review_router
 from makna.web.routes import WebState, admin, router
 from makna.web.security import CookieCodec, LoginThrottle
 
@@ -51,6 +52,7 @@ def install(app: FastAPI, settings: Settings, services: Services) -> None:
     app.include_router(admin)
     app.include_router(bench_router)
     app.include_router(editor_router)
+    app.include_router(review_router)
     app.include_router(discovery)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 

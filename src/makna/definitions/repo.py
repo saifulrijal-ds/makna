@@ -424,6 +424,16 @@ class GitRepo:
         )
         return _parse_log(raw)
 
+    def subject(self, sha: str, limit: int = 200) -> str:
+        """The first line of the message of commit `sha`, as the committer wrote it: untrusted
+        text. Control characters become spaces and the text is cut to `limit` characters. Format
+        characters (such as a right-to-left override) are kept, so that a page can show them."""
+        self._check_sha(sha)
+        raw = self._git(["log", "-1", "--no-walk", "--format=%s", sha, "--"])
+        text = raw.decode("utf-8", "replace").strip()
+        cleaned = "".join(" " if unicodedata.category(c) == "Cc" else c for c in text)
+        return cleaned[:limit]
+
     def diff_names(self, sha: str) -> list[tuple[str, str]]:
         """`(status, path)` of the files `sha` changed against its parent (all of them for a root
         commit). Meant for the commits Makna makes, which have at most one parent."""
