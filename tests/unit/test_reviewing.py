@@ -608,3 +608,37 @@ def test_the_character_comparison_has_a_budget_and_a_longest_line(
         r for r in difference.build_diff(f"{long_line}\n", f"{long_line}y\n") if r.kind == "changed"
     ]
     assert row.left_parts == () and row.right_parts == ()
+
+
+def test_many_gaps_under_the_bound_share_one_budget_for_the_page() -> None:
+    """Twenty gaps of 200 x 200 lines (40,000 cells each, the worst repeated shape) between
+    lines that are the same on both sides: matching them all would be 800,000 cells. The budget
+    of the page (500,000) is spent after twelve, and the rest are blocks with their notice."""
+    import time
+
+    repeated, other = "  - value: a", "  - value: b"
+    before: list[str] = []
+    after: list[str] = []
+    for gap in range(20):
+        before += [f"anchor_{gap}", f"L{gap}", *[repeated] * 198, f"end_{gap}"]
+        after += [f"anchor_{gap}", f"R{gap}", *[repeated, other] * 99, f"stop_{gap}"]
+    started = time.perf_counter()
+    rows = difference.build_diff("\n".join(before) + "\n", "\n".join(after) + "\n")
+    assert time.perf_counter() - started < 5  # about 2 to 3 s here
+    notices = [r for r in rows if r.kind == "unmatched"]
+    assert 5 <= len(notices) <= 10  # 12 gaps were matched, the others are blocks
+    assert all(r.skipped == 200 for r in notices)
+    # Every line of both sides is still there.
+    assert len([r for r in rows if r.left_no is not None]) + sum(
+        r.skipped for r in rows if r.kind == "skipped"
+    ) == len(before)
+
+
+def test_a_total_budget_of_zero_makes_every_gap_a_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(difference, "MAX_MATCH_TOTAL", 0)
+    rows = difference.build_diff("top\na\nb\nbottom\n", "top\nA\nB\nbottom\n")
+    assert [r.kind for r in rows if r.kind not in ("same", "skipped")] == [
+        "unmatched",
+        "changed",
+        "changed",
+    ]

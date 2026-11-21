@@ -21,6 +21,11 @@ matching is bounded by this product, not by the length of the texts. Measured wo
 machine, for one stretch at the bound (500 x 500 lines of the worst shape, one repeated line
 against an alternating pair): about 1.5 s. Above it the stretch is shown as one block, its lines
 paired by position (a pair whose two lines are equal is unchanged), and the page says so."""
+MAX_MATCH_TOTAL = 500_000
+"""The most cells of line matching for one whole comparison, summed over all its gaps. Many gaps
+just under `MAX_MATCH_CELLS`, each between two anchors, would otherwise add up (10 of them took
+15.8 s). A gap that does not fit what is left of the budget is a block, with its notice. The
+worst case for a whole page is then about 3 to 3.5 s of matching."""
 DIFF_CONTEXT = 3
 """Unchanged lines shown around a change."""
 MAX_PARTS_WORK = 500_000
@@ -85,7 +90,16 @@ def _anchors(
     return chain
 
 
-def _gap(a: list[str], b: list[str], i0: int, i1: int, j0: int, j1: int, out: list[Opcode]) -> None:
+def _gap(
+    a: list[str],
+    b: list[str],
+    i0: int,
+    i1: int,
+    j0: int,
+    j1: int,
+    out: list[Opcode],
+    budget: list[int],
+) -> None:
     """The opcodes of one stretch: its common start and end are cut off, the rest is matched when
     it is small enough, else it is one `block`."""
     start = 0
@@ -99,7 +113,9 @@ def _gap(a: list[str], b: list[str], i0: int, i1: int, j0: int, j1: int, out: li
         out.append(("equal", i0, i0 + start, j0, j0 + start))
     x0, x1, y0, y1 = i0 + start, i1 - end, j0 + start, j1 - end
     if x0 < x1 or y0 < y1:
-        if (x1 - x0) * (y1 - y0) <= MAX_MATCH_CELLS:
+        cells = (x1 - x0) * (y1 - y0)
+        if cells <= MAX_MATCH_CELLS and cells <= budget[0]:
+            budget[0] -= cells
             matcher = difflib.SequenceMatcher(None, a[x0:x1], b[y0:y1], autojunk=False)
             for tag, p1, p2, q1, q2 in matcher.get_opcodes():
                 out.append((tag, p1 + x0, p2 + x0, q1 + y0, q2 + y0))
@@ -118,6 +134,7 @@ def _opcodes(a: list[str], b: list[str]) -> list[Opcode]:
     it is small (`MAX_MATCH_CELLS`) and is a `block` otherwise. Anchors keep one inserted line
     near the top from shifting every pair below it."""
     ops: list[Opcode] = []
+    budget = [MAX_MATCH_TOTAL]
     start = 0
     limit = min(len(a), len(b))
     while start < limit and a[start] == b[start]:
@@ -131,7 +148,7 @@ def _opcodes(a: list[str], b: list[str]) -> list[Opcode]:
     i0, j0 = start, start
     if i0 < i1 or j0 < j1:
         for i, j in [*_anchors(a, b, i0, i1, j0, j1), (i1, j1)]:
-            _gap(a, b, i0, i, j0, j, ops)
+            _gap(a, b, i0, i, j0, j, ops, budget)
             if i < i1:
                 ops.append(("equal", i, i + 1, j, j + 1))
             i0, j0 = i + 1, j + 1

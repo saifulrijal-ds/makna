@@ -102,9 +102,9 @@
       {% else %}
       <tr data-kind="{{ row.kind }}">
         <td class="diff-no">{{ row.left_no if row.left_no is not none else "" }}</td>
-        <td class="diff-text">{{ row.left }}</td>
+        <td class="diff-text">{% if row.kind != "same" %}{{ row.left | visible | codepoints }}{% else %}{{ row.left | visible }}{% endif %}</td>
         <td class="diff-no">{{ row.right_no if row.right_no is not none else "" }}</td>
-        <td class="diff-text">{{ row.right }}</td>
+        <td class="diff-text">{% if row.kind != "same" %}{{ row.right | visible | codepoints }}{% else %}{{ row.right | visible }}{% endif %}</td>
       </tr>
       {% endif %}
       {% endfor %}

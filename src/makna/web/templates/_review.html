@@ -88,9 +88,9 @@
     {% else %}
     <tr data-kind="{{ row.kind }}">
       <td class="diff-no">{{ row.left_no if row.left_no is not none else "" }}</td>
-      <td class="diff-text">{% if row.left_parts %}{% for text, differs in row.left_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% elif row.kind == "changed" %}{{ row.left | visible | codepoints }}{% else %}{{ row.left | visible }}{% endif %}</td>
+      <td class="diff-text">{% if row.left_parts %}{% for text, differs in row.left_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% elif row.kind != "same" %}{{ row.left | visible | codepoints }}{% else %}{{ row.left | visible }}{% endif %}</td>
       <td class="diff-no">{{ row.right_no if row.right_no is not none else "" }}</td>
-      <td class="diff-text">{% if row.right_parts %}{% for text, differs in row.right_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% elif row.kind == "changed" %}{{ row.right | visible | codepoints }}{% else %}{{ row.right | visible }}{% endif %}</td>
+      <td class="diff-text">{% if row.right_parts %}{% for text, differs in row.right_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% elif row.kind != "same" %}{{ row.right | visible | codepoints }}{% else %}{{ row.right | visible }}{% endif %}</td>
     </tr>
     {% endif %}
     {% endfor %}
