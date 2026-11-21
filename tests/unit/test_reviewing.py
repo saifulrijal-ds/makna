@@ -301,7 +301,7 @@ def test_relationships_and_the_owner_are_marked() -> None:
 def test_a_name_or_expression_in_a_mark_is_cut() -> None:
     long = "x" * 500
     found = kinds(entity(), edited(lambda d: d["dimensions"][0].update(expr=long)))
-    assert len(found["dimension_expr"]) < 300 and "…" in found["dimension_expr"]
+    assert len(found["dimension_expr"]) < 300 and "\u2026" in found["dimension_expr"]
 
 
 # --- the comparison --------------------------------------------------------------------------
@@ -331,12 +331,15 @@ def test_the_rows_of_a_difference_are_plain_strings_and_unchanged_runs_collapse(
 
 
 def test_visible_marks_format_control_and_odd_characters_and_nothing_else() -> None:
-    assert visible("plain text, tabs\tand é and 漢字") == "plain text, tabs\tand é and 漢字"
+    assert (
+        visible("plain text, tabs\tand \u00e9 and \u6f22\u5b57")
+        == "plain text, tabs\tand \u00e9 and \u6f22\u5b57"
+    )
     assert visible(f"a{chr(0x202E)}b") == "a<U+202E>b"
     assert visible(f"a{chr(0x200B)}b{chr(0xFEFF)}") == "a<U+200B>b<U+FEFF>"
     assert visible(f"x{chr(0x00AD)}y") == "x<U+00AD>y"  # the soft hyphen
     assert visible("a\x1b[31m") == "a<U+001B>[31m"
-    assert visible("a b c") == "a<U+2028>b<U+2029>c"
+    assert visible("a\u2028b\u2029c") == "a<U+2028>b<U+2029>c"
     assert visible("lone\ud800surrogate") == "lone<U+D800>surrogate"
     assert visible(None) == "None" and visible(12) == "12"
     assert visible(chr(0xE0041)) == "<U+E0041>"  # a tag character
@@ -369,7 +372,7 @@ def test_the_subject_is_the_first_line_cut_with_control_characters_replaced(
     sha = repo.rev_parse("HEAD")
     assert sha is not None
     assert repo.subject(sha) == f"Fix{chr(0x202E)} it now"  # the format character is kept
-    assert repo.subject(sha, 5) == "Fix‮ "[:5]
+    assert repo.subject(sha, 5) == "Fix\u202e "[:5]
     with pytest.raises(ValueError):
         repo.subject("not-a-sha")
 
@@ -454,10 +457,10 @@ def test_a_stretch_above_the_bound_is_paired_by_position_says_so_and_shows_equal
 
 
 def test_a_changed_line_is_cut_into_the_parts_that_differ() -> None:
-    rows = difference.build_diff("level: mass\n", "level: mаss\n")
+    rows = difference.build_diff("level: mass\n", "level: m\u0430ss\n")
     (row,) = [r for r in rows if r.kind == "changed"]
     assert row.left_parts == (("level: m", False), ("a", True), ("ss", False))
-    assert row.right_parts == (("level: m", False), ("а", True), ("ss", False))
+    assert row.right_parts == (("level: m", False), ("\u0430", True), ("ss", False))
 
 
 # --- characters that do not show --------------------------------------------------------------
@@ -466,13 +469,13 @@ def test_a_changed_line_is_cut_into_the_parts_that_differ() -> None:
 def test_visible_marks_default_ignorable_characters_and_spaces_that_are_not_a_plain_space() -> None:
     for code in (0x115F, 0x1160, 0x3164, 0xFFA0, 0xFE0F, 0xFE00, 0xE0100, 0xE01EF, 0x034F, 0x2800):
         assert visible(f"a{chr(code)}b") == f"a<U+{code:04X}>b", hex(code)
-    assert visible("a b　c d") == "a<U+00A0>b<U+3000>c<U+2003>d"
+    assert visible("a\u00a0b\u3000c\u2003d") == "a<U+00A0>b<U+3000>c<U+2003>d"
     assert visible("a b\tc") == "a b\tc"  # a plain space and a tab are what they look like
 
 
 def test_codepoints_names_a_non_ascii_character_and_leaves_ascii_alone() -> None:
     assert codepoints("mass") == "mass"
-    assert codepoints("mаss") == "mа<U+0430>ss"
+    assert codepoints("m\u0430ss") == "m\u0430<U+0430>ss"
 
 
 def test_the_audit_time_is_shown_in_utc_whatever_zone_the_session_used() -> None:

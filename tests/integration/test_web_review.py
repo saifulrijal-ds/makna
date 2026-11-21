@@ -1579,11 +1579,11 @@ def test_a_format_character_on_the_official_side_of_the_difference_is_marked(ctx
 def test_a_lookalike_letter_is_highlighted_and_its_code_point_is_shown(ctx: Ctx) -> None:
     official = sup.official_text(ctx.world, CHANGED)
     text_ = sup.edited(
-        official, lambda d: d.update(label=d["label"].replace("Disbursement", "Disbursеment"))
+        official, lambda d: d.update(label=d["label"].replace("Disbursement", "Disburs\u0435ment"))
     )
     propose(ctx, ctx.client("curator", SALES), text_=text_)
     page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
-    assert '<mark class="part">е&lt;U+0435&gt;</mark>' in page
+    assert '<mark class="part">\u0435&lt;U+0435&gt;</mark>' in page
     assert '<mark class="part">e</mark>' in page  # the official side shows what it had
 
 
@@ -1602,3 +1602,108 @@ def test_the_audit_time_is_utc_when_the_database_session_is_not(
         assert stamp in client.get("/audit").text
     finally:
         app.state.services.dispose()
+
+
+# --- fix round 2 -----------------------------------------------------------------------------
+
+
+def make_wide_customer(world: World) -> None:
+    """Make the official `customer` an entity of over 900 lines (extra dimensions with values),
+    through the lifecycle: written by an approver, approved by a member of the governance team."""
+
+    def edit(data: dict[str, Any]) -> None:
+        for index in range(100):
+            data["dimensions"].append(
+                {
+                    "name": f"extra_{index}",
+                    "type": "categorical",
+                    "expr": "province",
+                    "description": "Another reading of the province, for the width of the entity.",
+                    "sensitivity": "internal",
+                    "values": [{"value": "employee"}, {"value": "other"}],
+                }
+            )
+
+    wide = sup.edited(sup.official_text(world, CUSTOMER), edit)
+    world.life.create_proposal(world.caller("approver"), CUSTOMER, wide, "make it wide")
+    world.life.submit(world.caller("approver"), CUSTOMER, "ready")
+    world.life.approve(world.caller("governance"), CUSTOMER, "wide is fine")
+    assert len(sup.official_text(world, CUSTOMER).splitlines()) > 900
+
+
+@pytest.mark.parametrize("shift", [False, True])
+def test_three_changes_in_a_large_entity_show_as_three_rows_with_the_lookalike_marked(
+    ctx: Ctx, shift: bool
+) -> None:
+    make_wide_customer(ctx.world)
+
+    def edit(data: dict[str, Any]) -> None:
+        data["label"] = "Customer, reviewed"
+        data["relationships"][-1]["description"] += " Checked."
+        data["dimensions"][-30]["values"][0]["value"] = "empl\u043eyee"  # a Cyrillic o
+        if shift:
+            data["tags"] = ["wide"]
+
+    text_ = sup.edited(sup.official_text(ctx.world, CUSTOMER), edit)
+    author = ctx.client("curator", ("data-governance",))
+    propose(ctx, author, CUSTOMER, text_, "Three small changes")
+    page = ctx.client("approver", ()).get("/review/entity/customer").text
+    rows = re.findall(r'<tr data-kind="(changed|added|removed|unmatched)">(.*?)</tr>', page, re.S)
+    assert not any(kind == "unmatched" for kind, _ in rows)
+    texts = [re.sub(r"<[^>]+>", "", body) for _, body in rows]
+    # Exactly the real changes, and nothing else: the label, the end of the last description, the
+    # lookalike, and with the shift the new tag lines.
+    markers = ("reviewed", "Checked.", "empl", "tags", "wide")
+    assert all(any(m in t for m in markers) for t in texts), texts
+    assert len(rows) == (5 if shift else 3), texts
+    assert sum(1 for kind, _ in rows if kind == "changed") == (2 if not shift else 2)
+    # The lookalike row is highlighted on both sides and its code point is there.
+    assert '<mark class="part">\u043e&lt;U+043E&gt;</mark>' in page
+    assert '<mark class="part">o</mark>' in page
+    assert 'data-action="approve"' in page
+
+
+def test_a_block_that_could_not_be_matched_is_announced_and_changed_lines_get_code_points(
+    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from makna.services import difference
+
+    monkeypatch.setattr(difference, "MAX_MATCH_CELLS", 0)  # nothing can be matched
+    monkeypatch.setattr(difference, "MAX_PARTS_WORK", 0)  # nor compared by character
+    changed = sup.edited(
+        sup.official_text(ctx.world, CHANGED), lambda d: d.update(label="Disburs\u0435ment Amount")
+    )
+    approver = ctx.client("approver", ())
+    ctx.world.life.create_proposal(ctx.world.caller("sales"), CHANGED, changed, "a lookalike")
+    ctx.world.life.submit(ctx.world.caller("sales"), CHANGED, "ready")
+    page = approver.get("/review/metric/disbursement_amount").text
+    assert 'data-field="unmatched"' in page and "side by side by position" in page
+    # Past the budget a changed line is shown whole, and still with the code point of each
+    # non-ASCII character, on the official side (none there) and the proposed side.
+    assert "Disburs\u0435<U+0435>ment Amount".replace("<", "&lt;").replace(">", "&gt;") in page
+    assert 'class="part"' not in page
+
+
+def test_a_line_break_in_the_reason_is_taken_as_a_space(ctx: Ctx) -> None:
+    propose(ctx, ctx.client("curator", SALES))
+    approver = ctx.client("approver", ())
+    response = decide(
+        approver, "metric", "disbursement_amount", "approve", reason="first line\r\nsecond line"
+    )
+    assert response.status_code == 303
+    rows = sup.audit_rows(ctx.engine)
+    assert rows[-1]["action"] == "approve" and rows[-1]["reason"] == "first line second line"
+
+
+def test_the_official_side_of_a_changed_line_shows_the_code_point_of_a_lookalike(ctx: Ctx) -> None:
+    official = sup.official_text(ctx.world, CHANGED)
+    lookalike = sup.edited(
+        official, lambda d: d.update(label=d["label"].replace("Disbursement", "Disburs\u0435ment"))
+    )
+    ctx.world.life.create_proposal(ctx.world.caller("sales"), CHANGED, lookalike, "oops")
+    ctx.world.life.submit(ctx.world.caller("sales"), CHANGED, "ready")
+    ctx.world.life.approve(ctx.world.caller("approver"), CHANGED, "approved with it")
+    propose(ctx, ctx.client("curator", SALES), text_=sup.edited(official, lambda d: None))
+    page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
+    assert '<mark class="part">\u0435&lt;U+0435&gt;</mark>' in page  # the official side
+    assert '<mark class="part">e</mark>' in page  # the proposal restores the Latin letter
