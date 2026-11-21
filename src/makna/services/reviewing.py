@@ -362,7 +362,7 @@ def _describe(masking: Masking | None) -> str:
     return f"bucket({masking.width:g})"
 
 
-def _columns(dimension: Dimension) -> frozenset[str]:
+def _dimension_reads(dimension: Dimension) -> frozenset[str]:
     try:
         return frozenset(dimension_columns(dimension))
     except ExpressionError:
@@ -444,13 +444,13 @@ def definition_marks(official: AnyDefinition | None, proposal: AnyDefinition) ->
     for entity, dimensions in ((official, old), (proposal, new)):
         for dimension in dimensions.values():
             if _level(entity, dimension) == "personal":
-                for column in _columns(dimension):
+                for column in _dimension_reads(dimension):
                     personal.setdefault(column, set()).add(dimension.name)
     for name, dimension in new.items():
         before = old.get(name)
-        if before is not None and _columns(before) == _columns(dimension):
+        if before is not None and _dimension_reads(before) == _dimension_reads(dimension):
             continue  # not new, and reads what it read: nothing changed here
-        for column in sorted(_columns(dimension)):
+        for column in sorted(_dimension_reads(dimension)):
             others = sorted(personal.get(column, set()) - {name})
             if others:
                 marks.append(
