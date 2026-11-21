@@ -1473,15 +1473,15 @@ def test_the_service_reads_refuse_a_viewer_and_a_token(ctx: Ctx) -> None:
         ctx.world.token("admin"),
         ctx.world.token("approver"),
     ):
-        calls: list[Callable[[], Any]] = [
-            lambda c=caller: life.review_queue(c),
-            lambda c=caller: life.review_item(c, CHANGED),
-            lambda c=caller: life.audit_events(c),
-            lambda c=caller: life.audit_events(c, object_id=CHANGED),
+        calls: list[Callable[[Any], Any]] = [
+            life.review_queue,
+            lambda who: life.review_item(who, CHANGED),
+            life.audit_events,
+            lambda who: life.audit_events(who, object_id=CHANGED),
         ]
         for call in calls:
             with pytest.raises(ServiceError) as refused:
-                call()
+                call(caller)
             assert refused.value.code == ServiceErrorCode.PERMISSION_DENIED
     # A curator may read all three.
     curator = ctx.world.caller("curator")
