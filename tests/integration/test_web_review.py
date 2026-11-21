@@ -816,6 +816,25 @@ def test_a_rule_used_by_measures_lists_them_and_the_metrics_built_on_them(ctx: C
     assert len(expected) >= 6 and listed(page, "rule-metric") == expected
 
 
+def test_the_rule_users_of_every_official_metric_agree_with_the_index_edges(shared: Ctx) -> None:
+    """`rules_by_metric` is the reading of the indexer's `uses_rule` edges, through `input_of`."""
+    from makna.definitions.loader import load_definitions
+    from makna.model.definitions import Entity, Metric
+    from makna.services import objects
+    from tests.catalog_support import DEFINITIONS
+
+    loaded = load_definitions(DEFINITIONS)
+    official = [f.definition for f in loaded.files if not f.is_proposal and f.definition]
+    entities = {d.name: d for d in official if isinstance(d, Entity)}
+    metrics = {d.name: d for d in official if isinstance(d, Metric)}
+    found = reviewing.rules_by_metric(entities, metrics)
+    with shared.engine.connect() as connection:
+        edges = objects.edges(connection, ("input_of", "uses_rule"))
+    assert len(metrics) > 20 and any(found.values())
+    for name in metrics:
+        assert found[name] == set(objects.rules_of_metric(edges, f"metric:{name}")), name
+
+
 def test_a_removed_rule_is_listed_with_the_use_it_loses(ctx: Ctx) -> None:
     def edit(data: dict[str, Any]) -> None:
         data["rules"] = [r for r in data["rules"] if r["name"] != "restructured"]

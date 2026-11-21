@@ -140,12 +140,14 @@ async def _compare(item: ReviewItem) -> tuple[list[DiffRow] | None, bool]:
 
 
 def _problem_page(
-    request: Request, problem: Problem, status: int, *, back: str = "/review"
+    request: Request, problem: Problem, status: int, *, gone: bool = False, back: str = "/review"
 ) -> Response:
+    """The page of a refusal when there is no proposal to show. `gone` says that the proposal is
+    not in review any more (decided by someone else, withdrawn, or changed to a draft)."""
     return _state(request).pages.render(
         request.scope,
         "review_item.html",
-        {"problem": problem, "item": None, "back": back},
+        {"problem": problem, "item": None, "back": back, "gone": gone},
         status=status,
     )
 
@@ -300,7 +302,7 @@ async def _refused(
     except ServiceError:
         item = None
     if item is None:
-        return _problem_page(request, problem, status_of(error))
+        return _problem_page(request, problem, status_of(error), gone=True)
     return await _render_item(
         request, item, problem=problem, reason=reason, status=status_of(error)
     )

@@ -769,9 +769,7 @@ class Lifecycle:
         rows come back (keyset paging, so a page is stable while rows are added). At most
         `MAX_AUDIT_PAGE` rows; `AuditPage.older` is the `before` of the next page, or None.
         Reads the table only, so it works with a plain directory too."""
-        permissions.require(caller, permissions.Permission.SEE_AUDIT_LOG)
-        if caller.is_token:  # `require` reads the token column; this is the same rule, stated
-            raise _denied(Decision(False, approval.Refusal.TOKEN, "A token cannot see the log."))
+        permissions.require(caller, permissions.Permission.SEE_AUDIT_LOG)  # a token has no column
         wanted: str | None = None
         if object_id is not None:
             ref = layout.parse_object_id(object_id) if isinstance(object_id, str) else None
