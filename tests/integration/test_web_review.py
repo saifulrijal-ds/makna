@@ -12,8 +12,10 @@ from __future__ import annotations
 import html
 import logging
 import re
+import shutil
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,14 +24,18 @@ from sqlalchemy import create_engine, insert, text
 from sqlalchemy.engine import URL
 
 from makna.definitions.render import MAX_YAML_BYTES
+from makna.definitions.repo import GitRepo
 from makna.index.tables import audit_event
-from makna.services import accounts, lifecycle, reviewing
+from makna.model.governance import STRICT
+from makna.search.embedding import HashProvider
+from makna.services import Caller, Services, accounts, lifecycle, reviewing
+from makna.services.approval import ApprovalSettings
 from makna.web import review
 
 from . import lifecycle_support as sup
 from . import web_support as w
 from .lifecycle_support import World
-from .test_web_editor import Ctx, build, expected_of, form, post
+from .test_web_editor import TEAM, Ctx, expected_of, form, post
 
 CHANGED = "metric:disbursement_amount"  # owned by sales-performance, version 1
 CHANGED_PATH = "lending/metrics/disbursement_amount.yaml"
@@ -46,24 +52,232 @@ REVIEW_ROUTES = [
 ]
 
 
-@pytest.fixture
-def ctx(empty_database: URL, tmp_path: Path) -> Iterator[Ctx]:
-    yield from build(empty_database, tmp_path / "definitions")
+Cookies = list[tuple[str, str, str, str]]
+Signed = dict[tuple[str, tuple[str, ...]], list[tuple[accounts.User, Cookies]]]
+
+
+@dataclass
+class Template:
+    """A seeded world built once for the module: a database (migrated, catalog synced, the sample
+    definitions seeded and indexed) and the repository that goes with it. Each test gets a copy of
+    both, which takes a fraction of the time of building them again."""
+
+    database: str
+    repo: Path
+    url: URL
+    signed: Signed = field(default_factory=dict)
+    """Web users that the database holds, by `(role, teams)`, each with the cookies of a session:
+    a test takes the next one instead of making a user (a password hash) and signing in."""
+
+
+POOL = {
+    ("viewer", ()): 1,
+    ("curator", SALES): 3,
+    ("curator", ("credit-risk",)): 2,
+    ("curator", ("marketing",)): 1,
+    ("curator", ("data-governance",)): 2,
+    ("approver", ()): 3,
+    ("approver", ("data-governance",)): 1,
+    ("admin", ()): 1,
+}
+"""The users that the template holds, and how many of each (a test that needs two different
+curators of one team takes two)."""
+
+
+def bake_users(world: World, url: URL, repo: Path) -> Signed:
+    """Make the users of `POOL` in the database and sign each in once; keep the cookies."""
+    app = w.make_app(url, definitions_repo=str(repo))
+    signed: dict[tuple[str, tuple[str, ...]], list[tuple[accounts.User, Cookies]]] = {}
+    try:
+        for (role, teams), count in POOL.items():
+            for _ in range(count):
+                user = w.make_user(world.engine, role, teams=teams)
+                client = w.signed_in(app, user)
+                jar = [(c.name, c.value or "", c.domain, c.path) for c in client.cookies.jar]
+                signed.setdefault((role, teams), []).append((user, jar))
+    finally:
+        app.state.services.dispose()
+    return signed
 
 
 @pytest.fixture(scope="module")
-def shared(test_database_url: URL, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Ctx]:
-    """One world for the tests that only read. They must leave `HEAD` and the tables alone."""
+def template(
+    test_database_url: URL, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[Template]:
     name = f"makna_test_{uuid.uuid4().hex[:12]}"
     admin = create_engine(test_database_url, isolation_level="AUTOCOMMIT")
     with admin.connect() as connection:
         connection.execute(text(f'CREATE DATABASE "{name}"'))
+    repo = tmp_path_factory.mktemp("template") / "definitions"
+    url = test_database_url.set(database=name)
+    built = sup.build_world(url, repo)
+    signed = bake_users(built, url, repo)
+    built.services.dispose()  # a template database must have no connection open
+    built.engine.dispose()
     try:
-        yield from build(test_database_url.set(database=name), tmp_path_factory.mktemp("repo"))
+        yield Template(name, repo, url, signed)
     finally:
         with admin.connect() as connection:
             connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
         admin.dispose()
+
+
+@dataclass
+class BakedCtx(Ctx):
+    """A `Ctx` whose template holds a web author with a proposal in review."""
+
+    author: Any = None
+    pool: Signed = field(default_factory=dict)
+
+    def client(self, role: str = "curator", teams: tuple[str, ...] = TEAM, **kw: Any) -> Any:
+        """The next signed-in user of the template with this role and these teams; a user is made
+        (and signed in) only when the template has none left, or `kw` asks for something else."""
+        waiting = self.pool.get((role, tuple(teams)))
+        if kw or not waiting:
+            return super().client(role, teams, **kw)
+        user, jar = waiting.pop(0)
+        client = w.make_client(self.app)
+        for name, value, domain, path in jar:
+            client.cookies.set(name, value, domain=domain, path=path)
+        client.user = user  # type: ignore[attr-defined]
+        return client
+
+
+def copy_template(template: Template, base_url: URL, target: Path) -> Template:
+    """A copy of a template: the database with `CREATE DATABASE ... TEMPLATE`, the repository with
+    a directory copy. Nothing is left connected to either."""
+    name = f"makna_test_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(base_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'CREATE DATABASE "{name}" TEMPLATE "{template.database}"'))
+    admin.dispose()
+    repo_path = target / "definitions"
+    shutil.copytree(template.repo, repo_path, symlinks=True)
+    return Template(name, repo_path, base_url.set(database=name), template.signed)
+
+
+def drop(base_url: URL, template: Template) -> None:
+    admin = create_engine(base_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'DROP DATABASE IF EXISTS "{template.database}" WITH (FORCE)'))
+    admin.dispose()
+
+
+def open_world(copy: Template) -> World:
+    engine = create_engine(copy.url)
+    with engine.connect() as connection:
+        users = connection.execute(text("SELECT id, email FROM app_user")).all()
+        token_id = connection.execute(
+            text("SELECT id FROM api_token ORDER BY id LIMIT 1")
+        ).scalar_one()
+    by_email = {email: user_id for user_id, email in users}
+    emails = {key: f"{key}@example.com" for key in sup.USERS}
+    ids = {key: by_email[email] for key, email in emails.items()}
+    services = Services(
+        engine,
+        HashProvider(),
+        policy=STRICT,
+        definitions_repo=str(copy.repo),
+        approval=ApprovalSettings("data-governance", False),
+    )
+    return World(engine, copy.url, GitRepo(copy.repo), services, ids, emails, token_id)
+
+
+def clone(
+    template: Template, test_database_url: URL, target: Path, *, author: str | None = None
+) -> Iterator[BakedCtx]:
+    """A copy of the template as a `Ctx`, dropped afterwards. With `author`, the email of a
+    web user that the template holds: `ctx.author` is signed in as that user."""
+    copy = copy_template(template, test_database_url, target)
+    world = open_world(copy)
+    app = w.make_app(copy.url, definitions_repo=str(copy.repo))
+    ctx = BakedCtx(world, app, world.engine, pool={k: list(v) for k, v in copy.signed.items()})
+    if author is not None:
+        with world.engine.connect() as connection:
+            user_id = connection.execute(
+                text("SELECT id FROM app_user WHERE email = :email"), {"email": author}
+            ).scalar_one()
+        user = accounts.get_user_by_id(world.engine, user_id)
+        assert user is not None
+        ctx.author = w.signed_in(app, user)
+        ctx.author.user = user  # the same as `Ctx.client` sets
+    try:
+        yield ctx
+    finally:
+        app.state.services.dispose()
+        world.services.dispose()
+        world.engine.dispose()
+        drop(test_database_url, copy)
+
+
+BAKED_AUTHOR = "baked.author@demo.example"
+BAKED_REASON = "make it clearer"
+
+
+@pytest.fixture(scope="module")
+def proposed(
+    template: Template, test_database_url: URL, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[Template]:
+    """The template with a curator of the sales team who has put a change to
+    `metric:disbursement_amount` in review (the setup of many tests, which takes seconds)."""
+    copy = copy_template(template, test_database_url, tmp_path_factory.mktemp("proposed"))
+    world = open_world(copy)
+    try:
+        user = accounts.create_user(
+            world.engine, BAKED_AUTHOR, "Baked Author", "curator", SALES, w.PASSWORD
+        )
+        caller = Caller(user_id=user.id, role="curator", channel="web", teams=SALES)
+        world.life.create_proposal(caller, CHANGED, change_text(world), BAKED_REASON)
+        world.life.submit(caller, CHANGED, BAKED_REASON)
+    finally:
+        world.services.dispose()
+        world.engine.dispose()
+    try:
+        yield copy
+    finally:
+        drop(test_database_url, copy)
+
+
+@pytest.fixture(scope="module")
+def wide(
+    template: Template, test_database_url: URL, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[Template]:
+    """The template whose official `customer` is an entity of over 900 lines."""
+    copy = copy_template(template, test_database_url, tmp_path_factory.mktemp("wide"))
+    world = open_world(copy)
+    try:
+        make_wide_customer(world)
+    finally:
+        world.services.dispose()
+        world.engine.dispose()
+    try:
+        yield copy
+    finally:
+        drop(test_database_url, copy)
+
+
+@pytest.fixture
+def wctx(wide: Template, test_database_url: URL, tmp_path: Path) -> Iterator[BakedCtx]:
+    yield from clone(wide, test_database_url, tmp_path)
+
+
+@pytest.fixture
+def ctx(template: Template, test_database_url: URL, tmp_path: Path) -> Iterator[Ctx]:
+    yield from clone(template, test_database_url, tmp_path)
+
+
+@pytest.fixture
+def pctx(proposed: Template, test_database_url: URL, tmp_path: Path) -> Iterator[BakedCtx]:
+    """A fresh copy with the baked proposal in review; `pctx.author` is its author, signed in."""
+    yield from clone(proposed, test_database_url, tmp_path, author=BAKED_AUTHOR)
+
+
+@pytest.fixture(scope="module")
+def shared(
+    template: Template, test_database_url: URL, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[Ctx]:
+    """One copy for the tests that only read. They must leave `HEAD` and the tables alone."""
+    yield from clone(template, test_database_url, tmp_path_factory.mktemp("shared"))
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -289,20 +503,19 @@ def test_the_queue_lists_the_proposal_with_author_reason_difference_and_validati
 
 
 def test_the_approve_button_is_for_those_who_may_decide_and_a_forged_post_is_a_403(
-    ctx: Ctx,
+    pctx: BakedCtx,
 ) -> None:
-    author = ctx.client("curator", SALES)
-    propose(ctx, author)
-    before = (sup.head(ctx.world), sup.audit_rows(ctx.engine))
+    author = pctx.author
+    before = (sup.head(pctx.world), sup.audit_rows(pctx.engine))
     cannot = {
-        "a curator outside the owner team": ctx.client("curator", ("marketing",)),
+        "a curator outside the owner team": pctx.client("curator", ("marketing",)),
         "a curator of the owner team who wrote it": author,
     }
     for label, client in cannot.items():
         page = client.get("/review/metric/disbursement_amount").text
         assert 'data-action="approve"' not in page, label
         assert 'data-field="cannot-approve"' in page, label
-        head = sup.head(ctx.world)  # a forged form has no page to read the commit from
+        head = sup.head(pctx.world)  # a forged form has no page to read the commit from
         response = decide(client, "metric", "disbursement_amount", "approve", expected=head)
         assert response.status_code == 403, label
         assert 'data-code="PERMISSION_DENIED"' in response.text, label
@@ -313,11 +526,11 @@ def test_the_approve_button_is_for_those_who_may_decide_and_a_forged_post_is_a_4
     assert (
         decide(outsider, "metric", "disbursement_amount", "reject", expected=before[0])
     ).status_code == 403
-    assert (sup.head(ctx.world), sup.audit_rows(ctx.engine)) == before
+    assert (sup.head(pctx.world), sup.audit_rows(pctx.engine)) == before
     # A colleague of the owner team may decide it.
-    colleague = ctx.client("curator", SALES)
+    colleague = pctx.client("curator", SALES)
     assert 'data-action="approve"' in colleague.get("/review/metric/disbursement_amount").text
-    approver = ctx.client("approver", ())
+    approver = pctx.client("approver", ())
     assert 'data-action="approve"' in approver.get("/review/metric/disbursement_amount").text
     # The list says so too.
     assert "You can neither approve nor reject this" in outsider.get("/review").text
@@ -338,22 +551,20 @@ def test_the_author_cannot_approve_but_may_reject_their_own_proposal(ctx: Ctx) -
 # --- criterion 2: approve through the web route ----------------------------------------------
 
 
-def test_after_approval_the_metric_page_shows_the_new_version(ctx: Ctx) -> None:
-    author = ctx.client("curator", SALES)
-    propose(ctx, author)
-    approver = ctx.client("approver", ())
+def test_after_approval_the_metric_page_shows_the_new_version(pctx: BakedCtx) -> None:
+    approver = pctx.client("approver", ())
     assert "version 1" in approver.get("/metrics/disbursement_amount").text
-    audits = len(sup.audit_rows(ctx.engine))
+    audits = len(sup.audit_rows(pctx.engine))
     response = decide(approver, "metric", "disbursement_amount", "approve", reason="Looks right")
     assert response.status_code == 303
     assert response.headers["location"].startswith("/review?notice=approved")
     assert "version 2" in approver.get("/metrics/disbursement_amount").text
-    rows = sup.audit_rows(ctx.engine)[audits:]
+    rows = sup.audit_rows(pctx.engine)[audits:]
     assert [(r["action"], r["object_id"], r["reason"]) for r in rows] == [
         ("approve", CHANGED, "Looks right")
     ]
     assert rows[0]["actor_user_id"] == approver.user.id and rows[0]["commit_sha"] == sup.head(
-        ctx.world
+        pctx.world
     )
     # The queue is empty, and its notice links to the page of the object.
     page = approver.get(response.headers["location"]).text
@@ -370,13 +581,12 @@ def test_after_approval_the_metric_page_shows_the_new_version(ctx: Ctx) -> None:
     assert again.status_code in (404, 409)
 
 
-def test_reject_makes_a_draft_again_and_is_audited(ctx: Ctx) -> None:
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
+def test_reject_makes_a_draft_again_and_is_audited(pctx: BakedCtx) -> None:
+    approver = pctx.client("approver", ())
     response = decide(approver, "metric", "disbursement_amount", "reject", reason="Not yet")
     assert response.status_code == 303 and "notice=rejected" in response.headers["location"]
     assert "version 1" in approver.get("/metrics/disbursement_amount").text
-    rows = sup.audit_rows(ctx.engine)
+    rows = sup.audit_rows(pctx.engine)
     assert (rows[-1]["action"], rows[-1]["to_status"], rows[-1]["reason"]) == (
         "reject",
         "draft",
@@ -389,24 +599,23 @@ def test_reject_makes_a_draft_again_and_is_audited(ctx: Ctx) -> None:
 # --- the commit the page showed --------------------------------------------------------------
 
 
-def test_a_proposal_that_changed_after_the_page_was_opened_is_a_conflict(ctx: Ctx) -> None:
-    author = ctx.client("curator", SALES)
-    propose(ctx, author)
-    approver = ctx.client("approver", ())
+def test_a_proposal_that_changed_after_the_page_was_opened_is_a_conflict(pctx: BakedCtx) -> None:
+    author = pctx.author
+    approver = pctx.client("approver", ())
     stale = approver.get("/review/metric/disbursement_amount").text
     old = expected_commit(stale)
     # The author edits the proposal again and submits it again.
-    newer = change_text(ctx.world, description="A completely different description for this.")
+    newer = change_text(pctx.world, description="A completely different description for this.")
     page = author.get("/edit/metric/disbursement_amount").text
     form(author, "/edit/metric/disbursement_amount/submit", newer, reason="again",
          expected=expected_of(page))  # fmt: skip
-    head, audits = sup.head(ctx.world), len(sup.audit_rows(ctx.engine))
+    head, audits = sup.head(pctx.world), len(sup.audit_rows(pctx.engine))
     refused = post(
         approver, "/review/metric/disbursement_amount/approve", reason="ok", expected=old
     )
     assert refused.status_code == 409 and 'data-code="CONFLICT"' in refused.text
     assert "changed after you looked at it" in refused.text
-    assert (sup.head(ctx.world), len(sup.audit_rows(ctx.engine))) == (head, audits)
+    assert (sup.head(pctx.world), len(sup.audit_rows(pctx.engine))) == (head, audits)
     # The page now shows the new proposal and its commit, and the typed reason stays.
     assert "A completely different description" in flat(refused.text)
     assert expected_commit(refused.text) == head != old
@@ -415,7 +624,7 @@ def test_a_proposal_that_changed_after_the_page_was_opened_is_a_conflict(ctx: Ct
     assert (
         post(approver, "/review/metric/disbursement_amount/reject", reason="no", expected=old)
     ).status_code == 409
-    assert sup.head(ctx.world) == head
+    assert sup.head(pctx.world) == head
     # With the commit of the new page it goes through.
     assert (
         post(approver, "/review/metric/disbursement_amount/approve", reason="ok",
@@ -424,11 +633,10 @@ def test_a_proposal_that_changed_after_the_page_was_opened_is_a_conflict(ctx: Ct
 
 
 def test_a_form_without_a_commit_or_with_a_wrong_one_is_refused_and_nothing_changes(
-    ctx: Ctx,
+    pctx: BakedCtx,
 ) -> None:
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
-    head, audits = sup.head(ctx.world), len(sup.audit_rows(ctx.engine))
+    approver = pctx.client("approver", ())
+    head, audits = sup.head(pctx.world), len(sup.audit_rows(pctx.engine))
     for action in ("approve", "reject"):
         for expected in ("", "abc", "0" * 40, "G" * 40, "0" * 64, "x" * 5000):
             response = post(
@@ -443,13 +651,12 @@ def test_a_form_without_a_commit_or_with_a_wrong_one_is_refused_and_nothing_chan
             data={"csrf_token": w.page_csrf(approver), "reason": "r"},
         )
         assert response.status_code == 400
-    assert (sup.head(ctx.world), len(sup.audit_rows(ctx.engine))) == (head, audits)
+    assert (sup.head(pctx.world), len(sup.audit_rows(pctx.engine))) == (head, audits)
 
 
-def test_a_missing_or_too_long_reason_is_refused_with_the_form_kept(ctx: Ctx) -> None:
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
-    head = sup.head(ctx.world)
+def test_a_missing_or_too_long_reason_is_refused_with_the_form_kept(pctx: BakedCtx) -> None:
+    approver = pctx.client("approver", ())
+    head = sup.head(pctx.world)
     for reason in ("", "   "):
         response = decide(approver, "metric", "disbursement_amount", "approve", reason=reason)
         assert response.status_code == 400 and 'data-code="INVALID_INPUT"' in response.text
@@ -460,7 +667,7 @@ def test_a_missing_or_too_long_reason_is_refused_with_the_form_kept(ctx: Ctx) ->
     assert f">{long[: lifecycle.MAX_REASON_LENGTH]}</textarea>" in response.text  # kept, cut to fit
     response = decide(approver, "metric", "disbursement_amount", "approve", reason="a\x07b")
     assert response.status_code == 400
-    assert sup.head(ctx.world) == head
+    assert sup.head(pctx.world) == head
 
 
 # --- criterion 3: changes made outside Makna -------------------------------------------------
@@ -915,9 +1122,8 @@ def test_a_loosening_is_marked_and_only_the_governance_team_may_approve_it(ctx: 
     assert decide(governance, "entity", "customer", "approve").status_code == 303
 
 
-def test_a_change_that_does_not_loosen_has_no_governance_mark(ctx: Ctx) -> None:
-    propose(ctx, ctx.client("curator", SALES))
-    page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
+def test_a_change_that_does_not_loosen_has_no_governance_mark(pctx: BakedCtx) -> None:
+    page = pctx.client("approver", ()).get("/review/metric/disbursement_amount").text
     assert "governance team" not in page and 'data-field="loosenings"' not in page
 
 
@@ -1228,12 +1434,11 @@ def test_a_plain_directory_says_writes_are_off_on_the_queue_and_still_shows_the_
 
 
 def test_a_failure_after_the_commit_says_the_change_is_official(
-    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+    pctx: BakedCtx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from makna.services import store
 
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
+    approver = pctx.client("approver", ())
     page = approver.get("/review/metric/disbursement_amount").text
     commit = expected_commit(page)
 
@@ -1241,12 +1446,12 @@ def test_a_failure_after_the_commit_says_the_change_is_official(
         raise RuntimeError("secret-index-error")
 
     monkeypatch.setattr(store, "sync", broken)
-    commits = len(ctx.world.repo.log())
+    commits = len(pctx.world.repo.log())
     response = post(
         approver, "/review/metric/disbursement_amount/approve", reason="go", expected=commit
     )
     assert response.status_code == 500
-    assert len(ctx.world.repo.log()) == commits + 1  # the commit was made
+    assert len(pctx.world.repo.log()) == commits + 1  # the commit was made
     text_ = plain(response.text)
     assert "The change was made official, but the index has not caught up yet." in text_
     assert "makna index sync" in text_ and "secret-index-error" not in text_
@@ -1285,12 +1490,11 @@ def test_an_unexpected_error_is_the_500_page_and_its_text_goes_nowhere(
 
 
 def test_the_log_names_the_user_and_the_object_but_never_the_reason_or_an_email(
-    ctx: Ctx, caplog: pytest.LogCaptureFixture
+    pctx: BakedCtx, caplog: pytest.LogCaptureFixture
 ) -> None:
-    author = ctx.client("curator", SALES)
-    propose(ctx, author)
-    outside_edit_of_official(ctx.world, object_path="lending/metrics/penalty_income.yaml")
-    approver = ctx.client("approver", ())
+    author = pctx.author
+    outside_edit_of_official(pctx.world, object_path="lending/metrics/penalty_income.yaml")
+    approver = pctx.client("approver", ())
     caplog.set_level(logging.DEBUG)
     reason = "a reason " + uuid.uuid4().hex
     assert (
@@ -1309,7 +1513,7 @@ def test_the_log_names_the_user_and_the_object_but_never_the_reason_or_an_email(
 
 
 def test_the_parsing_and_the_difference_of_the_review_run_off_the_event_loop(
-    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+    pctx: BakedCtx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import asyncio
 
@@ -1336,8 +1540,7 @@ def test_the_parsing_and_the_difference_of_the_review_run_off_the_event_loop(
         (Lifecycle, "approve"),
     ):
         monkeypatch.setattr(owner, name, off_the_loop(getattr(owner, name), name))
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
+    approver = pctx.client("approver", ())
     assert approver.get("/review").status_code == 200
     assert approver.get("/review/metric/disbursement_amount").status_code == 200
     assert approver.get("/audit").status_code == 200
@@ -1387,13 +1590,12 @@ def test_the_queue_the_authors_and_the_errors_are_bounded_and_counted(
 
 
 def test_a_difference_too_big_to_pair_still_shows_every_line_and_approve_is_offered(
-    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+    pctx: BakedCtx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from makna.services import difference
 
-    propose(ctx, ctx.client("curator", SALES))
     monkeypatch.setattr(difference, "MAX_MATCH_CELLS", 0)  # nothing is paired by matching
-    approver = ctx.client("approver", ())
+    approver = pctx.client("approver", ())
     page = approver.get("/review/metric/disbursement_amount").text
     assert 'data-field="diff"' in page and "Reviewed." in page
     assert 'data-action="approve"' in page and "too-long" not in page
@@ -1434,12 +1636,11 @@ def first_submit_button(form_html: str) -> str:
     return str(re.findall(r'<button type="submit"[^>]*data-action="([a-z]+)"', form_html)[0])
 
 
-def test_enter_in_the_reason_box_never_approves(ctx: Ctx) -> None:
+def test_enter_in_the_reason_box_never_approves(pctx: BakedCtx) -> None:
     """A browser submits a form with the first submit button when Enter is pressed in a text
     field. The reason is a text area (Enter adds a line), and Reject comes first anyway."""
-    author = ctx.client("curator", SALES)
-    propose(ctx, author)
-    approver = ctx.client("approver", ())
+    author = pctx.author
+    approver = pctx.client("approver", ())
     page = approver.get("/review/metric/disbursement_amount").text
     form_html = re.search(r'<form[^>]*id="decide-form".*?</form>', page, re.S).group(0)  # type: ignore[union-attr]
     assert '<textarea name="reason"' in form_html and 'type="text" name="reason"' not in form_html
@@ -1447,7 +1648,7 @@ def test_enter_in_the_reason_box_never_approves(ctx: Ctx) -> None:
     assert 'action="/review/metric/disbursement_amount/reject"' in form_html  # the form's default
     # The conflict page: the proposal changed, the reason is pre-filled, the form has the new
     # commit; Enter still must not approve it.
-    newer = change_text(ctx.world, description="Another description of the amount, for the page.")
+    newer = change_text(pctx.world, description="Another description of the amount, for the page.")
     edit_page = author.get("/edit/metric/disbursement_amount").text
     form(author, "/edit/metric/disbursement_amount/submit", newer, reason="again",
          expected=expected_of(edit_page))  # fmt: skip
@@ -1460,7 +1661,7 @@ def test_enter_in_the_reason_box_never_approves(ctx: Ctx) -> None:
     assert (
         first_submit_button(form_html) == "reject" and 'type="text" name="reason"' not in form_html
     )
-    assert expected_commit(form_html) == sup.head(ctx.world)
+    assert expected_commit(form_html) == sup.head(pctx.world)
 
 
 def test_the_service_reads_refuse_a_viewer_and_a_token(ctx: Ctx) -> None:
@@ -1490,12 +1691,11 @@ def test_the_service_reads_refuse_a_viewer_and_a_token(ctx: Ctx) -> None:
 
 
 def test_a_failure_after_the_commit_does_not_claim_the_page_shows_the_new_version(
-    ctx: Ctx, monkeypatch: pytest.MonkeyPatch
+    pctx: BakedCtx, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from makna.services import store
 
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
+    approver = pctx.client("approver", ())
     commit = expected_commit(approver.get("/review/metric/disbursement_amount").text)
     monkeypatch.setattr(store, "sync", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     page = plain(
@@ -1633,9 +1833,8 @@ def make_wide_customer(world: World) -> None:
 
 @pytest.mark.parametrize("shift", [False, True])
 def test_three_changes_in_a_large_entity_show_as_three_rows_with_the_lookalike_marked(
-    ctx: Ctx, shift: bool
+    wctx: BakedCtx, shift: bool
 ) -> None:
-    make_wide_customer(ctx.world)
 
     def edit(data: dict[str, Any]) -> None:
         data["label"] = "Customer, reviewed"
@@ -1644,10 +1843,10 @@ def test_three_changes_in_a_large_entity_show_as_three_rows_with_the_lookalike_m
         if shift:
             data["tags"] = ["wide"]
 
-    text_ = sup.edited(sup.official_text(ctx.world, CUSTOMER), edit)
-    author = ctx.client("curator", ("data-governance",))
-    propose(ctx, author, CUSTOMER, text_, "Three small changes")
-    page = ctx.client("approver", ()).get("/review/entity/customer").text
+    text_ = sup.edited(sup.official_text(wctx.world, CUSTOMER), edit)
+    author = wctx.client("curator", ("data-governance",))
+    propose(wctx, author, CUSTOMER, text_, "Three small changes")
+    page = wctx.client("approver", ()).get("/review/entity/customer").text
     rows = re.findall(r'<tr data-kind="(changed|added|removed|unmatched)">(.*?)</tr>', page, re.S)
     assert not any(kind == "unmatched" for kind, _ in rows)
     texts = [re.sub(r"<[^>]+>", "", body) for _, body in rows]
@@ -1684,14 +1883,13 @@ def test_a_block_that_could_not_be_matched_is_announced_and_changed_lines_get_co
     assert 'class="part"' not in page
 
 
-def test_a_line_break_in_the_reason_is_taken_as_a_space(ctx: Ctx) -> None:
-    propose(ctx, ctx.client("curator", SALES))
-    approver = ctx.client("approver", ())
+def test_a_line_break_in_the_reason_is_taken_as_a_space(pctx: BakedCtx) -> None:
+    approver = pctx.client("approver", ())
     response = decide(
         approver, "metric", "disbursement_amount", "approve", reason="first line\r\nsecond line"
     )
     assert response.status_code == 303
-    rows = sup.audit_rows(ctx.engine)
+    rows = sup.audit_rows(pctx.engine)
     assert rows[-1]["action"] == "approve" and rows[-1]["reason"] == "first line second line"
 
 
@@ -1707,3 +1905,58 @@ def test_the_official_side_of_a_changed_line_shows_the_code_point_of_a_lookalike
     page = ctx.client("approver", ()).get("/review/metric/disbursement_amount").text
     assert '<mark class="part">\u0435&lt;U+0435&gt;</mark>' in page  # the official side
     assert '<mark class="part">e</mark>' in page  # the proposal restores the Latin letter
+
+
+CYRILLIC_O = chr(0x043E)
+
+
+def occupation_text(world: World, change: Callable[[list[dict[str, Any]]], None]) -> str:
+    """The official `customer` with `change` applied to its list of dimensions."""
+
+    def edit(data: dict[str, Any]) -> None:
+        change(data["dimensions"])
+
+    return sup.edited(sup.official_text(world, CUSTOMER), edit)
+
+
+def test_a_lookalike_in_a_moved_and_changed_dimension_has_its_code_point(
+    ctx: BakedCtx,
+) -> None:
+    """The dimension moves to the end of the list and one value changes: the page shows removed
+    and added rows, no changed row, and the lookalike is still marked."""
+
+    def move(dimensions: list[dict[str, Any]]) -> None:
+        index = next(i for i, d in enumerate(dimensions) if d["name"] == "occupation_group")
+        moved = dimensions.pop(index)
+        moved["values"][0]["value"] = f"empl{CYRILLIC_O}yee"
+        dimensions.append(moved)
+
+    changed = occupation_text(ctx.world, move)
+    ctx.world.life.create_proposal(ctx.world.caller("approver"), CUSTOMER, changed, "move it")
+    ctx.world.life.submit(ctx.world.caller("approver"), CUSTOMER, "ready")
+    page = ctx.client("approver", ("data-governance",)).get("/review/entity/customer").text
+    kinds = re.findall(r'<tr data-kind="(changed|added|removed)">', page)
+    assert "removed" in kinds and "added" in kinds and "changed" not in kinds
+    assert f"{CYRILLIC_O}&lt;U+043E&gt;" in page
+    # The editor's difference marks it the same way.
+    checked = form(
+        ctx.client("approver", ()),
+        "/edit/entity/customer/check",
+        changed,
+        reason="r",
+        expected=expected_of(ctx.client("approver", ()).get("/edit/entity/customer").text),
+    )
+    assert f"{CYRILLIC_O}&lt;U+043E&gt;" in checked.text
+
+
+def test_a_lookalike_added_next_to_a_changed_value_has_its_code_point(ctx: BakedCtx) -> None:
+    def insert(dimensions: list[dict[str, Any]]) -> None:
+        group = next(d for d in dimensions if d["name"] == "occupation_group")
+        group["values"][0]["value"] = "retired"
+        group["values"].insert(1, {"value": f"empl{CYRILLIC_O}yee", "description": "A line."})
+
+    changed = occupation_text(ctx.world, insert)
+    ctx.world.life.create_proposal(ctx.world.caller("approver"), CUSTOMER, changed, "values")
+    ctx.world.life.submit(ctx.world.caller("approver"), CUSTOMER, "ready")
+    page = ctx.client("approver", ("data-governance",)).get("/review/entity/customer").text
+    assert re.search(r'<tr data-kind="added">.*?empl.*?&lt;U\+043E&gt;', page, re.S)
