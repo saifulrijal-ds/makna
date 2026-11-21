@@ -48,7 +48,7 @@
         {% if e.unreadable %}
         <p>No difference: the proposal cannot be read as a definition.</p>
         {% else %}
-        <p data-field="summary">{% if e.lines_added is none %}Not compared (too long){% else %}+{{ e.lines_added }} &minus;{{ e.lines_removed }} lines{% endif %}
+        <p data-field="summary">+{{ e.lines_added }} &minus;{{ e.lines_removed }} lines
           <small><a href="{{ row.href }}">full difference</a></small></p>
         {% endif %}
         {{ errors_list(e) }}

@@ -1108,7 +1108,6 @@ PLAIN_VALUES = frozenset(
         "problem.code",
         "item.approve_refusal.code",
         "notice",
-        "too_long_text",
         "kind_label",
         "row.kind_label",
         "decided_kind",

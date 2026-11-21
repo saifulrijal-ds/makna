@@ -90,7 +90,7 @@ from makna.model.search import EmbeddingProvider
 from makna.services import accounts, approval, permissions, store
 from makna.services.approval import ApprovalSettings, Decision
 from makna.services.caller import Caller
-from makna.services.difference import DiffRow, build_diff, count_changes, count_rows
+from makna.services.difference import build_diff, count_changes
 from makna.services.editing import (
     MAX_CHECK_ISSUES,
     NEW_OBJECT,
@@ -736,8 +736,8 @@ class Lifecycle:
             officials = {k: o.official for k, o in state.objects.items() if o.official is not None}
             official, proposal = item.official, item.proposal
             official_text, proposal_text = _canonical_texts(item)
-            # The two texts are compared once: the rows are the page's, and the counts of the
-            # entry are counted from them.
+            # The two texts are compared once, for the page; the entry's counts are a linear
+            # count of lines.
             rows = (
                 build_diff(official_text or "", proposal_text)
                 if proposal_text is not None
@@ -745,7 +745,7 @@ class Lifecycle:
             )
             entry = self._review_entry(
                 actor, user, state, item, notes, officials, self._repo(), MAX_ITEM_ISSUES,
-                official_text, proposal_text, rows,
+                official_text, proposal_text,
             )  # fmt: skip
             can_withdraw = bool(approval.may_edit(actor, user.email, item.authors))
             if proposal is None:
@@ -909,7 +909,6 @@ class Lifecycle:
         max_errors: int,
         official_text: str | None,
         proposal_text: str | None,
-        rows: list[DiffRow] | None = None,
     ) -> ReviewEntry:
         official, proposal = item.official, item.proposal
         version = official.version if official is not None else None
@@ -930,10 +929,7 @@ class Lifecycle:
                     actor, user.email, official, proposal, item.authors, self._settings, REJECT
                 )
             )
-            if rows is not None:  # the page has compared the texts already: count those rows
-                added, removed = count_rows(rows)
-            else:
-                added, removed = count_changes(official_text or "", proposal_text or "")
+            added, removed = count_changes(official_text or "", proposal_text or "")
             if (
                 official is not None
                 and official.owner.team.casefold() != proposal.owner.team.casefold()

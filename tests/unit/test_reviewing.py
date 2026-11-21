@@ -311,8 +311,9 @@ def test_count_changes_counts_a_changed_line_as_one_removed_and_one_added() -> N
     assert difference.count_changes("a\nb\nc\n", "a\nB\nc\nd\n") == (2, 1)
     assert difference.count_changes("a\n", "a\n") == (0, 0)
     assert difference.count_changes("", "a\nb\n") == (2, 0)
-    rows = difference.build_diff("a\nb\nc\n", "a\nB\nc\nd\n")
-    assert difference.count_rows(rows) == (2, 1)
+    # A moved line is neither: the count is of lines, as multisets, and does not compare texts.
+    assert difference.count_changes("a\nb\n", "b\na\n") == (0, 0)
+    assert difference.count_changes("a\na\n", "a\n") == (0, 1)
 
 
 def test_the_rows_of_a_difference_are_plain_strings_and_unchanged_runs_collapse() -> None:
@@ -407,34 +408,49 @@ def test_the_worst_case_at_and_above_the_bound_is_fast_and_shows_every_line(
     left = [r.left for r in rows if r.left_no is not None]
     right = [r.right for r in rows if r.right_no is not None]
     # Every line of both sides is on the page (only long unchanged runs are collapsed).
-    unchanged = sum(r.skipped for r in rows)
+    unchanged = sum(r.skipped for r in rows if r.kind == "skipped")
     assert len(left) + unchanged == len(before.splitlines())
     assert len(right) + unchanged == len(after.splitlines())
     changed_left = [r.left for r in rows if r.kind in ("changed", "removed")]
     assert [x for x in before.splitlines() if "name: x" in x] == [
         x for x in changed_left if "name: x" in x
     ]
-    assert counted == difference.count_rows(rows)
+    assert counted == (dimensions, dimensions)
 
 
-def test_a_middle_above_the_bound_is_one_block_and_the_common_ends_are_cut_first(
+def test_a_stretch_above_the_bound_is_paired_by_position_says_so_and_shows_equal_pairs_as_same(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(difference, "MAX_MATCH_CELLS", 4)
     before = "top\na\nb\nc\nd\ne\nbottom\n"
     after = "top\nA\nB\nC\nD\nE\nbottom\n"
     rows = difference.build_diff(before, after)
-    assert [r.kind for r in rows if r.kind != "same"] == ["changed"] * 5
-    assert rows[0].left == "top" and rows[-1].left == "bottom"
-    # One side longer: the extra lines are removed or added rows.
-    rows = difference.build_diff("top\na\nb\nc\nd\nbottom\n", "top\nA\nbottom\n")
-    assert [r.kind for r in rows if r.kind != "same"] == [
+    assert [r.kind for r in rows if r.kind not in ("same", "skipped")] == [
+        "unmatched",
+        *["changed"] * 5,
+    ]
+    assert next(r for r in rows if r.kind == "unmatched").skipped == 5
+    # A pair of equal lines inside the block is not a change.
+    paired = difference.build_diff("p\nx\na\nx\na\nx\nq\n", "r\nx\na\ny\na\nx\ns\n")
+    assert [r.kind for r in paired if r.kind not in ("same", "skipped")] == [
+        "unmatched",
+        "changed",
+        "changed",
+        "changed",
+    ]
+    assert [r.kind for r in paired].count("same") == 4  # equal pairs inside the block
+    # One side longer: the extra lines are removed rows.
+    longer, shorter = "top\na\nb\nc\nd\ne\nbottom\n", "top\nA\nB\nbottom\n"
+    rows = difference.build_diff(longer, shorter)
+    assert [r.kind for r in rows if r.kind not in ("same", "skipped")] == [
+        "unmatched",
+        "changed",
         "changed",
         "removed",
         "removed",
         "removed",
     ]
-    assert difference.count_changes("top\na\nb\nc\nd\nbottom\n", "top\nA\nbottom\n") == (1, 4)
+    assert difference.count_changes(longer, shorter) == (2, 5)
 
 
 def test_a_changed_line_is_cut_into_the_parts_that_differ() -> None:
@@ -503,3 +519,89 @@ def test_the_owner_team_mark_ignores_case_as_the_lifecycle_does() -> None:
     official = entity()
     assert "owner" not in kinds(official, edited(lambda d: d.update(owner={"team": "Credit-Risk"})))
     assert "owner" in kinds(official, edited(lambda d: d.update(owner={"team": "sales"})))
+
+
+# --- a change in a large entity (fix round 2) -------------------------------------------------
+
+
+def _entity_lines(dimensions: int) -> list[str]:
+    lines = ["apiVersion: makna/v1", "kind: entity", "name: wide", "label: Wide", "dimensions:"]
+    for index in range(dimensions):
+        lines += [
+            f"  - name: dimension_{index}",
+            "    type: categorical",
+            "    values:",
+            "      - value: employee",
+            "      - value: other",
+            "    sensitivity: internal",
+            "    description: The same text for every one of them.",
+            "    expr: occupation_group",
+        ]
+    lines += ["relationships:", "  - name: home", "    description: The last line of the file."]
+    return lines
+
+
+def _changes(rows: list[difference.DiffRow]) -> list[difference.DiffRow]:
+    return [r for r in rows if r.kind not in ("same", "skipped")]
+
+
+def _wide_pair(shift: bool) -> tuple[str, str]:
+    before = _entity_lines(140)  # over 1100 lines
+    after = list(before)
+    after[3] = "label: Wide, tidied"
+    after[-1] = "    description: The last line of the file, changed."
+    middle = next(i for i in range(800, len(after)) if after[i].endswith("value: employee"))
+    after[middle] = after[middle].replace("employee", "empl\u043eyee")  # Cyrillic o
+    if shift:
+        after.insert(5, "synonyms: {}")
+    return "\n".join(before) + "\n", "\n".join(after) + "\n"
+
+
+@pytest.mark.parametrize("shift", [False, True])
+def test_three_changes_in_a_large_entity_are_exactly_three_rows_with_the_lookalike_marked(
+    shift: bool,
+) -> None:
+    before, after = _wide_pair(shift)
+    assert len(before.splitlines()) > 1000
+    rows = difference.build_diff(before, after)
+    changes = _changes(rows)
+    expected = ["changed", "changed", "changed"] + (["added"] if shift else [])
+    assert sorted(r.kind for r in changes) == sorted(expected)
+    assert not any(r.kind == "unmatched" for r in rows)
+    lookalike = next(r for r in changes if "empl\u043eyee" in r.right)
+    assert ("\u043e", True) in lookalike.right_parts and ("o", True) in lookalike.left_parts
+    assert difference.count_changes(before, after) == (4 if shift else 3, 3)
+
+
+def test_the_worst_shape_at_the_bound_is_fast_and_no_anchor_means_one_block() -> None:
+    import time
+
+    one, other = "  - value: a", "  - value: b"
+    before = "\n".join(["X"] + [one] * 498 + ["Y"]) + "\n"
+    after = "\n".join(["Z"] + [one, other] * 249 + ["W"]) + "\n"
+    started = time.perf_counter()
+    rows = difference.build_diff(before, after)
+    assert time.perf_counter() - started < 5  # about 1.5 s here at the bound
+    assert (
+        len([r for r in rows if r.left_no is not None])
+        + sum(r.skipped for r in rows if r.kind == "skipped")
+        >= 500
+    )
+
+
+def test_the_character_comparison_has_a_budget_and_a_longest_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines_before = "".join(f"key_{i}: value number {i}\n" for i in range(20))
+    lines_after = "".join(f"key_{i}: other number {i}\n" for i in range(20))
+    monkeypatch.setattr(difference, "MAX_PARTS_WORK", 3 * 40 * 40)
+    rows = [r for r in difference.build_diff(lines_before, lines_after) if r.kind == "changed"]
+    assert len(rows) == 20
+    with_parts = [r for r in rows if r.left_parts]
+    assert 0 < len(with_parts) < 20  # the budget runs out part of the way down the page
+    assert all(r.left_parts for r in rows[: len(with_parts)])
+    long_line = "x" * (difference.MAX_PARTS_LINE + 1)
+    (row,) = [
+        r for r in difference.build_diff(f"{long_line}\n", f"{long_line}y\n") if r.kind == "changed"
+    ]
+    assert row.left_parts == () and row.right_parts == ()

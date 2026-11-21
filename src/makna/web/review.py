@@ -70,6 +70,7 @@ SHOWN_ACTIONS = (
 )
 """The actions the audit page offers as a filter (the ones `audit_event` holds)."""
 _COMMIT = re.compile(r"[0-9a-f]{40}")
+_LINE_BREAKS = re.compile(r"[\r\n]+")
 BAD_FORM = "The form did not carry the commit of the proposal it showed. Reload the page."
 
 
@@ -243,6 +244,8 @@ async def _decide(
     object_id = _target(kind, name)
     life = _lifecycle(request)
     caller = context.caller
+    # The reason box is a text area, so a browser sends a line break as CR LF; a reason is one line.
+    reason = _LINE_BREAKS.sub(" ", reason)
     try:
         if not _COMMIT.fullmatch(expected):
             raise ServiceError(ServiceErrorCode.INVALID_INPUT, BAD_FORM, {"field": "expected"})
