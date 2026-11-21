@@ -150,6 +150,6 @@ def visible(value: object) -> str:
 
 def codepoints(value: str) -> str:
     """`value` with the code point written after each character that is not ASCII
-    (the letter, then `<U+0430>`), for the part of a changed line that differs: a Cyrillic letter in a Latin
-    word looks the same, so the page says what it is. Run it after `visible`."""
+    (the letter, then `<U+0430>`), for the part of a changed line that differs: a Cyrillic letter
+    in a Latin word looks the same, so the page says what it is. Run it after `visible`."""
     return "".join(char if ord(char) < 0x80 else f"{char}<U+{ord(char):04X}>" for char in value)
