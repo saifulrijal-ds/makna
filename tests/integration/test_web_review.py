@@ -154,6 +154,12 @@ def audit_ids(page: str) -> list[int]:
     return [int(i) for i in re.findall(r'<tr data-id="(\d+)"', page)]
 
 
+def flat(page: str) -> str:
+    """A page without the highlight of the characters that changed inside a line, so that the
+    text of a changed line reads in one piece."""
+    return page.replace('<mark class="part">', "").replace("</mark>", "")
+
+
 def plain(page: str) -> str:
     return html.unescape(page)
 
@@ -314,7 +320,7 @@ def test_the_approve_button_is_for_those_who_may_decide_and_a_forged_post_is_a_4
     approver = ctx.client("approver", ())
     assert 'data-action="approve"' in approver.get("/review/metric/disbursement_amount").text
     # The list says so too.
-    assert "You cannot decide this" in outsider.get("/review").text
+    assert "You can neither approve nor reject this" in outsider.get("/review").text
 
 
 def test_the_author_cannot_approve_but_may_reject_their_own_proposal(ctx: Ctx) -> None:
@@ -402,9 +408,9 @@ def test_a_proposal_that_changed_after_the_page_was_opened_is_a_conflict(ctx: Ct
     assert "changed after you looked at it" in refused.text
     assert (sup.head(ctx.world), len(sup.audit_rows(ctx.engine))) == (head, audits)
     # The page now shows the new proposal and its commit, and the typed reason stays.
-    assert "A completely different description" in refused.text
+    assert "A completely different description" in flat(refused.text)
     assert expected_commit(refused.text) == head != old
-    assert 'value="ok"' in refused.text
+    assert ">ok</textarea>" in refused.text
     # Reject is held to the same commit.
     assert (
         post(approver, "/review/metric/disbursement_amount/reject", reason="no", expected=old)
@@ -451,7 +457,7 @@ def test_a_missing_or_too_long_reason_is_refused_with_the_form_kept(ctx: Ctx) ->
     long = "r" * (lifecycle.MAX_REASON_LENGTH + 1)
     response = decide(approver, "metric", "disbursement_amount", "reject", reason=long)
     assert response.status_code == 400 and "at most 500 characters" in response.text
-    assert f'value="{long[: lifecycle.MAX_REASON_LENGTH]}"' in response.text  # kept, cut to fit
+    assert f">{long[: lifecycle.MAX_REASON_LENGTH]}</textarea>" in response.text  # kept, cut to fit
     response = decide(approver, "metric", "disbursement_amount", "approve", reason="a\nb")
     assert response.status_code == 400
     assert sup.head(ctx.world) == head
@@ -475,7 +481,7 @@ def test_an_outside_change_is_listed_with_its_commit_author_and_approved_by_anot
     assert "Git authorship is not verified" in page and commit[:12] in page
     assert "long body" not in page  # only the first line of the message
     item = approver.get("/review/metric/disbursement_amount").text
-    assert "Changed outside Makna" in item and "Changed from outside." in item
+    assert "Changed outside Makna" in item and "Changed from outside." in flat(item)
     assert expected_commit(item) == commit
     # After a sync the recorded reason is there too, and the page labels it.
     ctx.world.life.sync()
