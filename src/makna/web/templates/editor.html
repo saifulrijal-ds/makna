@@ -95,7 +95,9 @@
     </thead>
     <tbody>
       {% for row in diff.rows %}
-      {% if row.kind == "skipped" %}
+      {% if row.kind == "unmatched" %}
+      <tr data-kind="unmatched"><td colspan="4"><mark>The next {{ row.skipped }} lines could not be matched, so they are shown side by side by position: the two sides of a row need not belong together.</mark></td></tr>
+      {% elif row.kind == "skipped" %}
       <tr data-kind="skipped"><td colspan="4"><small>{{ row.skipped }} unchanged line{{ "" if row.skipped == 1 else "s" }}</small></td></tr>
       {% else %}
       <tr data-kind="{{ row.kind }}">

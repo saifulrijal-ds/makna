@@ -1,0 +1,99 @@
+{% macro outside_box(outside) %}
+{% if outside %}
+<aside role="note" data-field="outside" class="outside">
+  <p><strong>Changed outside Makna.</strong> This proposal came from a commit that Makna did not make (commit <code>{{ outside.commit[:12] }}</code>).
+    Git authorship is not verified: anyone who can write to the repository can put any name and email on a commit, so this does not prove who made the change.</p>
+  <ul>
+    <li>Commit author: <span data-field="outside-author">{{ outside.author_name | visible }}</span> &lt;<span data-field="outside-email">{{ outside.author_email | visible }}</span>&gt;</li>
+    <li>Commit message (written by the committer): <span data-field="outside-subject">{{ outside.subject | visible }}</span></li>
+    {% if outside.recorded %}<li>Recorded by Makna: <span data-field="outside-recorded">{{ outside.recorded | visible }}</span></li>{% endif %}
+  </ul>
+</aside>
+{% endif %}
+{% endmacro %}
+
+{% macro governance_mark(entry) %}
+{% if entry.needs_governance %}
+<p data-field="governance"><mark>Needs the governance team ({{ entry.governance_team | visible }})</mark>
+  <small>This change loosens sensitivity, so an approver who is not in that team cannot approve it.</small></p>
+<ul data-field="loosenings">
+  {% for text in entry.loosenings %}<li>{{ text | visible }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if entry.owner_change %}
+<p data-field="owner-change"><mark>Changes the owner team</mark>
+  from <code>{{ entry.owner_change[0] | visible }}</code> to <code>{{ entry.owner_change[1] | visible }}</code>.
+  <small>Only an approver or an administrator can approve that.</small></p>
+{% endif %}
+{% endmacro %}
+
+{% macro rule_uses_list(entry) %}
+{% if entry.rule_uses or entry.measure_changes %}
+<section data-field="rule-uses">
+  <h3>Rules that change, and who uses them</h3>
+  {% for use in entry.rule_uses %}
+  <p><strong>Rule <code>{{ use.rule | visible }}</code></strong> is {{ use.change }}.</p>
+  <ul data-rule="{{ use.rule | visible }}">
+    <li>Measures that use it ({{ use.measures_total }}):
+      {% for m in use.measures %}<code data-field="rule-measure">{{ m | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% if use.measures_total > use.measures | length %} <small>and {{ use.measures_total - use.measures | length }} more</small>{% endif %}</li>
+    <li>Metrics that use it ({{ use.metrics_total }}):
+      {% for m in use.metrics %}<code data-field="rule-metric">{{ m | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% if use.metrics_total > use.metrics | length %} <small>and {{ use.metrics_total - use.metrics | length }} more</small>{% endif %}</li>
+  </ul>
+  {% endfor %}
+  {% for change in entry.measure_changes %}
+  <p data-field="measure-change"><strong>Measure <code>{{ change.measure | visible }}</code></strong> changes its rules: from
+    {% for r in change.before %}<code>{{ r | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} to
+    {% for r in change.after %}<code>{{ r | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}.</p>
+  <ul data-measure="{{ change.measure | visible }}">
+    <li>Metrics built on it ({{ change.metrics_total }}):
+      {% for m in change.metrics %}<code data-field="measure-metric">{{ m | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% if change.metrics_total > change.metrics | length %} <small>and {{ change.metrics_total - change.metrics | length }} more</small>{% endif %}</li>
+  </ul>
+  {% endfor %}
+  {% if entry.rule_uses_total > entry.rule_uses | length %}<p><small>{{ entry.rule_uses_total - entry.rule_uses | length }} more rules change; they are not listed.</small></p>{% endif %}
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro errors_list(entry) %}
+{% if entry.error_count %}
+<p data-field="errors"><mark>{{ entry.error_count }} definition error{{ "" if entry.error_count == 1 else "s" }}</mark></p>
+<ul data-field="error-list">
+  {% for issue in entry.errors %}
+  <li><code>{{ issue.rule | visible }}</code>{% if issue.line is not none %} line {{ issue.line }}{% endif %}: {{ issue.message | visible }}</li>
+  {% endfor %}
+</ul>
+{% if entry.error_count > entry.errors | length %}<p><small>Only the first {{ entry.errors | length }} are shown.</small></p>{% endif %}
+{% else %}
+<p data-field="errors-none">No definition errors.</p>
+{% endif %}
+{% endmacro %}
+
+{% macro authors_line(entry) %}
+<p data-field="authors">Authors since the last approval:
+  {% for a in entry.authors %}<code>{{ a | visible }}</code>{% if not loop.last %}, {% endif %}{% else %}none recorded{% endfor %}{% if entry.authors_total > entry.authors | length %} <small>and {{ entry.authors_total - entry.authors | length }} more</small>{% endif %}</p>
+{% endmacro %}
+
+{% macro diff_table(rows) %}
+<table class="diff" data-field="diff">
+  <colgroup><col class="diff-no"><col><col class="diff-no"><col></colgroup>
+  <thead>
+    <tr><th>Line</th><th>Official version</th><th>Line</th><th>Proposal</th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    {% if row.kind == "unmatched" %}
+    <tr data-kind="unmatched"><td colspan="4"><mark data-field="unmatched">The next {{ row.skipped }} lines could not be matched (they are too many to compare line by line), so they are shown side by side by position: the two sides of a row need not belong together. Read the whole block.</mark></td></tr>
+    {% elif row.kind == "skipped" %}
+    <tr data-kind="skipped"><td colspan="4"><small>{{ row.skipped }} unchanged line{{ "" if row.skipped == 1 else "s" }}</small></td></tr>
+    {% else %}
+    <tr data-kind="{{ row.kind }}">
+      <td class="diff-no">{{ row.left_no if row.left_no is not none else "" }}</td>
+      <td class="diff-text">{% if row.left_parts %}{% for text, differs in row.left_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% elif row.kind == "changed" %}{{ row.left | visible | codepoints }}{% else %}{{ row.left | visible }}{% endif %}</td>
+      <td class="diff-no">{{ row.right_no if row.right_no is not none else "" }}</td>
+      <td class="diff-text">{% if row.right_parts %}{% for text, differs in row.right_parts %}{% if differs %}<mark class="part">{{ text | visible | codepoints }}</mark>{% else %}{{ text | visible }}{% endif %}{% endfor %}{% elif row.kind == "changed" %}{{ row.right | visible | codepoints }}{% else %}{{ row.right | visible }}{% endif %}</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}

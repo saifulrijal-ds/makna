@@ -28,8 +28,6 @@ This is the first web route that writes definitions, so it is deliberately thin:
 
 from __future__ import annotations
 
-import difflib
-import functools
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -38,11 +36,11 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
 
-import anyio.to_thread
 from fastapi import APIRouter, Form, HTTPException, Request
 from starlette.responses import RedirectResponse, Response
 
 from makna.services import Caller, LifecycleErrorCode, ServiceError, ServiceErrorCode, permissions
+from makna.services.difference import DiffRow, build_diff
 from makna.services.editing import (
     KINDS,
     MAX_CHECK_ISSUES,
@@ -63,6 +61,13 @@ from makna.services.lifecycle import (
     ActionResult,
     Lifecycle,
     as_proposal_text,
+)
+from makna.web.common import (
+    HEADLINES,
+    Problem,
+    problem_of,
+    run_in_thread,
+    status_of,
 )
 from makna.web.pages import WebContext
 from makna.web.routes import _signed_in, _state
@@ -88,42 +93,11 @@ VIEW_PREFIX = {
     "domain": "/domains",
 }
 """Where the discovery page of each kind is (the editor links to it)."""
-MAX_DIFF_LINES = 3000
-"""A text longer than this (either side) is not compared on the page: the comparison is
-quadratic in the worst case, and a page of thousands of rows helps nobody."""
-DIFF_CONTEXT = 3
-"""Unchanged lines shown around a change."""
 NOTICES = {
     "saved": "The draft was saved. It stays a proposal until an approver approves it.",
     "submitted": "The proposal was submitted for review.",
     "withdrawn": "The proposal was withdrawn.",
 }
-
-HEADLINES: dict[str, str] = {
-    str(ServiceErrorCode.NOT_FOUND): "There is no such object.",
-    str(ServiceErrorCode.PERMISSION_DENIED): "You are not allowed to do this.",
-    str(ServiceErrorCode.INVALID_INPUT): "Something in the form cannot be used.",
-    str(ServiceErrorCode.CATALOG_NOT_SYNCED): "The catalog has not been synced yet.",
-    str(ServiceErrorCode.INTERNAL): "Makna could not complete this.",
-    str(LifecycleErrorCode.DEFINITION_INVALID): "The definition has errors.",
-    str(LifecycleErrorCode.OPEN_REFERENCE_ISSUE): "The definition has a reference issue.",
-    str(LifecycleErrorCode.CONFLICT): "The change cannot be made now.",
-    str(LifecycleErrorCode.TOO_MANY_DRAFTS): "You have too many open proposals.",
-}
-"""One short sentence for every code a lifecycle call can refuse with (a test checks that none is
-missing). The service's own message follows it on the page."""
-STATUS_OF: dict[str, int] = {
-    str(ServiceErrorCode.NOT_FOUND): 404,
-    str(ServiceErrorCode.PERMISSION_DENIED): 403,
-    str(ServiceErrorCode.INVALID_INPUT): 400,
-    str(ServiceErrorCode.CATALOG_NOT_SYNCED): 409,
-    str(ServiceErrorCode.INTERNAL): 500,
-    str(LifecycleErrorCode.DEFINITION_INVALID): 422,
-    str(LifecycleErrorCode.OPEN_REFERENCE_ISSUE): 409,
-    str(LifecycleErrorCode.CONFLICT): 409,
-    str(LifecycleErrorCode.TOO_MANY_DRAFTS): 409,
-}
-
 
 # --- templates -------------------------------------------------------------------------------
 
@@ -151,74 +125,6 @@ def edit_path(caller: Caller, kind: str, name: str) -> str | None:
 
 
 @dataclass(frozen=True)
-class DiffRow:
-    """One row of the side-by-side view. `kind` is `same`, `changed`, `removed`, `added`, or
-    `skipped` (a run of unchanged lines, `skipped` of them, left out)."""
-
-    kind: str
-    left_no: int | None = None
-    left: str = ""
-    right_no: int | None = None
-    right: str = ""
-    skipped: int = 0
-
-
-def build_diff(official: str, proposed: str) -> list[DiffRow] | None:
-    """The rows that compare two texts line by line, or None when they are too long to compare.
-    Plain strings only: the template escapes them."""
-    a, b = official.splitlines(), proposed.splitlines()
-    if len(a) > MAX_DIFF_LINES or len(b) > MAX_DIFF_LINES:
-        return None
-    rows: list[DiffRow] = []
-    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            rows += [
-                DiffRow("same", i1 + k + 1, a[i1 + k], j1 + k + 1, b[j1 + k])
-                for k in range(i2 - i1)
-            ]
-            continue
-        for k in range(max(i2 - i1, j2 - j1)):
-            has_left, has_right = i1 + k < i2, j1 + k < j2
-            kind = "changed" if has_left and has_right else "removed" if has_left else "added"
-            rows.append(
-                DiffRow(
-                    kind,
-                    i1 + k + 1 if has_left else None,
-                    a[i1 + k] if has_left else "",
-                    j1 + k + 1 if has_right else None,
-                    b[j1 + k] if has_right else "",
-                )
-            )
-    return _collapse(rows)
-
-
-def _collapse(rows: list[DiffRow]) -> list[DiffRow]:
-    """Keep `DIFF_CONTEXT` unchanged lines around each change; a longer run of unchanged lines
-    becomes one `skipped` row."""
-    changed = [i for i, row in enumerate(rows) if row.kind != "same"]
-    if not changed:
-        return []
-    keep = [False] * len(rows)
-    for index in changed:
-        for near in range(max(0, index - DIFF_CONTEXT), min(len(rows), index + DIFF_CONTEXT + 1)):
-            keep[near] = True
-    out: list[DiffRow] = []
-    run = 0
-    for row, shown in zip(rows, keep, strict=True):
-        if shown:
-            if run:
-                out.append(DiffRow("skipped", skipped=run))
-                run = 0
-            out.append(row)
-        else:
-            run += 1
-    if run:
-        out.append(DiffRow("skipped", skipped=run))
-    return out
-
-
-@dataclass(frozen=True)
 class Diff:
     """What the page shows under "Difference": rows, or the reason there are none."""
 
@@ -242,10 +148,6 @@ def make_diff(official_text: str | None, text: str, version: int | None) -> Diff
     if proposed is None:
         return Diff(note="The text cannot be read as a definition yet, so it is not compared.")
     rows = build_diff(official_text, proposed)
-    if rows is None:
-        return Diff(
-            note=f"The text is longer than {MAX_DIFF_LINES} lines, so it is not compared here."
-        )
     return Diff(tuple(rows), identical=not rows)
 
 
@@ -273,19 +175,6 @@ class Target:
         if self.name is None:
             return f"/new/{self.kind}"
         return f"/edit/{self.kind}/{self.name}"
-
-
-@dataclass(frozen=True)
-class Problem:
-    """A refusal to show: the code, a short headline, the service's message, and the problems of
-    the definition when there are some."""
-
-    code: str
-    headline: str
-    message: str
-    issues: tuple[CheckIssue, ...] = ()
-    link: str | None = None
-    link_text: str = ""
 
 
 @dataclass
@@ -370,40 +259,6 @@ def _render(request: Request, page: Page, status: int = 200) -> Response:
     )
 
 
-def _problem(error: ServiceError, *, link: str | None = None, link_text: str = "") -> Problem:
-    code = str(error.code)
-    raw = (
-        error.details.get("issues") if code == str(LifecycleErrorCode.DEFINITION_INVALID) else None
-    )
-    issues: list[CheckIssue] = []
-    if isinstance(raw, list):
-        for item in raw:
-            if isinstance(item, dict):
-                line = item.get("line")
-                issues.append(
-                    CheckIssue(
-                        str(item.get("rule", "")),
-                        line if isinstance(line, int) else None,
-                        str(item.get("file", "")),
-                        str(item.get("message", ""))[:MAX_MESSAGE_SHOWN],
-                        True,
-                    )
-                )
-    message = error.message  # fixed text in every case, and the truth about what was written
-    return Problem(
-        code,
-        HEADLINES.get(code, "The change cannot be made."),
-        message,
-        tuple(issues),
-        link,
-        link_text,
-    )
-
-
-def _status(error: ServiceError) -> int:
-    return STATUS_OF.get(str(error.code), 400)
-
-
 # --- the work, off the event loop ------------------------------------------------------------
 
 
@@ -417,16 +272,9 @@ def _newlines(text: str) -> str:
 
 
 async def _run[T](name: str, function: Callable[..., T], *args: Any) -> T:
-    """Run a service call in a worker thread. A `ServiceError` passes through; anything else (a
-    database error, a repository error, a recursion error) becomes the fixed 500 page, and only
-    the class of the exception is logged, never its text (it can hold a value of the request)."""
-    try:
-        return await anyio.to_thread.run_sync(functools.partial(function, *args))
-    except ServiceError:
-        raise
-    except Exception as error:
-        logger.error("web: editor %s failed: error=%s", name, type(error).__name__)
-        raise HTTPException(status_code=500) from None
+    """`run_in_thread` for the editor: a worker thread, and the fixed 500 page for anything that
+    is not a `ServiceError`."""
+    return await run_in_thread("editor", name, function, *args)
 
 
 def _guard(request: Request) -> WebContext:
@@ -507,7 +355,7 @@ async def new_form(request: Request, kind: str) -> Response:
     try:
         writable = await _run("mode", _lifecycle(request).writable)
     except ServiceError as error:
-        return _render(request, _unavailable(target, error), _status(error))
+        return _render(request, _unavailable(target, error), status_of(error))
     if not writable:
         return _render(request, _unavailable(target, ServiceError(
             LifecycleErrorCode.CONFLICT, READ_ONLY_MESSAGE, {"read_only": True}
@@ -525,7 +373,7 @@ async def edit_form(request: Request, kind: str, name: str, notice: str = "") ->
     try:
         source = await _run("read", life.editor_source, context.caller, str(target.object_id))
     except ServiceError as error:
-        return _render(request, _unavailable(target, error), _status(error))
+        return _render(request, _unavailable(target, error), status_of(error))
     if source is None:
         raise HTTPException(status_code=404)
     page = Page(
@@ -542,7 +390,7 @@ async def edit_form(request: Request, kind: str, name: str, notice: str = "") ->
 def _unavailable(target: Target, error: ServiceError, text: str = "") -> Page:
     """The page for an object whose editor cannot open (a plain directory, a broken repository,
     a refused role): the problem, and the text that was posted, if any."""
-    return Page(target, text, problem=_problem(error), facts=[], show_form=bool(text))
+    return Page(target, text, problem=problem_of(error), facts=[], show_form=bool(text))
 
 
 # --- the actions -----------------------------------------------------------------------------
@@ -598,7 +446,7 @@ async def _post(
         try:
             page.source = await _run("read", life.editor_source, caller, object_id)
         except ServiceError as error:
-            return _render(request, _unavailable(target, error, text), _status(error))
+            return _render(request, _unavailable(target, error, text), status_of(error))
         if page.source is None:
             raise HTTPException(status_code=404)
 
@@ -606,9 +454,9 @@ async def _post(
         try:
             object_id, result = await _check(life, caller, target, text)
         except ServiceError as error:
-            page.problem = _problem(error)
+            page.problem = problem_of(error)
             _log(action, context, object_id, str(error.code))
-            return _render(request, page, _status(error))
+            return _render(request, page, status_of(error))
         page.check = result
         if page.source is not None:
             page.diff = await _diff(page.source.official_text, text, page.source.version)
@@ -674,12 +522,12 @@ async def _withdraw(request: Request, target: Target, reason: str, expected: str
             raise HTTPException(status_code=404) from None
         page = Page(target, source.text if source is not None else "", reason=reason)
         page.source = source
-        page.problem = _problem(error)
+        page.problem = problem_of(error)
         if source is not None:
             page.expected = source.proposal_sha256
             page.diff = await _diff(source.official_text, source.text, source.version)
         _log("withdraw", context, object_id, str(error.code))
-        return _render(request, page, _status(error))
+        return _render(request, page, status_of(error))
     _log("withdraw", context, object_id, "ok")
     if done.version is not None:  # the object has an official version: back to its editor
         return _saved(object_id, "withdrawn")
@@ -717,11 +565,11 @@ async def _failed(
     If the draft had been saved before the submit was refused, the page now edits that draft."""
     life = _lifecycle(request)
     target = page.target
-    page.problem = _problem(error)
+    page.problem = problem_of(error)
     if error.details.get("exists") and target.is_new:
         page.problem = _exists(target.kind, object_id)
     elif error.details.get("changed"):
-        page.problem = _problem(
+        page.problem = problem_of(
             error, link=f"/edit/{target.kind}/{object_id.partition(':')[2]}",
             link_text="Open the latest version (copy your text from the box first)",
         )  # fmt: skip
@@ -734,7 +582,7 @@ async def _failed(
     if page.source is not None:
         page.diff = await _diff(page.source.official_text, page.text, page.source.version)
     _log(action, context, object_id, str(error.code))
-    return _render(request, page, _status(error))
+    return _render(request, page, status_of(error))
 
 
 # --- the routes of the three actions ---------------------------------------------------------

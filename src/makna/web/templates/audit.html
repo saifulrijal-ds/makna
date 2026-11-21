@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/review.css">
+<h1>Audit log</h1>
+<p>Every lifecycle action of the definition store, newest first. Reasons and actors are text that people and commits wrote: they show what was recorded, not what is true.</p>
+
+<form method="get" action="/audit" data-field="filter">
+  <label for="object">Object (for example <code>metric:npf_ratio</code>)</label>
+  <input type="text" name="object" id="object" value="{{ object_filter | visible }}" maxlength="250" autocomplete="off">
+  <label for="action">Action</label>
+  <select name="action" id="action">
+    <option value="">any</option>
+    {% for a in actions %}<option value="{{ a }}"{% if a == action_filter %} selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+  <a href="{{ all_link }}">Clear</a>
+</form>
+
+{% if problem %}
+<article role="alert" data-field="problem" data-code="{{ problem.code }}">
+  <header>{{ problem.headline }}</header>
+  {% if problem.message %}<p>{{ problem.message | visible }}</p>{% endif %}
+</article>
+{% else %}
+{% if not rows %}
+<p data-field="empty">No audit rows match.</p>
+{% else %}
+<table class="audit" data-field="audit">
+  <thead>
+    <tr><th>Row</th><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Object</th><th>Status</th><th>Reason</th><th>Commit</th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    {% set r = row.r %}
+    <tr data-id="{{ r.id }}" data-action="{{ r.action | visible }}"{% if r.failed %} data-failed="yes"{% endif %}>
+      <td>{{ r.id }}</td>
+      <td>{{ row.when }}</td>
+      <td data-field="actor">{% if row.external %}<mark>{{ r.actor_label | visible }}</mark> <small>(named by a commit, not verified)</small>{% else %}{{ r.actor_label | visible }}{% endif %}</td>
+      <td>{{ r.action | visible }}</td>
+      <td data-field="object">{% if row.object_page %}<a href="{{ row.object_page }}">{{ r.object_id | visible }}</a>{% else %}{{ r.object_id | visible }}{% endif %}
+        {% if row.filter %}<small><a href="{{ row.filter }}">only this</a></small>{% endif %}</td>
+      <td>{{ (r.from_status or "-") | visible }} &rarr; {{ (r.to_status or "-") | visible }}</td>
+      <td data-field="reason">{{ (r.reason or "") | visible }}</td>
+      <td>
+        {% if r.failed %}<mark data-field="failed">failed</mark> <small>(given up; it did not happen)</small>
+        {% elif r.pending %}<small data-field="pending">not completed yet</small>
+        {% elif r.commit_sha %}<code>{{ r.commit_sha[:12] | visible }}</code>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if older %}<p><a href="{{ older }}" data-field="older">Older rows</a></p>{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}
